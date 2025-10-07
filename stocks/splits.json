@@ -1,0 +1,80 @@
+{
+  "PLZL": [
+    { "split_date": "2025-03-27", "ratio": 10 }
+  ],
+  "VTBR": [
+    { "split_date": "2024-07-15", "ratio": 0.0002 }
+  ],
+  "GMKN": [
+    { "split_date": "2024-04-04", "ratio": 100 }
+  ],
+  "TRNF_p": [
+    { "split_date": "2024-02-19", "ratio": 100 }
+  ],
+  "ROLO": [
+    { "split_date": "2023-01-17", "ratio": 10 }
+  ],
+  "RNFT": [
+    { "split_date": "2016-11-16", "ratio": 2000 }
+  ],
+  "RGSS": [
+    { "split_date": "2016-04-27", "ratio": 15.002 }
+  ],
+  "SFIN": [
+    { "split_date": "2015-10-07", "ratio": 1000 }
+  ],
+  "IRAO": [
+    { "split_date": "2015-01-20", "ratio": 0.01 },
+    { "split_date": "2014-12-26", "ratio": 0.01 }
+  ],
+  "ABRD": [
+    { "split_date": "2012-10-02", "ratio": 100 }
+  ],
+  "PHOR": [
+    { "split_date": "2012-02-15", "ratio": 10 },
+    { "split_date": "2011-10-28", "ratio": 10 }
+  ],
+  "ALRS": [
+    { "split_date": "2011-10-14", "ratio": 10 },
+    { "split_date": "2011-10-13", "ratio": 2700.5 }
+  ],
+  "MSTT": [
+    { "split_date": "2010-09-15", "ratio": 200 }
+  ],
+  "USBN": [
+    { "split_date": "2009-09-25", "ratio": 1 }
+  ],
+  "BLNG": [
+    { "split_date": "2009-01-15", "ratio": 100 }
+  ],
+  "AFKS": [
+    { "split_date": "2007-11-14", "ratio": 1000 }
+  ],
+  "GCHE": [
+    { "split_date": "2007-09-10", "ratio": 100 }
+  ],
+  "SBER": [
+    { "split_date": "2007-07-20", "ratio": 1000 },
+    { "split_date": "2007-03-30", "ratio": 1.006 }
+  ],
+  "SBER_p": [
+    { "split_date": "2007-07-20", "ratio": 1000 },
+    { "split_date": "2007-07-18", "ratio": 20 },
+    { "split_date": "2007-03-30", "ratio": 1.006 }
+  ],
+  "GAZA": [
+    { "split_date": "2007-03-23", "ratio": 1.081 }
+  ],
+  "GAZA_p": [
+    { "split_date": "2007-03-23", "ratio": 1.081 }
+  ],
+  "NVTK": [
+    { "split_date": "2006-08-15", "ratio": 1000 }
+  ],
+  "AKRN": [
+    { "split_date": "2005-11-25", "ratio": 5800 }
+  ],
+  "CHMF": [
+    { "split_date": "2004-12-10", "ratio": 25 }
+  ]
+}
