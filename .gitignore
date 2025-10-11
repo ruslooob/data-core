@@ -1,2 +1,4 @@
 .google-cookie
 /.idea
+/events/*
+!events/1_raw

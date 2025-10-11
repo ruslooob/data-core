@@ -3,7 +3,7 @@ from typing import List, Optional
 from matplotlib import pyplot as plt
 
 
-def plot_2d(
+def plot_2d_static(
         x: List,
         y: List,
         xlabel: Optional[str] = None,
@@ -79,3 +79,10 @@ def plot_2d_interactive(x, y, xlabel=None, ylabel=None, title=None):
     )
 
     fig.show()
+
+
+def plot_2d(x, y, xlabel=None, ylabel=None, title=None, interactive=True):
+    if interactive:
+        plot_2d_interactive(x, y, xlabel, ylabel, title)
+    else:
+        plot_2d_static(x, y, xlabel, ylabel, title)
