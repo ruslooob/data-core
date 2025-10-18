@@ -2,3 +2,4 @@
 /.idea
 /events/*
 !events/1_raw
+events_data_core/reports
