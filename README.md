@@ -10,7 +10,6 @@ dependencies:
 - nltk
 - gensim
 - hdbscan
-- sentence transformers
 - spacy, spacy-ru_core_news_lg, en_core_web_sm, cupy (for gpu),
 - pymorphy3
 - gensim
