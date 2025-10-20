@@ -1,5 +1,5 @@
 .google-cookie
 /.idea
-/events/*
-!events/1_raw
+/data/events/*
+!data/events/1_raw
 events_data_core/reports
