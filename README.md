@@ -13,7 +13,8 @@ dependencies:
 - pymorphy3
 - gensim
 - sentence-transformers
+- ipywidgets
 
 - conda install -c conda-forge spacy spacy-ru_core_news_lg en_core_web_sm
 - conda install -c conda-forge pandas numpy gensim plotly matplotlib nltk scikit-learn umap-learn hdbscan
-- conda install -c conda-forge notebook, pymorphy3
+- conda install -c conda-forge notebook, pymorphy3, ipywidgets
