@@ -930,3 +930,6 @@ def match_locations(loc_list, matcher=matcher):
     # Упорядоченный уникальный набор стран
     ordered_unique = list(OrderedDict.fromkeys(countries).keys())
     return ordered_unique if ordered_unique else None
+
+def get_matchers(matcher=matcher):
+    return [nlp.vocab.strings[k] for k in matcher._patterns.keys()]
