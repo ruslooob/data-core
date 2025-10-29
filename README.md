@@ -3,8 +3,7 @@ dependencies:
 - numpy==1.26.4
 - pandas
 - sklearn
-- matplotlib
-- plotly
+- matplotlib, plotly, dash
 - umap
 - tqdm
 - nltk
@@ -14,6 +13,8 @@ dependencies:
 - gensim
 - sentence-transformers
 - ipywidgets
+- openpyxl
+- duckdb
 
 - conda install -c conda-forge spacy spacy-ru_core_news_lg en_core_web_sm
 - conda install -c conda-forge pandas numpy gensim plotly matplotlib nltk scikit-learn umap-learn hdbscan
