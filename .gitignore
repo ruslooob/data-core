@@ -3,3 +3,4 @@
 /data/events/*
 !data/events/1_raw
 events_data_core/reports
+.claude
