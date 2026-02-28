@@ -23,6 +23,28 @@ def load_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFram
     return df
 
 
+def load_normalized_ipc_data(
+        ipc_type: IpcType = IpcType.GOODS_AND_SERVICES,
+        base_year: str = '2000-01-01'
+) -> pd.DataFrame:
+    """
+    Загружает CPI, рассчитывает накопленный индекс и реальную покупательную
+    способность рубля относительно базового месяца.
+
+    Возвращает DataFrame с колонками: date, cpi, cumulative_cpi, real_ruble.
+    real_ruble = 1.0 в базовом месяце, убывает с ростом инфляции.
+    """
+    df = load_melted_ipc_data(ipc_type)
+    base_date = pd.Timestamp(base_year)
+
+    df['cumulative_cpi'] = (df['cpi'] / 100).cumprod()
+
+    base_value = df.loc[df['date'] == base_date, 'cumulative_cpi'].values[0]
+    df['real_ruble'] = base_value / df['cumulative_cpi']
+
+    return df[['date', 'cpi', 'cumulative_cpi', 'real_ruble']]
+
+
 def load_melted_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFrame:
     """
     Возвращает преобразованный DataFrame с колонками 'date' и 'cpi'.

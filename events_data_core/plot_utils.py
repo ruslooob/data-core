@@ -90,7 +90,7 @@ def plot_2d(x, y, xlabel=None, ylabel=None, title=None, type='interactive'):
 
 import pandas as pd
 
-from dash import Dash, html, dcc, Input, Output
+from dash import Dash, html, dcc, Input, Output, Patch
 import plotly.graph_objects as go
 
 
@@ -209,12 +209,26 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
         Input("sanctions-graph", "hoverData")
     )
     def highlight_interval(hoverData):
+        highlight_x, highlight_y = [None], [None]
+
         if hoverData and hoverData.get("points"):
             cd = hoverData["points"][0].get("customdata")
-            # customdata обычно приходит как скаляр или как список из 1 элемента
             if isinstance(cd, (list, tuple)):
                 cd = cd[0] if cd else None
-            return make_figure(highlight_event_id=cd)
-        return make_figure()
+
+            if cd is not None:
+                row = events.loc[events["id"] == cd].iloc[0]
+                start, end = row["date_start"], row["date_end"]
+                mask = (x >= start) & (x <= end) if pd.notnull(end) else (x >= start)
+                hx, hy = x[mask], y[mask]
+                if len(hx) > 0:
+                    highlight_x, highlight_y = hx, hy
+
+        # Patch обновляет только трейс 1 (красная линия),
+        # не трогая layout — zoom и pan сохраняются
+        patched = Patch()
+        patched["data"][1]["x"] = list(highlight_x)
+        patched["data"][1]["y"] = list(highlight_y)
+        return patched
 
     return app
