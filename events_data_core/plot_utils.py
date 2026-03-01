@@ -1,3 +1,4 @@
+import socket
 from typing import List, Optional
 
 import pandas as pd
@@ -6,6 +7,29 @@ from dash import Dash, html, dcc, Input, Output, Patch
 import plotly.graph_objects as go
 
 from events_data_core.cpi_data_provider import load_normalized_ipc_data, IpcType
+
+
+def _find_free_port(min_port: int = 10001) -> int:
+    """Находит свободный порт начиная с min_port."""
+    port = min_port
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(('localhost', port)) != 0:
+                return port
+        port += 1
+
+
+class _DashApp:
+    """Обёртка над Dash-приложением с автоматически выбранным свободным портом."""
+
+    def __init__(self, app: Dash):
+        self._app = app
+        self._port = _find_free_port()
+
+    def run(self, **kwargs):
+        kwargs.setdefault('port', self._port)
+        kwargs.setdefault('jupyter_mode', 'inline')
+        self._app.run(**kwargs)
 
 
 def plot_2d_static(
@@ -86,15 +110,16 @@ def plot_price_real(
         cpi_normalized: bool = True,
         cpi_base_date: str = '2022-01-01',
         cpi_type: IpcType = IpcType.GOODS_AND_SERVICES,
-        events_df: Optional[pd.DataFrame] = None,
+        events_df: pd.DataFrame = None,
         title: Optional[str] = None,
-) -> go.Figure:
+):
     """
-    Строит нормализованный график цены акции.
+    Dash-приложение: нормализованный график цены акции с маркерами событий.
 
     Цена нормируется к normalize_date = 100.
-    Если cpi_normalized=True — сначала корректируется на инфляцию
-    через real_ruble из load_normalized_ipc_data.
+    Если cpi_normalized=True — корректируется на инфляцию через real_ruble.
+    Если передан events_df — показываются маркеры событий на цене:
+      при наведении отображается текст события и затемняется интервал date_start–date_end.
 
     Параметры:
         stock_data:      DataFrame с колонками DATE и CLOSE
@@ -102,8 +127,7 @@ def plot_price_real(
         cpi_normalized:  применять поправку на инфляцию
         cpi_base_date:   базовая дата для CPI (только при cpi_normalized=True)
         cpi_type:        тип ИПЦ (только при cpi_normalized=True)
-        events_df:       опционально — DataFrame с колонками date_start и event
-                         для отрисовки вертикальных меток событий
+        events_df:       опционально — DataFrame с колонками id, date_start, date_end, event
         title:           заголовок графика
     """
     stock = stock_data.copy()
@@ -132,53 +156,114 @@ def plot_price_real(
 
     price_norm = price_series / ref_price * 100
 
-    fig = go.Figure()
+    x = pd.Series(dates.values)
+    y = pd.Series(price_norm)
 
+    cpi_label = f', поправка на ИПЦ (база {cpi_base_date})' if cpi_normalized else ''
+    default_title = title or f'Нормализованная цена акции{cpi_label}, {normalize_date} = 100'
+
+    fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=dates,
-        y=price_norm,
+        x=x,
+        y=y,
         mode='lines',
         line=dict(color='steelblue', width=2),
         name='Цена акции',
-        hovertemplate='%{x|%d.%m.%Y}: %{y:.1f}<extra></extra>',
+        hovertemplate='%{x|%d.%m.%Y}: %{y:.2f}<extra></extra>',
+        showlegend=True,
     ))
 
-    fig.add_hline(
-        y=100,
-        line_dash='dash', line_color='red', line_width=1.5,
-        annotation_text=f'{normalize_date} = 100',
-        annotation_position='top left'
-    )
-
+    events = None
     if events_df is not None:
-        ev = events_df.copy()
-        ev['date_start'] = pd.to_datetime(ev['date_start'])
-        for _, row in ev.iterrows():
-            ev_date = row['date_start']
-            if ev_date >= dates.min():
-                fig.add_vline(
-                    x=ev_date,
-                    line_width=1, line_dash='dot',
-                    line_color='rgba(200,50,50,0.5)'
-                )
+        events = events_df.copy()
+        events['date_start'] = pd.to_datetime(events['date_start'])
+        events['date_end'] = pd.to_datetime(events['date_end'])
 
-    cpi_label = f', поправка на ИПЦ (база {cpi_base_date})' if cpi_normalized else ''
+        if 'id' not in events.columns:
+            raise ValueError("events_df must contain column 'id'")
+
+        for _, row in events.iterrows():
+            start = row['date_start']
+            end = row['date_end']
+            label = row['event']
+            event_id = row['id']
+
+            idx = (x - start).abs().idxmin()
+            y_value = y.loc[idx]
+
+            fig.add_trace(go.Scatter(
+                x=[start],
+                y=[y_value],
+                mode='markers',
+                marker=dict(size=9, color='crimson', line=dict(color='white', width=1)),
+                hovertemplate=(
+                    f'<b>{label}</b><br>'
+                    f'{start.date()} – {end.date() if pd.notnull(end) else "..."}'
+                    '<extra></extra>'
+                ),
+                customdata=[event_id],
+                showlegend=False,
+            ))
+
     fig.update_layout(
-        title=title or f'Нормализованная цена акции{cpi_label}, {normalize_date} = 100',
-        xaxis_title='Дата',
+        title=default_title,
+        xaxis=dict(
+            title='Дата',
+            showspikes=True,
+            spikemode='across',
+            spikesnap='cursor',
+            spikecolor='rgba(100,100,100,0.4)',
+            spikethickness=1,
+            spikedash='dot',
+        ),
         yaxis_title=f'Индекс ({normalize_date} = 100)',
         template='plotly_white',
         height=500,
-        hovermode='x unified',
+        hovermode='closest',
     )
 
-    return fig
+    app = Dash(__name__)
+    app.layout = html.Div([
+        dcc.Graph(id='price-real-graph', figure=fig, clear_on_unhover=True)
+    ])
+
+    @app.callback(
+        Output('price-real-graph', 'figure'),
+        Input('price-real-graph', 'hoverData')
+    )
+    def highlight_interval(hoverData):
+        patched = Patch()
+
+        if hoverData and hoverData.get('points') and events is not None:
+            cd = hoverData['points'][0].get('customdata')
+            if isinstance(cd, (list, tuple)):
+                cd = cd[0] if cd else None
+
+            if cd is not None:
+                row = events.loc[events['id'] == cd].iloc[0]
+                patched['layout']['shapes'] = [{
+                    'type': 'rect',
+                    'x0': str(row['date_start']),
+                    'x1': str(row['date_end']),
+                    'y0': 0,
+                    'y1': 1,
+                    'yref': 'paper',
+                    'fillcolor': 'rgba(0,0,0,0.10)',
+                    'line': {'width': 0},
+                    'layer': 'below',
+                }]
+                return patched
+
+        patched['layout']['shapes'] = []
+        return patched
+
+    return _DashApp(app)
 
 
 def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
     """
     Dash-приложение: график цены акции с маркерами событий.
-    При наведении на маркер подсвечивает интервал события.
+    При наведении на маркер показывает текст события и затемняет интервал date_start–date_end.
 
     events должен содержать колонки: id, date_start, date_end, event
     """
@@ -192,90 +277,62 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
     if "id" not in events.columns:
         raise ValueError("events must contain column 'id'")
 
-    def make_figure(highlight_event_id=None):
-        fig = go.Figure()
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode="lines",
+        name="Цена акции",
+        line=dict(color="steelblue", width=2),
+        hovertemplate='%{x|%d.%m.%Y}: %{y:.2f}<extra></extra>',
+        showlegend=True
+    ))
+
+    for _, row in events.iterrows():
+        start = row["date_start"]
+        end = row["date_end"]
+        label = row["event"]
+        event_id = row["id"]
+
+        idx = (x - start).abs().idxmin()
+        y_value = y.loc[idx]
 
         fig.add_trace(go.Scatter(
-            x=x,
-            y=y,
-            mode="lines",
-            name="Цена акции",
-            line=dict(color="steelblue", width=2),
-            hoverinfo="none",
-            hovertemplate=None,
-            showlegend=True
+            x=[start],
+            y=[y_value],
+            mode="markers",
+            marker=dict(size=9, color="crimson", line=dict(color="white", width=1)),
+            hovertemplate=(
+                f"<b>{label}</b><br>"
+                f"{start.date()} – {end.date() if pd.notnull(end) else '...'}"
+                "<extra></extra>"
+            ),
+            customdata=[event_id],
+            showlegend=False
         ))
 
-        highlight_x, highlight_y = [None], [None]
-        if highlight_event_id is not None:
-            row = events.loc[events["id"] == highlight_event_id].iloc[0]
-            start, end = row["date_start"], row["date_end"]
-            mask = (x >= start) & (x <= end) if pd.notnull(end) else (x >= start)
-            hx, hy = x[mask], y[mask]
-            if len(hx) > 0:
-                highlight_x, highlight_y = hx, hy
-
-        fig.add_trace(go.Scatter(
-            x=highlight_x,
-            y=highlight_y,
-            mode="lines",
-            name="Период события",
-            line=dict(color="red", width=4),
-            hoverinfo="none",
-            hovertemplate=None,
-            showlegend=True
-        ))
-
-        for _, row in events.iterrows():
-            start = row["date_start"]
-            end = row["date_end"]
-            label = row["event"]
-            event_id = row["id"]
-
-            idx = (x - start).abs().idxmin()
-            y_value = y.loc[idx]
-
-            fig.add_trace(go.Scatter(
-                x=[start],
-                y=[y_value],
-                mode="markers",
-                marker=dict(size=12, color="red", line=dict(color="black", width=1)),
-                hovertemplate=(
-                    f"<b>{label}</b><br>"
-                    f"Период: {start.date()} – {end.date() if pd.notnull(end) else 'N/A'}"
-                    "<extra></extra>"
-                ),
-                customdata=[event_id],
-                showlegend=False
-            ))
-
-        fig.update_layout(
-            title=title or "График цены с событиями",
-            xaxis_title=xlabel or "Дата",
-            yaxis_title=ylabel or "Цена закрытия",
-            template="plotly_white",
-            height=600,
-            hovermode="closest",
-            margin=dict(l=40, r=40, t=70, b=40),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.08,
-                xanchor="center",
-                x=0.5,
-                bgcolor="rgba(255,255,255,0.85)",
-                bordercolor="lightgray",
-                borderwidth=1,
-                font=dict(size=12)
-            )
-        )
-
-        return fig
+    fig.update_layout(
+        title=title or "График цены с событиями",
+        xaxis=dict(
+            title=xlabel or "Дата",
+            showspikes=True,
+            spikemode='across',
+            spikesnap='cursor',
+            spikecolor='rgba(100,100,100,0.4)',
+            spikethickness=1,
+            spikedash='dot',
+        ),
+        yaxis_title=ylabel or "Цена закрытия",
+        template="plotly_white",
+        height=600,
+        hovermode="closest",
+        margin=dict(l=40, r=40, t=70, b=40),
+    )
 
     app = Dash(__name__)
     app.layout = html.Div([
-        html.H3("График цены с событиями", style={"textAlign": "center"}),
-        dcc.Graph(id="events-graph", figure=make_figure(), clear_on_unhover=True)
+        dcc.Graph(id="events-graph", figure=fig, clear_on_unhover=True)
     ])
 
     @app.callback(
@@ -283,7 +340,7 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
         Input("events-graph", "hoverData")
     )
     def highlight_interval(hoverData):
-        highlight_x, highlight_y = [None], [None]
+        patched = Patch()
 
         if hoverData and hoverData.get("points"):
             cd = hoverData["points"][0].get("customdata")
@@ -292,15 +349,20 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
 
             if cd is not None:
                 row = events.loc[events["id"] == cd].iloc[0]
-                start, end = row["date_start"], row["date_end"]
-                mask = (x >= start) & (x <= end) if pd.notnull(end) else (x >= start)
-                hx, hy = x[mask], y[mask]
-                if len(hx) > 0:
-                    highlight_x, highlight_y = hx, hy
+                patched["layout"]["shapes"] = [{
+                    "type": "rect",
+                    "x0": str(row["date_start"]),
+                    "x1": str(row["date_end"]),
+                    "y0": 0,
+                    "y1": 1,
+                    "yref": "paper",
+                    "fillcolor": "rgba(0,0,0,0.10)",
+                    "line": {"width": 0},
+                    "layer": "below",
+                }]
+                return patched
 
-        patched = Patch()
-        patched["data"][1]["x"] = list(highlight_x)
-        patched["data"][1]["y"] = list(highlight_y)
+        patched["layout"]["shapes"] = []
         return patched
 
-    return app
+    return _DashApp(app)

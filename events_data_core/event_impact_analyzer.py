@@ -1,8 +1,11 @@
 """
 Анализ влияния события на котировки акции.
 
-Основная функция: analyze_event_impact()
-Возвращает EventImpactResult с набором метрик для окна вокруг даты события.
+Основные функции:
+    analyze_event_impact()  — одно событие
+    analyze_events_impact() — батч событий (данные загружаются один раз)
+
+Возвращают EventImpactResult с набором метрик для окна вокруг даты события.
 """
 from __future__ import annotations
 
@@ -88,36 +91,16 @@ class EventImpactResult:
     """Коэффициент объёма: volume_after / volume_before."""
 
 
-def analyze_event_impact(
-        ticker: str,
-        event_date: str | pd.Timestamp,
+def _prepare_stock_data(
+        stock: pd.DataFrame,
         params: EventImpactParams,
-        event_text: str = '',
-        neighbor_dates: Optional[list] = None,
-) -> Optional[EventImpactResult]:
+) -> tuple[pd.Series, pd.Series, pd.DatetimeIndex, float]:
     """
-    Рассчитывает метрики влияния события на котировки акции.
-
-    Параметры:
-        ticker:         тикер акции (например, 'LKOH')
-        event_date:     дата события (ключевая дата — начало события)
-        params:         параметры анализа (окно, baseline, CPI и др.)
-        event_text:     текстовое описание события
-        neighbor_dates: список дат соседних событий того же типа
-                        для адаптивного обрезания окна;
-                        если None — используется полное окно params.window
-
-    Возвращает:
-        EventImpactResult или None, если данных недостаточно для расчёта
+    Подготавливает ряды цены и объёма, вычисляет базовую дневную доходность.
+    Возвращает: price, vol_series, t_days, baseline_daily
     """
-    event_date = pd.Timestamp(event_date)
-
-    # ── 1. Загрузка данных акции ─────────────────────────────────────────
-    stock = get_stock_data(ticker)
-    stock['DATE'] = pd.to_datetime(stock['DATE'])
     stock = stock.sort_values('DATE').reset_index(drop=True)
 
-    # ── 2. Нормализация по ИПЦ ───────────────────────────────────────────
     if params.normalize_cpi:
         cpi_norm = load_normalized_ipc_data(params.cpi_type, base_year=params.cpi_base_date)
         cpi_norm['date'] = pd.to_datetime(cpi_norm['date'])
@@ -133,14 +116,28 @@ def analyze_event_impact(
     vol_series = stock.set_index('DATE')['VOL']
     t_days = price.index.sort_values()
 
-    # ── 3. Базовая дневная доходность (для CAR) ──────────────────────────
     baseline_idx = t_days[
         (t_days >= params.baseline_start) & (t_days <= params.baseline_end)
     ]
-    baseline_returns = price.reindex(baseline_idx).dropna().pct_change().dropna()
-    baseline_daily = baseline_returns.mean()
+    baseline_daily = price.reindex(baseline_idx).dropna().pct_change().dropna().mean()
 
-    # ── 4. Границы окна ──────────────────────────────────────────────────
+    return price, vol_series, t_days, baseline_daily
+
+
+def _compute_event_metrics(
+        ticker: str,
+        event_date: pd.Timestamp,
+        event_text: str,
+        price: pd.Series,
+        vol_series: pd.Series,
+        t_days: pd.DatetimeIndex,
+        baseline_daily: float,
+        params: EventImpactParams,
+        neighbor_dates: Optional[list] = None,
+) -> Optional[EventImpactResult]:
+    """Вычисляет метрики для одного события на основе уже подготовленных данных."""
+
+    # ── Границы окна ──────────────────────────────────────────────────────
     if neighbor_dates is not None:
         neighbor_ts = pd.to_datetime(neighbor_dates)
         prev_events = neighbor_ts[neighbor_ts < event_date]
@@ -167,24 +164,17 @@ def analyze_event_impact(
     if len(p_before) < 2 or len(p_after) < 2:
         return None
 
-    # ── 5. Метрики ────────────────────────────────────────────────────────
-
-    # Доходность точечная
+    # ── Метрики ───────────────────────────────────────────────────────────
     point_return_pct = (p_after.iloc[-1] - p_before.iloc[0]) / p_before.iloc[0] * 100
-
-    # Доходность средняя
     avg_return_pct = (p_after.mean() - p_before.mean()) / p_before.mean() * 100
 
-    # CAR
     abnormal = p_after.pct_change().dropna() - baseline_daily
     car_pct = abnormal.sum() * 100
 
-    # Волатильность
     vol_before_pct = p_before.pct_change().dropna().std() * 100
     vol_after_pct = p_after.pct_change().dropna().std() * 100
     vol_ratio = round(vol_after_pct / vol_before_pct, 2) if vol_before_pct > 0 else float('nan')
 
-    # Объём
     volume_before = v_before.mean()
     volume_after = v_after.mean()
     volume_ratio = round(volume_after / volume_before, 2) if volume_before > 0 else float('nan')
@@ -206,3 +196,81 @@ def analyze_event_impact(
         volume_after=round(volume_after),
         volume_ratio=volume_ratio,
     )
+
+
+def analyze_event_impact(
+        ticker: str,
+        event_date: str | pd.Timestamp,
+        params: EventImpactParams,
+        event_text: str = '',
+        neighbor_dates: Optional[list] = None,
+) -> Optional[EventImpactResult]:
+    """
+    Рассчитывает метрики влияния одного события на котировки акции.
+
+    Параметры:
+        ticker:         тикер акции (например, 'LKOH')
+        event_date:     дата события (ключевая дата — начало события)
+        params:         параметры анализа (окно, baseline, CPI и др.)
+        event_text:     текстовое описание события
+        neighbor_dates: список дат соседних событий для адаптивного обрезания окна;
+                        если None — используется полное окно params.window
+
+    Возвращает:
+        EventImpactResult или None, если данных недостаточно для расчёта
+    """
+    event_date = pd.Timestamp(event_date)
+    stock = get_stock_data(ticker)
+    price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
+
+    return _compute_event_metrics(
+        ticker, event_date, event_text,
+        price, vol_series, t_days, baseline_daily,
+        params, neighbor_dates,
+    )
+
+
+def analyze_events_impact(
+        ticker: str,
+        events: pd.DataFrame,
+        params: EventImpactParams,
+        date_col: str = 'date_start',
+        text_col: str = 'event',
+) -> list[Optional[EventImpactResult]]:
+    """
+    Батч-анализ влияния списка событий на котировки акции.
+
+    Все даты событий автоматически используются как neighbor_dates для адаптивного обрезания окна.
+
+    Параметры:
+        ticker:   тикер акции (например, 'LKOH')
+        events:   DataFrame с событиями
+        params:   параметры анализа
+        date_col: название колонки с датой события (по умолчанию 'date_start')
+        text_col: название колонки с текстом события (по умолчанию 'event')
+
+    Возвращает:
+        Список EventImpactResult (или None для событий с недостаточными данными),
+        в том же порядке, что и строки events.
+    """
+    stock = get_stock_data(ticker)
+    price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
+
+    neighbor_dates = pd.to_datetime(events[date_col]).tolist()
+
+    results = []
+    for _, row in events.iterrows():
+        result = _compute_event_metrics(
+            ticker=ticker,
+            event_date=pd.Timestamp(row[date_col]),
+            event_text=row.get(text_col, ''),
+            price=price,
+            vol_series=vol_series,
+            t_days=t_days,
+            baseline_daily=baseline_daily,
+            params=params,
+            neighbor_dates=neighbor_dates,
+        )
+        results.append(result)
+
+    return results
