@@ -3,6 +3,18 @@ import os
 
 import pandas as pd
 
+STOCKS_FOLDER = "../stocks"
+
+
+def list_avail_tickers() -> list[str]:
+    """Возвращает список доступных тикеров на основе файлов в папке STOCKS_FOLDER."""
+    tickers = []
+    for filename in os.listdir(STOCKS_FOLDER):
+        name, _ = os.path.splitext(filename)
+        ticker = name.split('_')[0].upper()
+        tickers.append(ticker)
+    return sorted(tickers)
+
 
 def load_stock_data(csv_path: str) -> pd.DataFrame:
     """
@@ -63,23 +75,82 @@ def load_normalized_stock(ticker: str, csv_path: str, splits_path: str = "../sto
     return df.drop('ADJ_FACTOR', axis=1)
 
 
-def get_stock_data(ticker: str, normalized: bool = True) -> pd.DataFrame:
+def _find_stock_file(ticker: str) -> str:
+    """Возвращает путь к файлу котировок по тикеру или бросает ValueError."""
+    for filename in os.listdir(STOCKS_FOLDER):
+        if filename.startswith(ticker):
+            return os.path.join(STOCKS_FOLDER, filename)
+    raise ValueError(
+        f"Тикер '{ticker}' не найден. "
+        f"Доступные тикеры: {', '.join(list_avail_tickers())}"
+    )
+
+
+def get_stock_data(
+        ticker: str,
+        normalized: bool = True,
+        start_date: str | None = None,
+        end_date: str | None = None,
+) -> pd.DataFrame:
     """
     Возвращает DataFrame с котировками для указанного тикера.
     Определяет нужный файл по совпадению начала имени файла (prefix match).
+
+    Параметры:
+        ticker:     тикер акции (например, 'LKOH')
+        normalized: учитывать сплиты и обратные сплиты
+        start_date: фильтр с даты включительно (например, '2020-01-01')
+        end_date:   фильтр по дату включительно (например, '2022-12-31')
     """
     ticker = ticker.upper()
+    file_path = _find_stock_file(ticker)
 
-    file_path = None
-    for filename in os.listdir(STOCKS_FOLDER):
-        if filename.startswith(ticker):
-            file_path = os.path.join(STOCKS_FOLDER, filename)
-            break
+    df = load_normalized_stock(ticker, file_path) if normalized else load_stock_data(file_path)
 
-    if normalized:
-        return load_normalized_stock(ticker, file_path)
+    if start_date is not None:
+        df = df[df['DATE'] >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        df = df[df['DATE'] <= pd.Timestamp(end_date)]
 
-    return load_stock_data(file_path)
+    return df.reset_index(drop=True)
 
 
-STOCKS_FOLDER = "../stocks"
+def get_ticker_info(
+        ticker: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+) -> dict:
+    """
+    Возвращает метаинформацию о тикере.
+
+    Параметры:
+        ticker:     тикер акции
+        start_date: начало периода (опционально)
+        end_date:   конец периода (опционально)
+
+    Возвращает словарь с ключами:
+        ticker:        тикер акции
+        date_from:     первая дата в данных (с учётом фильтра)
+        date_to:       последняя дата в данных (с учётом фильтра)
+        trading_days:  количество торговых дней (с учётом фильтра)
+        has_splits:    есть ли сплиты в splits.json
+        splits:        список сплитов с датами и коэффициентами
+    """
+    ticker = ticker.upper()
+    file_path = _find_stock_file(ticker)
+    df = load_stock_data(file_path)
+    splits = get_ticker_splits(ticker)
+
+    if start_date is not None:
+        df = df[df['DATE'] >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        df = df[df['DATE'] <= pd.Timestamp(end_date)]
+
+    return {
+        "ticker": ticker,
+        "date_from": df['DATE'].min().date(),
+        "date_to": df['DATE'].max().date(),
+        "trading_days": len(df),
+        "has_splits": len(splits) > 0,
+        "splits": splits,
+    }
