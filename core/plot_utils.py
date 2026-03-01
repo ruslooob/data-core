@@ -1,4 +1,5 @@
 import socket
+import uuid
 from typing import List, Optional
 
 import pandas as pd
@@ -222,7 +223,7 @@ def plot_price_real(
         hovermode='closest',
     )
 
-    app = Dash(__name__)
+    app = Dash(f'{__name__}_{uuid.uuid4().hex[:8]}')
     app.layout = html.Div([
         dcc.Graph(id='price-real-graph', figure=fig, clear_on_unhover=True)
     ])
@@ -330,7 +331,7 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
         margin=dict(l=40, r=40, t=70, b=40),
     )
 
-    app = Dash(__name__)
+    app = Dash(f'{__name__}_{uuid.uuid4().hex[:8]}')
     app.layout = html.Div([
         dcc.Graph(id="events-graph", figure=fig, clear_on_unhover=True)
     ])
