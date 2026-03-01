@@ -2,85 +2,110 @@ import spacy
 from spacy.matcher import Matcher
 from spacy.util import filter_spans
 
-nlp = spacy.load("ru_core_news_lg")
 
-matcher = Matcher(nlp.vocab)
+class PlaneCrashClassifier:
+    def __init__(self, model_name: str = "ru_core_news_lg"):
+        self._model_name = model_name
+        self._nlp = None
+        self._matcher = None
 
-# --- списки слов ---
-aircraft_terms = [
-    "самол[её]т", "авиалайнер", "вертол[её]т", "истребитель",
-    "ту-", "ан-", "ил-", "ми-", "миг-", "cy-", "як-", "superjet", "боинг", "airbus",
-]
-crash_verbs = ["разбиться", "рухнуть", "упасть", "потерпеть"]
+    def _ensure_loaded(self):
+        if self._nlp is not None:
+            return
 
-# === глагольные случаи (самолет разбился) ===
-pattern_verb = [
-    {"LOWER": {"REGEX": "|".join(aircraft_terms)}},
-    {"TEXT": {"REGEX": ".+"}, "OP": "*"},
-    {"LEMMA": {"IN": crash_verbs}}
-]
-# (разбился самолет)
-pattern_verb_reversed = [
-    {"LEMMA": {"IN": crash_verbs}},
-    {"TEXT": {"REGEX": ".+"}, "OP": "*"},
-    {"LOWER": {"REGEX": "|".join(aircraft_terms)}}
-]
-matcher.add("PLANE_CRASH_EVENT", [pattern_verb, pattern_verb_reversed])
+        self._nlp = spacy.load(self._model_name)
+        self._matcher = Matcher(self._nlp.vocab)
+        self._setup_default_patterns()
 
-# === Само по себе слово авиакатастрофа автоматически сигнализирует о матче ===
-plane_crash_pattern = [[{"LEMMA": {"IN": ["авиакатастрофа"]}}]]
-matcher.add("CRASH_EVENT", plane_crash_pattern)
+    def _setup_default_patterns(self):
+        aircraft_terms = [
+            "самол[её]т", "авиалайнер", "вертол[её]т", "истребитель",
+            "ту-", "ан-", "ил-", "ми-", "миг-", "cy-", "як-", "superjet", "боинг", "airbus",
+        ]
+        crash_verbs = ["разбиться", "рухнуть", "упасть", "потерпеть"]
+        crash_nouns = ["крушение", "столкновение", "авария", "катастрофа"]
 
-# === существительные случаи (крушение) ===
-crash_nouns = ["крушение", "столкновение", "авария", "катастрофа"]
-# (крушение самолета)
-pattern_noun = [
-    {"LEMMA": {"IN": crash_nouns}},
-    {"TEXT": {"REGEX": ".+"}, "OP": "*"},
-    {"LOWER": {"REGEX": "|".join(aircraft_terms)}}
-]
-# (самолет совершил столкновение)
-pattern_noun_reversed = [
-    {"LOWER": {"REGEX": "|".join(aircraft_terms)}},
-    {"TEXT": {"REGEX": ".+"}, "OP": "*"},
-    {"LEMMA": {"IN": crash_nouns}}
-]
-matcher.add("PLANE_CRASH_EVENT", [pattern_noun, pattern_noun_reversed])
+        # === глагольные случаи (самолет разбился) ===
+        pattern_verb = [
+            {"LOWER": {"REGEX": "|".join(aircraft_terms)}},
+            {"TEXT": {"REGEX": ".+"}, "OP": "*"},
+            {"LEMMA": {"IN": crash_verbs}}
+        ]
+        # (разбился самолет)
+        pattern_verb_reversed = [
+            {"LEMMA": {"IN": crash_verbs}},
+            {"TEXT": {"REGEX": ".+"}, "OP": "*"},
+            {"LOWER": {"REGEX": "|".join(aircraft_terms)}}
+        ]
+        self._matcher.add("PLANE_CRASH_EVENT", [pattern_verb, pattern_verb_reversed])
 
-# === отдельного внимания заслуживает аварийная посадка
-pattern_emergency = [
-    {"LEMMA": "аварийный"},
-    {"LEMMA": "посадка"},
-    {"LOWER": {"REGEX": "|".join(aircraft_terms)}, "OP": "?"}
-]
-matcher.add("PLANE_CRASH_EVENT", [pattern_emergency])
+        # === Само по себе слово авиакатастрофа автоматически сигнализирует о матче ===
+        self._matcher.add("PLANE_CRASH_EVENT", [[{"LEMMA": {"IN": ["авиакатастрофа"]}}]])
 
+        # === существительные случаи (крушение самолета) ===
+        pattern_noun = [
+            {"LEMMA": {"IN": crash_nouns}},
+            {"TEXT": {"REGEX": ".+"}, "OP": "*"},
+            {"LOWER": {"REGEX": "|".join(aircraft_terms)}}
+        ]
+        # (самолет потерпел крушение)
+        pattern_noun_reversed = [
+            {"LOWER": {"REGEX": "|".join(aircraft_terms)}},
+            {"TEXT": {"REGEX": ".+"}, "OP": "*"},
+            {"LEMMA": {"IN": crash_nouns}}
+        ]
+        self._matcher.add("PLANE_CRASH_EVENT", [pattern_noun, pattern_noun_reversed])
 
-def find_matches(text):
-    doc = nlp(text)
+        # === аварийная посадка ===
+        pattern_emergency = [
+            {"LEMMA": "аварийный"},
+            {"LEMMA": "посадка"},
+            {"LOWER": {"REGEX": "|".join(aircraft_terms)}, "OP": "?"}
+        ]
+        self._matcher.add("PLANE_CRASH_EVENT", [pattern_emergency])
 
-    # === поиск ===
-    matches = matcher(doc)
+    def add_pattern(self, name: str, patterns: list):
+        """Добавить пользовательский паттерн к матчеру."""
+        self._ensure_loaded()
+        self._matcher.add(name, patterns)
 
-    # --- собираем спаны с метками ---
-    spans = []
-    for match_id, start, end in matches:
-        label = nlp.vocab.strings[match_id]
-        span = doc[start:end]
-        spans.append((label, span))
+    def find_matches(self, text: str) -> list[tuple[str, object]]:
+        """
+        Найти совпадения в тексте.
+        Возвращает список (label, span) — по одному самому длинному спану на предложение.
+        """
+        self._ensure_loaded()
+        doc = self._nlp(text)
+        matches = self._matcher(doc)
 
-    # --- убираем дубликаты и вложенные спаны ---
-    unique_spans = filter_spans([s for _, s in spans])
+        spans_with_labels = [
+            (self._nlp.vocab.strings[match_id], doc[start:end])
+            for match_id, start, end in matches
+        ]
 
-    final_spans = []
-    for sent in doc.sents:
-        sent_spans = [s for s in unique_spans if s.start >= sent.start and s.end <= sent.end]
-        if sent_spans:
-            # берём самый длинный (по количеству токенов)
-            longest = max(sent_spans, key=lambda s: s.end - s.start)
-            final_spans.append(longest)
-    return final_spans
+        # убираем вложенные/дублирующиеся спаны
+        filtered_keys = {(s.start, s.end) for s in filter_spans([s for _, s in spans_with_labels])}
+        filtered = [(l, s) for l, s in spans_with_labels if (s.start, s.end) in filtered_keys]
 
+        # берём самый длинный спан на каждое предложение
+        final = []
+        for sent in doc.sents:
+            sent_spans = [(l, s) for l, s in filtered if s.start >= sent.start and s.end <= sent.end]
+            if sent_spans:
+                final.append(max(sent_spans, key=lambda ls: ls[1].end - ls[1].start))
+        return final
 
-def is_plane_crash(text):
-    return bool(find_matches(text))
+    def is_plane_crash(self, text: str) -> bool:
+        """Вернуть True, если текст описывает авиакатастрофу."""
+        return bool(self.find_matches(text))
+
+    def classify_series(self, texts) -> list[bool]:
+        """
+        Классифицировать список текстов.
+        Использует nlp.pipe() для батч-обработки — быстрее, чем is_plane_crash по одному.
+        """
+        self._ensure_loaded()
+        return [
+            bool(self._matcher(doc))
+            for doc in self._nlp.pipe(texts)
+        ]
