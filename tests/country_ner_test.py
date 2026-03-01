@@ -1,7 +1,7 @@
 import pytest
 
-from events_data_core.country_normalization import normalize_list, normalize_country
-from events_data_core.location_recognition import extract_loc
+from core.archive.country_normalization import normalize_list, normalize_country
+from core.archive.location_recognition import extract_loc
 
 
 @pytest.mark.parametrize("text,expected", [

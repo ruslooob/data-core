@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from dash import Dash, html, dcc, Input, Output, Patch
 import plotly.graph_objects as go
 
-from events_data_core.cpi_data_provider import load_normalized_ipc_data, IpcType
+from core.cpi_data_provider import load_normalized_ipc_data, IpcType
 
 
 def _find_free_port(min_port: int = 10001) -> int:

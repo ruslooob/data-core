@@ -3,7 +3,7 @@ import os
 
 import pandas as pd
 
-STOCKS_FOLDER = "../stocks"
+STOCKS_FOLDER = "../data/stocks"
 
 
 def list_avail_tickers() -> list[str]:
@@ -46,14 +46,14 @@ def load_stock_data(csv_path: str) -> pd.DataFrame:
     return df[['DATE', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOL']]
 
 
-def get_ticker_splits(ticker: str, splits_path: str = "../stocks/splits.json") -> list[dict]:
+def get_ticker_splits(ticker: str, splits_path: str = "../data/stocks/splits.json") -> list[dict]:
     """Возвращает список сплитов по тикеру из splits.json."""
     with open(splits_path, "r", encoding="utf-8") as f:
         splits = json.load(f)
     return splits.get(ticker, [])
 
 
-def load_normalized_stock(ticker: str, csv_path: str, splits_path: str = "../stocks/splits.json") -> pd.DataFrame:
+def load_normalized_stock(ticker: str, csv_path: str, splits_path: str = "../data/stocks/splits.json") -> pd.DataFrame:
     """Возвращает нормализованные данные котировок акции. Учитывает сплиты и обратные сплиты."""
     df = load_stock_data(csv_path)
 

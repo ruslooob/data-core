@@ -1,4 +1,7 @@
 ﻿code,name,type
+PLANE_CRASH,,
+SANCTIONS,,
+OIL,,
 AFG,Afghanistan,country
 ALB,Albania,country
 DZA,Algeria,country
@@ -248,6 +251,3 @@ YEM,Yemen,country
 ZMB,Zambia,country
 ZWE,Zimbabwe,country
 ALA,Åland Islands,country
-PLANE_CRASH,Авиакатастрофа,topic
-SANCTIONS,Санкции,topic
-OIL,Нефть,asset

@@ -14,8 +14,8 @@ from typing import Optional
 
 import pandas as pd
 
-from events_data_core.cpi_data_provider import load_normalized_ipc_data, IpcType
-from events_data_core.stock_data_provider import get_stock_data
+from core.cpi_data_provider import load_normalized_ipc_data, IpcType
+from core.stock_data_provider import get_stock_data
 
 
 @dataclass

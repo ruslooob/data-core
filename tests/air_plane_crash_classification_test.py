@@ -1,6 +1,6 @@
 import pytest
 
-from events_data_core.air_plane_crash_classification import is_plane_crash
+from core.air_plane_crash_classification import is_plane_crash
 
 test_in_out = [
     ("Крушение авиалайнера «Saab 340» авиакомпании «Crossair» у деревни Нассенвиль.", True),

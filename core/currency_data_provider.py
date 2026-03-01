@@ -3,7 +3,7 @@ import warnings
 
 import pandas as pd
 
-CURRENCY_FOLDER = '../currencies'
+CURRENCY_FOLDER = '../data/currencies'
 
 
 def list_avail_currency_pairs() -> list[str]:
