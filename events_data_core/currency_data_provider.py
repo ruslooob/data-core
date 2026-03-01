@@ -1,4 +1,5 @@
 import os
+import warnings
 
 import pandas as pd
 
@@ -40,13 +41,12 @@ def is_currency_pair_available(pair: str) -> bool:
 
 
 def get_currency_data(pair: str) -> pd.DataFrame:
+    """Возвращает DataFrame с историей валютной пары (например, 'USD/RUB')"""
     if not is_currency_pair_available(pair):
         raise ValueError(
             f"Валютная пара '{pair}' не найдена. "
             f"Доступные пары: {', '.join(list_avail_currency_pairs())}"
         )
-
-    """Возвращает DataFrame с историей валютной пары (например, 'USD/RUB')"""
     pair = pair.upper().replace('/', '_')
 
     file_path = None
@@ -66,7 +66,9 @@ def get_currency_data(pair: str) -> pd.DataFrame:
                 invert = True
                 break
 
-    df = pd.read_excel(file_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        df = pd.read_excel(file_path)
     df = df[['data', 'curs']]
     df = df.rename(columns={
         'data': 'date',
