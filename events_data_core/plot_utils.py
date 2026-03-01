@@ -68,14 +68,16 @@ def plot_2d_interactive(x, y, xlabel=None, ylabel=None, title=None):
         height=600
     )
 
-    fig.show(renderer='browser')
+    return fig
 
 
 def plot_2d(x, y, xlabel=None, ylabel=None, title=None, mode='interactive'):
     if mode == 'interactive':
-        plot_2d_interactive(x, y, xlabel, ylabel, title)
+        return plot_2d_interactive(x, y, xlabel, ylabel, title)
     elif mode == 'plain':
-        plot_2d_static(x, y, xlabel, ylabel, title)
+        return plot_2d_static(x, y, xlabel, ylabel, title)
+    else:
+        raise NotImplementedError
 
 
 def plot_price_real(

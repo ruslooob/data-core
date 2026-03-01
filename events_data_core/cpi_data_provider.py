@@ -15,10 +15,14 @@ def load_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFram
     """
     Загружает и обрабатывает указанный лист Excel-файла с данными ИПЦ.
     Табличный формат удобен для восприятия и обработки.
+
+    Исходный файл Росстата содержит данные с 1991 года.
+    iloc[1:13] — берём только строки месяцев (12 штук), пропуская заголовок.
+    drop(columns[1:10]) — отбрасываем столбцы 1991–1999, оставляем с 2000 года.
     """
     df = pd.read_excel('../stats/ipc_mes_08-2025.xlsx', sheet_name=ipc_type.value, skiprows=3)
-    df = df.iloc[1:13]
-    df = df.drop(df.columns[1:10], axis=1)
+    df = df.iloc[1:13]           # строки месяцев (январь–декабрь)
+    df = df.drop(df.columns[1:10], axis=1)  # убираем годы 1991–1999
     df.columns.values[0] = 'месяц'
     return df
 
