@@ -1,2 +1,13 @@
+[project]
+name = "data-core"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [tool.pytest.ini_options]
 disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
