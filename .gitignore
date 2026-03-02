@@ -1,4 +1,6 @@
 .google-cookie
+*.egg-info/
+__pycache__/
 /.idea
 /data/events/*
 !data/events/1_raw
