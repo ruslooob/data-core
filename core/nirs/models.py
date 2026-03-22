@@ -144,9 +144,10 @@ class CAPMModel(BaseModel):
     def fit(self, stock_returns: pd.Series, ctx: MarketContext) -> None:
         excess_stock = stock_returns.values - ctx.rf_returns.values
         excess_market = ctx.market_returns.values - ctx.rf_returns.values
-        # beta = cov(excess_stock, excess_market) / var(excess_market)
-        beta, _ = np.polyfit(excess_market, excess_stock, 1)
-        self._beta = float(beta)
+        # Классический CAPM предполагает alpha = 0.
+        # beta = cov(ri−rf, rm−rf) / var(rm−rf) — МНК без свободного члена.
+        denom = float(np.dot(excess_market, excess_market))
+        self._beta = float(np.dot(excess_market, excess_stock) / denom) if denom != 0.0 else 1.0
 
     def predict(self, ctx: MarketContext) -> pd.Series:
         rf = ctx.rf_returns.values

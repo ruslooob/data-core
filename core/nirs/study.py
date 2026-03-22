@@ -210,12 +210,14 @@ class EventStudyRunner:
 
         # Выравниваем ряды по датам
         stock_est = stock.reindex(est_idx).dropna()
-        mkt_est   = self.market.reindex(est_idx).fillna(0.0)
-        rf_est    = self.rf.reindex(est_idx).fillna(0.0)
+        # ffill: переносим последнее известное значение на выходные/праздники;
+        # fillna(0.0) — страховка на случай пропусков в начале ряда.
+        mkt_est   = self.market.reindex(est_idx).ffill().fillna(0.0)
+        rf_est    = self.rf.reindex(est_idx).ffill().fillna(0.0)
 
         stock_ev  = stock.reindex(ev_idx).fillna(0.0)
-        mkt_ev    = self.market.reindex(ev_idx).fillna(0.0)
-        rf_ev     = self.rf.reindex(ev_idx).fillna(0.0)
+        mkt_ev    = self.market.reindex(ev_idx).ffill().fillna(0.0)
+        rf_ev     = self.rf.reindex(ev_idx).ffill().fillna(0.0)
 
         if len(stock_est) < 10:
             return None
@@ -298,36 +300,123 @@ class EventStudyRunner:
         """
         Запускает анализ для всех 27 конфигураций.
 
-        Для каждой конфигурации:
-            1. Вычисляет CompanyResult по каждой компании.
-            2. Усредняет mean_CAR по компаниям (equal-weighted).
-            3. Считает t-статистику по распределению mean_CAR компаний.
+        Для каждой конфигурации выполняется единый проход по событиям,
+        после чего вычисляются два уровня агрегации:
+            1. Уровень компаний (n=11): среднее mean_CAR по компаниям →
+               t-тест по 11 значениям (исходный подход).
+            2. Уровень событий (n≈110): t-тест напрямую по всем CARs →
+               более высокая мощность критерия (стандарт в литературе).
 
         Возвращает DataFrame[27 строк] с колонками:
             model, event_window, estimation_window,
-            mean_car, std_car, t_stat, p_value, significant
+            mean_car, std_car,
+            t_stat, p_value, significant           (компанейский уровень)
+            t_stat_events, p_value_events,
+            significant_events, n_events_total     (событийный уровень)
         """
         rows = []
         for config in self.ALL_CONFIGS:
-            company_results = self.analyze_all_events(events, config)
-            if not company_results:
+            # Единый проход: собираем CARs по компаниям и по всем событиям
+            by_ticker: dict[str, list[float]] = {}
+            all_event_cars: list[float] = []
+
+            for ev in events:
+                res = self.analyze_single_event(ev, config)
+                if res is None:
+                    continue
+                by_ticker.setdefault(res.ticker, []).append(res.car)
+                all_event_cars.append(res.car)
+
+            if not by_ticker:
                 continue
 
-            company_means = np.array([cr.mean_car for cr in company_results])
+            # --- Уровень компаний ---
+            company_means = np.array([
+                float(np.mean(cars)) for cars in by_ticker.values() if len(cars) >= 2
+            ])
+            if len(company_means) == 0:
+                continue
             n_comp = len(company_means)
-            mean   = float(company_means.mean())
-            std    = float(company_means.std(ddof=1)) if n_comp > 1 else 0.0
-            t_val, p_val = _ttest_1samp(company_means)
+            mean_c = float(company_means.mean())
+            std_c  = float(company_means.std(ddof=1)) if n_comp > 1 else 0.0
+            t_comp, p_comp = _ttest_1samp(company_means)
+
+            # --- Уровень событий ---
+            ev_arr = np.array(all_event_cars)
+            t_ev, p_ev = _ttest_1samp(ev_arr)
 
             rows.append({
-                "model":             config.model,
-                "event_window":      f"[{config.event_window[0]}, +{config.event_window[1]}]",
-                "estimation_window": config.estimation_window,
-                "mean_car":          round(mean, 6),
-                "std_car":           round(std, 6),
-                "t_stat":            round(t_val, 4),
-                "p_value":           round(p_val, 4),
-                "significant":       p_val < 0.05,
+                "model":               config.model,
+                "event_window":        f"[{config.event_window[0]}, +{config.event_window[1]}]",
+                "estimation_window":   config.estimation_window,
+                "mean_car":            round(mean_c, 6),
+                "std_car":             round(std_c, 6),
+                # Компанейский уровень (n=11)
+                "t_stat":              round(t_comp, 4),
+                "p_value":             round(p_comp, 4),
+                "significant":         p_comp < 0.05,
+                # Событийный уровень (n≈110)
+                "t_stat_events":       round(t_ev, 4),
+                "p_value_events":      round(p_ev, 4),
+                "significant_events":  p_ev < 0.05,
+                "n_events_total":      len(ev_arr),
             })
 
         return pd.DataFrame(rows)
+
+    def check_event_overlaps(
+        self,
+        events: list[Event],
+        config: EventStudyConfig,
+    ) -> pd.DataFrame:
+        """
+        Проверяет пересечение окон разных событий одной компании.
+
+        Для каждого события комбинированное окно = [est_start, ev_end].
+        Если у двух событий одной компании эти окна перекрываются,
+        оценочное окно второго события «загрязнено» аномальными доходностями
+        первого события, что нарушает независимость оценок.
+
+        Возвращает DataFrame с парами конфликтующих событий.
+        """
+        ew_start, ew_end = config.event_window
+        esw = config.estimation_window
+
+        by_ticker: dict[str, list[Event]] = {}
+        for ev in events:
+            by_ticker.setdefault(ev.ticker, []).append(ev)
+
+        overlap_rows = []
+        for ticker, evs in by_ticker.items():
+            if ticker not in self.prices:
+                continue
+            trading_days = self.prices[ticker].index.sort_values()
+
+            # Вычисляем торговые диапазоны [est_start, ev_end] для каждого события
+            ranges: list[tuple[Event, pd.Timestamp, pd.Timestamp]] = []
+            for ev in sorted(evs, key=lambda e: e.event_date):
+                t0   = pd.Timestamp(ev.event_date)
+                idx0 = int(trading_days.searchsorted(t0, side="left"))
+                if idx0 >= len(trading_days):
+                    continue
+                est_start_pos = idx0 + ew_start - 1 - esw + 1
+                ev_end_pos    = idx0 + ew_end
+                if est_start_pos < 0 or ev_end_pos >= len(trading_days):
+                    continue
+                ranges.append((ev, trading_days[est_start_pos], trading_days[ev_end_pos]))
+
+            # Попарная проверка пересечений
+            for i in range(len(ranges)):
+                for j in range(i + 1, len(ranges)):
+                    ev1, s1, e1 = ranges[i]
+                    ev2, s2, e2 = ranges[j]
+                    if s1 <= e2 and s2 <= e1:   # интервалы пересекаются
+                        overlap_rows.append({
+                            "ticker":  ticker,
+                            "event1":  ev1.event_date,
+                            "event2":  ev2.event_date,
+                            "window1": f"{s1.date()} – {e1.date()}",
+                            "window2": f"{s2.date()} – {e2.date()}",
+                        })
+
+        return pd.DataFrame(overlap_rows)
