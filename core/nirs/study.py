@@ -63,6 +63,7 @@ class EventResult:
     ar: list[float]          # аномальные доходности по дням окна
     car: float               # накопленная аномальная доходность
     n_days: int              # фактическое количество дней в окне
+    estimation_std: float    # σ аномальных доходностей в оценочном окне
 
 
 @dataclass
@@ -233,9 +234,14 @@ class EventStudyRunner:
 
         model = _make_model(config.model)
         model.fit(stock_est, ctx_est)
-        expected = model.predict(ctx_ev)
+        expected_ev = model.predict(ctx_ev)
 
-        ar = (stock_ev.values - expected.values).tolist()
+        # σ аномальных доходностей в оценочном окне
+        expected_est = model.predict(ctx_est)
+        residuals_est = stock_est.values - expected_est.values
+        estimation_std = float(np.std(residuals_est, ddof=1)) if len(residuals_est) > 1 else 0.0
+
+        ar = (stock_ev.values - expected_ev.values).tolist()
         car = float(np.sum(ar))
 
         return EventResult(
@@ -244,6 +250,7 @@ class EventStudyRunner:
             ar=ar,
             car=car,
             n_days=len(ev_idx),
+            estimation_std=estimation_std,
         )
 
     # ------------------------------------------------------------------
