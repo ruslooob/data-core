@@ -1,6 +1,8 @@
 import pytest
 
-from core.air_plane_crash_classification import is_plane_crash
+from core.air_plane_crash_classification import PlaneCrashClassifier
+
+classifier = PlaneCrashClassifier()
 
 test_in_out = [
     ("Крушение авиалайнера «Saab 340» авиакомпании «Crossair» у деревни Нассенвиль.", True),
@@ -19,5 +21,5 @@ test_in_out = [
 
 
 @pytest.mark.parametrize("text,expected", test_in_out)
-def test_normalize_sentence(text, expected):
-    assert is_plane_crash(text) == expected
+def test_is_plane_crash(text, expected):
+    assert classifier.is_plane_crash(text) == expected
