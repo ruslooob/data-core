@@ -4,7 +4,6 @@
 Датаклассы:
     EventStudyConfig  — конфигурация одного запуска (модель + окна)
     DividendEvent     — одно дивидендное событие
-    MarketContext     — (reexport из models) рыночные данные для окна
     EventResult       — результат по одному событию
     CompanyResult     — агрегат по одной компании (промежуточный вывод)
     StudyResult       — агрегат по всей выборке (одна строка из 27)
@@ -22,9 +21,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .models import (
-    BaseModel, MarketContext,
-    MeanAdjustedModel, MarketModel, CAPMModel,
+from core.expected_return_models import (
+    BaseModel, MeanAdjustedModel, MarketModel, CAPMModel,
 )
 
 # ---------------------------------------------------------------------------
@@ -229,15 +227,16 @@ class EventStudyRunner:
         mkt_est   = mkt_est.reindex(common_est)
         rf_est    = rf_est.reindex(common_est)
 
-        ctx_est = MarketContext(mkt_est, rf_est)
-        ctx_ev  = MarketContext(mkt_ev, rf_ev)
+        fit_kwargs = dict(stock_returns=stock_est, market_returns=mkt_est, rf_returns=rf_est)
+        predict_ev_kwargs = dict(dates=ev_idx, market_returns=mkt_ev, rf_returns=rf_ev)
+        predict_est_kwargs = dict(dates=common_est, market_returns=mkt_est, rf_returns=rf_est)
 
         model = _make_model(config.model)
-        model.fit(stock_est, ctx_est)
-        expected_ev = model.predict(ctx_ev)
+        model.fit(**fit_kwargs)
+        expected_ev = model.predict(**predict_ev_kwargs)
 
         # σ аномальных доходностей в оценочном окне
-        expected_est = model.predict(ctx_est)
+        expected_est = model.predict(**predict_est_kwargs)
         residuals_est = stock_est.values - expected_est.values
         estimation_std = float(np.std(residuals_est, ddof=1)) if len(residuals_est) > 1 else 0.0
 
