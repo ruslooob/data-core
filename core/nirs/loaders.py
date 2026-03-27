@@ -93,12 +93,10 @@ def load_prices(
     end_date: str | None = None,
 ) -> dict[str, pd.Series]:
     """
-    Загружает котировки всех инструментов из директории и возвращает
+    Загружает котировки из директории и возвращает
     словарь {ticker: pd.Series} дневных логдоходностей.
 
-    Особые случаи:
-        UPRO — объединяет два файла (Э.ОН Россия + Юнипро), устраняя
-               дубликаты по дате и сортируя по возрастанию.
+    Каждый тикер — один .txt файл. Имя файла начинается с тикера (до первого '_').
 
     Параметры:
         stocks_dir:  путь к директории с .txt файлами
@@ -110,24 +108,17 @@ def load_prices(
         dict {ticker: pd.Series} где index — pd.DatetimeIndex,
         значения — логдоходности.
     """
-    # Собираем файлы: ticker → [path, ...]
-    files_by_ticker: dict[str, list[str]] = {}
-    for fname in os.listdir(stocks_dir):
+    result: dict[str, pd.Series] = {}
+    for fname in sorted(os.listdir(stocks_dir)):
         if not fname.endswith(".txt"):
             continue
         ticker = fname.split("_")[0].upper()
-        full_path = os.path.join(stocks_dir, fname)
-        files_by_ticker.setdefault(ticker, []).append(full_path)
-
-    result: dict[str, pd.Series] = {}
-    for ticker, paths in sorted(files_by_ticker.items()):
         if tickers is not None and ticker not in tickers:
             continue
+        if ticker in result:
+            continue
 
-        # Объединяем все файлы тикера (актуально для UPRO)
-        frames = [_load_single_file(p) for p in sorted(paths)]
-        df = pd.concat(frames, ignore_index=True)
-        df = df.drop_duplicates(subset="DATE").sort_values("DATE")
+        df = _load_single_file(os.path.join(stocks_dir, fname))
 
         if start_date:
             df = df[df["DATE"] >= pd.Timestamp(start_date)]
