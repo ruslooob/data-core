@@ -115,6 +115,25 @@ def get_stock_data(
     return df.reset_index(drop=True)
 
 
+def get_log_returns(
+        ticker: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+) -> 'pd.Series':
+    """
+    Возвращает дневные логарифмические доходности для тикера.
+
+    Учитывает сплиты. Возвращает pd.Series с DatetimeIndex.
+    """
+    import numpy as np
+
+    df = get_stock_data(ticker, normalized=True, start_date=start_date, end_date=end_date)
+    prices = df.set_index('DATE')['CLOSE']
+    log_ret = np.log(prices / prices.shift(1)).dropna()
+    log_ret.index.name = 'date'
+    return log_ret
+
+
 def get_ticker_info(
         ticker: str,
         start_date: str | None = None,

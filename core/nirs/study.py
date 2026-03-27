@@ -3,7 +3,7 @@
 
 Датаклассы:
     EventStudyConfig  — конфигурация одного запуска (модель + окна)
-    Event             — одно дивидендное событие
+    DividendEvent     — одно дивидендное событие
     MarketContext     — (reexport из models) рыночные данные для окна
     EventResult       — результат по одному событию
     CompanyResult     — агрегат по одной компании (промежуточный вывод)
@@ -43,7 +43,7 @@ class EventStudyConfig:
 
 
 @dataclass(frozen=True)
-class Event:
+class DividendEvent:
     """Одно дивидендное событие."""
     ticker: str
     event_date: date
@@ -161,7 +161,7 @@ class EventStudyRunner:
 
     def analyze_single_event(
         self,
-        event: Event,
+        event: DividendEvent,
         config: EventStudyConfig,
     ) -> EventResult | None:
         """
@@ -259,7 +259,7 @@ class EventStudyRunner:
 
     def analyze_all_events(
         self,
-        events: list[Event],
+        events: list[DividendEvent],
         config: EventStudyConfig,
     ) -> list[CompanyResult]:
         """
@@ -302,7 +302,7 @@ class EventStudyRunner:
 
     def run_sensitivity_study(
         self,
-        events: list[Event],
+        events: list[DividendEvent],
     ) -> pd.DataFrame:
         """
         Запускает анализ для всех 27 конфигураций.
@@ -373,7 +373,7 @@ class EventStudyRunner:
 
     def check_event_overlaps(
         self,
-        events: list[Event],
+        events: list[DividendEvent],
         config: EventStudyConfig,
     ) -> pd.DataFrame:
         """
@@ -389,7 +389,7 @@ class EventStudyRunner:
         ew_start, ew_end = config.event_window
         esw = config.estimation_window
 
-        by_ticker: dict[str, list[Event]] = {}
+        by_ticker: dict[str, list[DividendEvent]] = {}
         for ev in events:
             by_ticker.setdefault(ev.ticker, []).append(ev)
 
@@ -400,7 +400,7 @@ class EventStudyRunner:
             trading_days = self.prices[ticker].index.sort_values()
 
             # Вычисляем торговые диапазоны [est_start, ev_end] для каждого события
-            ranges: list[tuple[Event, pd.Timestamp, pd.Timestamp]] = []
+            ranges: list[tuple[DividendEvent, pd.Timestamp, pd.Timestamp]] = []
             for ev in sorted(evs, key=lambda e: e.event_date):
                 t0   = pd.Timestamp(ev.event_date)
                 idx0 = int(trading_days.searchsorted(t0, side="left"))
