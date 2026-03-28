@@ -5,7 +5,7 @@ import os
 
 import pandas as pd
 
-from core.nirs.study import DividendEvent
+from core.event_study import DividendEvent
 
 DIVIDENDS_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'stocks', 'dividends_all.csv')
 
