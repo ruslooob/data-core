@@ -54,8 +54,8 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
 - Подпись осей: X (общая) = "Торговые дни от события", Y = "CAR, %"
 - **Hover:** дата (дд.мм.гггг), день недели, значение CAR, AR этого дня (дневная аномальная доходность)
 
-### Изменения в `core/nirs/study.py`
-- `EventResult` — новое поле `estimation_std: float` (σ аномальных доходностей в оценочном окне)
+### Примечание по `core/event_study.py`
+- `EventResult` содержит поле `estimation_std: float` (σ аномальных доходностей в оценочном окне)
 
 ### Subplot 2 (средний) — реальная цена акции
 - Линия цены закрытия (CLOSE) в событийном окне
@@ -92,13 +92,15 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
 - CSS tooltip на карточках через `app.index_string`
 - Порт Dash выводится в консоль при запуске
 
-### Используемые модули из `core/nirs/`
+### Используемые модули из `core/`
 
 | Модуль | Что используем |
 |---|---|
-| `loaders.py` | `load_events()`, `load_prices()`, `load_rf()` |
-| `study.py` | `EventStudyRunner`, `EventStudyConfig`, `Event` |
-| `models.py` | `MeanAdjustedModel`, `MarketModel`, `CAPMModel` (через фабрику в `study.py`) |
+| `dividend_data_provider.py` | `load_dividends()` |
+| `stock_data_provider.py` | `get_log_returns()`, `get_stock_data()` |
+| `market_data_provider.py` | `load_market_index()`, `load_risk_free_rate()` |
+| `event_study.py` | `EventStudy`, `DividendEvent`, `EventResult` |
+| `expected_return_models.py` | `MeanAdjustedModel`, `MarketModel`, `CAPMModel` (через фабрику в `event_study.py`) |
 
 ### Путь к данным (относительно ноутбука)
 
@@ -110,9 +112,9 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
 
 ### Логика работы
 
-1. При старте: загрузить все данные один раз (`load_events`, `load_prices`, `load_rf`)
+1. При старте: загрузить все данные один раз (`load_dividends`, `get_log_returns`, `load_market_index`, `load_risk_free_rate`), создать `EventStudy` для каждого тикера
 2. Callback 1: смена тикера → обновить список событий во втором дропдауне
-3. Callback 2: кнопка «Рассчитать» → `EventStudyRunner.analyze_single_event()` → обновить график и карточки метрик
+3. Callback 2: кнопка «Рассчитать» → `studies[ticker].analyze(...)` → обновить график и карточки метрик
 
 ---
 

@@ -23,8 +23,11 @@
 
 ## P2 — интеграционные
 
-### EventStudyRunner.analyze_single_event
+### EventStudy.analyze (core/event_study.py)
 - Результат не None для валидного события
 - CAR — float в разумных пределах (например, |CAR| < 1)
 - estimation_std > 0
 - n_days соответствует размеру событийного окна
+- mean_adjusted работает без market/rf
+- market_model работает с market, без rf
+- capm работает с market и rf
