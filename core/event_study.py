@@ -3,7 +3,6 @@
 
 EventStudy     — расчёт AR и CAR для одного события на одной акции.
 EventResult    — результат анализа одного события.
-DividendEvent  — датакласс дивидендного события.
 """
 from __future__ import annotations
 
@@ -18,29 +17,15 @@ from core.expected_return_models import (
 )
 
 # ---------------------------------------------------------------------------
-# Типы событий
+# Типы и результат
 # ---------------------------------------------------------------------------
 
 ModelType = str  # 'mean_adjusted', 'market_model', 'capm'
 
 
-@dataclass(frozen=True)
-class DividendEvent:
-    """Одно дивидендное событие."""
-    ticker: str
-    event_date: date
-    dividend: float
-    year: int
-
-
-# ---------------------------------------------------------------------------
-# Результат анализа
-# ---------------------------------------------------------------------------
-
 @dataclass
 class EventResult:
     """Результат расчёта CAR для одного события."""
-    ticker: str
     event_date: date
     ar: list[float]          # аномальные доходности по дням окна
     car: float               # накопленная аномальная доходность
@@ -75,7 +60,7 @@ class EventStudy:
 
     Пример::
 
-        study = EventStudy(stock=get_log_returns('LKOH'))
+        study = EventStudy(stock=get_log_returns('LKOH', start_date='2013-01-01'))
         result = study.analyze(
             event_date=date(2018, 5, 14),
             model='market_model',
@@ -85,9 +70,8 @@ class EventStudy:
         )
     """
 
-    def __init__(self, stock: pd.Series, ticker: str = '') -> None:
+    def __init__(self, stock: pd.Series) -> None:
         self.stock = stock
-        self.ticker = ticker
 
     def _resolve_windows(
         self,
@@ -193,7 +177,6 @@ class EventStudy:
         car = float(np.sum(ar))
 
         return EventResult(
-            ticker=self.ticker,
             event_date=event_date,
             ar=ar,
             car=car,
