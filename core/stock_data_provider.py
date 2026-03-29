@@ -16,7 +16,7 @@ def list_avail_tickers() -> list[str]:
     return sorted(tickers)
 
 
-def load_stock_data(csv_path: str) -> pd.DataFrame:
+def _load_stock_data(csv_path: str) -> pd.DataFrame:
     """
     Загружает данные котировок из CSV в формате:
     <TICKER>;<PER>;<DATE>;<TIME>;<OPEN>;<HIGH>;<LOW>;<CLOSE>;<VOL>;<OPENINT>
@@ -56,9 +56,9 @@ def get_ticker_splits(ticker: str, splits_path: str = _SPLITS_PATH) -> list[dict
     return splits.get(ticker, [])
 
 
-def load_normalized_stock(ticker: str, csv_path: str, splits_path: str = _SPLITS_PATH) -> pd.DataFrame:
+def _load_normalized_stock(ticker: str, csv_path: str, splits_path: str = _SPLITS_PATH) -> pd.DataFrame:
     """Возвращает нормализованные данные котировок акции. Учитывает сплиты и обратные сплиты."""
-    df = load_stock_data(csv_path)
+    df = _load_stock_data(csv_path)
 
     splits = get_ticker_splits(ticker, splits_path)
 
@@ -108,7 +108,7 @@ def get_stock_data(
     ticker = ticker.upper()
     file_path = _find_stock_file(ticker)
 
-    df = load_normalized_stock(ticker, file_path) if normalized else load_stock_data(file_path)
+    df = _load_normalized_stock(ticker, file_path) if normalized else _load_stock_data(file_path)
 
     if start_date is not None:
         df = df[df['DATE'] >= pd.Timestamp(start_date)]
@@ -139,6 +139,7 @@ def get_log_returns(
 
 def get_ticker_info(
         ticker: str,
+        normalized: bool = True,
         start_date: str | None = None,
         end_date: str | None = None,
 ) -> dict:
@@ -160,7 +161,7 @@ def get_ticker_info(
     """
     ticker = ticker.upper()
     file_path = _find_stock_file(ticker)
-    df = load_stock_data(file_path)
+    df = _load_normalized_stock(ticker, file_path) if normalized else _load_stock_data(file_path)
     splits = get_ticker_splits(ticker)
 
     if start_date is not None:

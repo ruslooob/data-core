@@ -2,25 +2,9 @@
 
 ## Рефакторинг
 
-### study.py
-- Рефакторинг `core/nirs/study.py` — самый крупный модуль, требует разбора
-
-### nirs/ -> core/
-- Вынести `study.py` из `core/nirs/` в `core/` (например `core/event_study_runner.py`)
-- `nirs` — название курсовой, а не функциональности
-- После выноса удалить пакет `core/nirs/`
-
 ### Дублирование event study
-- `event_impact_analyzer.py` (старый, с CPI) и `nirs/study.py` (новый, 3 модели) делают одно и то же
+- `event_impact_analyzer.py` (старый, с CPI) и `event_study.py` (новый, 3 модели) делают одно и то же
 - Решить: объединить или оставить оба
-
-### Относительные пути к данным
-- `stock_data_provider.py`: `STOCKS_FOLDER = "../data/stocks"` — сломается не из notebooks/
-- `cpi_data_provider.py`: `../data/stats/...` — та же проблема
-- Перевести на `os.path.dirname(__file__)` как в `dividend_data_provider.py`
-
-### stock_data_provider.py
-- `load_stock_data`, `load_normalized_stock` — внутренние функции, пометить как приватные (`_`)
 
 ---
 
