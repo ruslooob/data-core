@@ -4,11 +4,13 @@
 
 ## Статус выполнения
 
-- ✅ **Этап 1** — Backend skeleton (1.1–1.5)
+- ✅ **Этап 1** — Backend skeleton (1.1–1.5) + endpoint `/api/series/{name}` для IMOEX/RUONIA
 - ✅ **Этап 2** — Frontend skeleton (2.1–2.3)
 - ✅ **Этап 3** — Price chart widget (3.1–3.3, sync переделан в цветовые группы)
 - 🟡 **Этап 4** — Event study widget: 4.1, 4.2, 4.4 готовы; 4.3 (карточки метрик) отложен
-- ✅ **Сверх плана** — связь ES↔price chart через `groupRegistry` (фильтр тикеров, активное событие, маркеры дивидендов, hover-sync, авто-зум, клик по маркеру → выбор события)
+- ✅ **Сверх плана** — Index chart widget (IMOEX/RUONIA) + рефакторинг в общий хук `useChartCore`
+- ✅ **Сверх плана** — связь ES↔price/index chart через `groupRegistry` (фильтр тикеров, активное событие, маркеры дивидендов, hover-sync, авто-зум всех графиков группы, клик по маркеру → выбор события)
+- ✅ **Сверх плана** — гранулярные флаги `rangeSync` / `crosshairSync` в `chartSync`; `markApplied` для подавления эха при внешнем `setVisibleRange`
 - ✅ **Сверх плана** — UX полотна: z-order по клику, прокручиваемое полотно 4000×3000, sticky тулбар, перетаскивание за нижнюю полосу
 - ⏳ **Этап 5** — полировка и README
 
@@ -211,6 +213,14 @@
 - **Клик** по маркеру события на price chart → ES выбирает + автоматически считает (`requestSelectEvent`)
 - **Авто-зум** price chart на event window ×3 при «Рассчитать» и при стрелках навигации (`requestZoom`)
 - **Hover-sync**: hover на CAR → crosshair на price chart на дате `event_date + t дней` (`broadcastHoverDate`)
+
+## Этап 4+++: Index chart + рефакторинг в useChartCore (сверх плана)
+
+- **Backend**: `core/market_data_provider` дополнен `load_market_index_prices()` (сырые CLOSE IMOEX) и `load_risk_free_rate_annual()` (RUONIA в годовых %); endpoint `GET /api/series/{name}` с реестром лоадеров
+- **`useChartCore`** — общий хук для time-series виджетов (chart, серия цены, опц. объём, маркеры, ResizeObserver, регистрация в chartSync с гранулярными флагами, click-handler)
+- **`PriceChartWidget`** переписан на хук — снаружи только специфичные подписки и dropdown
+- **`IndexChartWidget`** — новый виджет: дропдаун `IMOEX / RUONIA`, без объёма, без событий, не публикует «тикер» в groupRegistry. `rangeSync: false`, `crosshairSync: true` — индекс не ломает соседний price chart, но crosshair синхронизируется
+- **`chartSync`** разделён: `rangeSync` и `crosshairSync` — независимые флаги при регистрации; добавлен публичный `markApplied(chart)` для случая, когда виджет получает зум-команду извне (чтобы chartSync не превратил `setVisibleRange` в эхо для других price chart'ов и они тоже зумились на новую event-window)
 
 ## Этап 4++: UX полотна (сверх плана)
 

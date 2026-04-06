@@ -71,6 +71,7 @@ data-core/
 | `GET` | `/api/health` | Healthcheck |
 | `GET` | `/api/tickers` | Список доступных тикеров (без служебных файлов DIVIDENDS/IMOEX/RUONIA/SPLITS) |
 | `GET` | `/api/prices/{ticker}?start=&end=` | Котировки (OHLCV) для тикера |
+| `GET` | `/api/series/{name}` | Временной ряд `[{date, value}]` для индекса/ставки. Поддерживает `IMOEX` (сырые CLOSE) и `RUONIA` (% годовых) |
 | `GET` | `/api/events?ticker=&start=&end=` | Список дивидендных событий с фильтрами |
 | `POST` | `/api/event-study` | Расчёт AR/CAR для события |
 
@@ -100,6 +101,7 @@ data-core/
 Backend — тонкая обёртка. Каждый endpoint вызывает соответствующую функцию `core/`:
 - `/api/tickers` → `stock_data_provider.list_avail_tickers()` (или аналог)
 - `/api/prices/{ticker}` → `stock_data_provider.get_stock_data()`
+- `/api/series/{name}` → реестр лоадеров: `IMOEX → load_market_index_prices()` (сырые CLOSE), `RUONIA → load_risk_free_rate_annual()` (годовые %). **Важно:** существующие `load_market_index()` / `load_risk_free_rate()` возвращают **производные** значения (лог-доходности / дневная доля) для event study; для индексных виджетов нужны новые сырые лоадеры
 - `/api/events` → `dividend_data_provider.load_dividends()` + фильтры
 - `/api/event-study` → `core.event_study.EventStudy.analyze()`
 
@@ -131,17 +133,39 @@ Backend — тонкая обёртка. Каждый endpoint вызывает 
 
 **Тулбар** — `position: sticky; top: 0; width: 100vw`, содержит кнопку «+ Добавить виджет» (меню выбора типа). Остаётся видимым при любом скролле полотна.
 
+#### Общая инфраструктура: `useChartCore`
+
+Все time-series виджеты (price chart, index chart) построены поверх общего хука `useChartCore`. Хук берёт на себя:
+- создание `IChartApi`, основной серии цены (`LineSeries`), опционально серии объёма (`HistogramSeries` в pane 1)
+- `createSeriesMarkers` для маркеров событий
+- `ResizeObserver` для синхронизации размера chart с контейнером
+- регистрацию в `chartSync` с гранулярными флагами `rangeSync` / `crosshairSync` (default true)
+- подписку на клик с колбэком `onBarClick(timeSec)`
+
+Виджеты сверху добавляют только специфическую логику: загрузку данных, маркеры по своим правилам, подписки на каналы `groupRegistry`. Это позволяет добавлять новые типы time-series виджетов с минимумом дублирования.
+
 #### 1. Price chart widget
 - Линейный график цены (CLOSE) для выбранного тикера + панель объёма снизу (panes Lightweight Charts)
+- `useChartCore({ withVolume: true, rangeSync: true, crosshairSync: true })`
 - Тикер выбирается внутри виджета через дропдаун
 - Интеракция из коробки: зум колесом, drag, автоскейл Y, crosshair
 - **Маркеры дивидендных событий** — серые треугольники под барами для всех событий тикера (через `createSeriesMarkers`)
 - **Подсветка активного события группы** (если тикер совпадает): красный кружок «t=0» над баром, красные стрелки `−N` / `+M` на границах event window
 - **Клик** по маркеру (в пределах ±2 дней от события) → публикует `requestSelectEvent` в группу — Event Study виджет той же группы выбирает это событие и пересчитывает
-- Подписка на `requestZoom` группы → `setVisibleRange`
+- Подписка на `requestZoom` группы → `priceChartSyncBus.markApplied(chart)` + `setVisibleRange`. `markApplied` нужен, чтобы chartSync не пропагировал получившееся range-change событие соседним price chart'ам как эхо и не «затёр» им свежий зум через `shiftRangeToCenter`
 - Подписка на `broadcastHoverDate` → `setCrosshairPosition` на ближайший бар (синхронизация курсора с CarChart)
+- Регистрируется в `groupRegistry` как член группы со своим тикером (для фильтра в Event Study)
 
-#### 2. Event study widget
+#### 2. Index chart widget
+- Линейный график значения индекса/ставки. Дропдаун: `IMOEX` (уровни) и `RUONIA` (% годовых)
+- `useChartCore({ withVolume: false, rangeSync: false, crosshairSync: true })` — **не участвует в range-sync**, потому что у IMOEX/RUONIA свой временной масштаб (с 2000 / 2010 года), и center-based range sync ломает bar spacing соседних price chart'ов. **Crosshair sync остаётся** — при наведении на price chart курсор отображается и на индексе, и обратно
+- **Не регистрируется в `groupRegistry`** как член группы (не публикует «тикер») — иначе фильтр тикеров в Event Study наполнится IMOEX/RUONIA
+- Подписан на каналы `groupRegistry`:
+  - `subscribeActiveEvent` — рисует маркеры t=0 / границ окна **без фильтра по тикеру** (индекс глобален, нам важна только дата события)
+  - `subscribeHoverDate` — `setCrosshairPosition` на ближайший бар (hover из CarChart двигает курсор)
+  - `subscribeZoom` — `setVisibleRange` на ту же event-window, что и у price chart'ов
+
+#### 3. Event study widget
 - Контролы:
   - Дропдауны: тикер, событие (фильтруется по тикеру), модель
   - Слайдеры: дней до t=0, дней после, длина оценочного окна
@@ -164,14 +188,15 @@ Backend — тонкая обёртка. Каждый endpoint вызывает 
 
 ### Sync-группы по цвету
 
-В заголовке **каждого** виджета (и price chart, и event study) — пикер цветовой группы: `none / red / blue / green / yellow`. Группа `none` = виджет автономен.
+В заголовке **каждого** виджета — пикер цветовой группы: `none / red / blue / green / yellow`. Группа `none` = виджет автономен.
 
 Семантика группы — несколько независимых каналов связи. Реализованы в двух модулях:
 
-**`chartSync` (только price chart ↔ price chart)** — синхронизация навигации:
-- **Visible time range** — по центру окна. При сдвиге master'а slave сохраняет свою длительность/масштаб (bar spacing), смещается только центр. Если новый диапазон выходит за края данных slave'а — клампится к границам
-- **Crosshair** — позиция курсора пробрасывается между графиками группы
-- Защита от echo-feedback: `WeakMap<chart, lastAppliedAt>` с окном игнора 150 мс
+**`chartSync` (для time-series графиков)** — синхронизация навигации:
+- При регистрации участник передаёт два независимых флага: `rangeSync` и `crosshairSync` (оба default `true`). Это позволяет, например, у Index chart выключить range-sync (чтобы зум индекса не ломал price chart) и оставить crosshair-sync
+- **Visible time range** — по центру окна. При сдвиге master'а slave сохраняет свою длительность/масштаб (bar spacing), смещается только центр. Если новый диапазон выходит за края данных slave'а — клампится к границам. Slave с `rangeSync: false` пропускается
+- **Crosshair** — позиция курсора пробрасывается между графиками группы. Slave с `crosshairSync: false` пропускается
+- Защита от echo-feedback: `WeakMap<chart, lastAppliedAt>` с окном игнора 150 мс. Метод `markApplied(chart)` доступен публично — виджеты вызывают его перед программным `setVisibleRange` (например, в обработчике `requestZoom`), чтобы chartSync не превратил свой же зум в эхо
 - API Lightweight Charts v5: `subscribeVisibleTimeRangeChange` + `setVisibleRange` (НЕ logical range — он даёт расхождение по датам между тикерами с разной историей). `subscribe*` возвращает `void`, отписка через `unsubscribe*(handler)`
 - `timeScale.fixLeftEdge: true, fixRightEdge: true` — запретить пролистывание за края данных
 
@@ -211,6 +236,7 @@ npm run dev
 ## Что вне MVP
 
 - Карточки метрик в Event Study (CAR%, vol_ratio, volume_ratio, дней в окне)
+- Дополнительные ряды в Index chart (S&P, Brent, USD/RUB и т.д.)
 - Динамически растущее полотно или pan/zoom canvas (Figma-like)
 - Вкладки с независимыми наборами виджетов
 - Сохранение layout виджетов между сессиями (localStorage)

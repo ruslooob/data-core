@@ -23,6 +23,18 @@ export interface ChartCoreOptions {
   containerRef: RefObject<HTMLDivElement | null>
   syncGroup: SyncGroup
   withVolume?: boolean
+  /**
+   * Участвует ли в range-sync chartSync. Default true.
+   * Для index chart — false: у IMOEX/RUONIA другой временной масштаб,
+   * центр-based range sync ломает bar spacing соседнего price chart.
+   */
+  rangeSync?: boolean
+  /**
+   * Участвует ли в crosshair-sync chartSync. Default true.
+   * Index chart использует crosshair-sync, чтобы при наведении на price chart
+   * на нём подсвечивалась соответствующая дата.
+   */
+  crosshairSync?: boolean
   /** Кастомный priceFormat для серии цены (например, для процентов). */
   priceFormat?: Parameters<IChartApi['addSeries']>[1] extends infer O
     ? O extends { priceFormat?: infer P }
@@ -41,7 +53,14 @@ export interface ChartCoreRefs {
 }
 
 export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
-  const { containerRef, syncGroup, withVolume = false, onBarClick } = opts
+  const {
+    containerRef,
+    syncGroup,
+    withVolume = false,
+    rangeSync = true,
+    crosshairSync = true,
+    onBarClick,
+  } = opts
 
   const chartRef = useRef<IChartApi | null>(null)
   const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -128,16 +147,17 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     ro.observe(container)
 
     // Регистрация в chartSync (range/crosshair sync с другими графиками группы)
-    const { setGroup, unregister } = priceChartSyncBus.register(
+    const { setGroup, unregister: unregisterSync } = priceChartSyncBus.register(
       chart,
       priceSeries,
       syncGroup,
+      { rangeSync, crosshairSync },
     )
     setSyncGroupRef.current = setGroup
 
     return () => {
       chart.unsubscribeClick(onClick)
-      unregister()
+      unregisterSync()
       setSyncGroupRef.current = null
       ro.disconnect()
       chart.remove()

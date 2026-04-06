@@ -28,6 +28,8 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
     containerRef,
     syncGroup,
     withVolume: false,
+    rangeSync: false, // у индекса другой масштаб времени — range-sync ломает price chart
+    crosshairSync: true,
   })
 
   // Загрузка ряда
