@@ -8,3 +8,6 @@ reports
 .claude
 .ipynb_checkpoints
 /models
+*.log
+frontend/node_modules/
+frontend/dist/
