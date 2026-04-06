@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PriceChartWidget } from './PriceChartWidget'
 import { Widget } from './Widget'
 
 type WidgetType = 'price-chart' | 'event-study'
@@ -37,9 +38,13 @@ export function WidgetContainer() {
           title={WIDGET_TITLES[w.type]}
           onClose={() => removeWidget(w.id)}
         >
-          <div style={{ color: '#888', padding: '20px 0' }}>
-            {WIDGET_TITLES[w.type]} (plaseholder)
-          </div>
+          {w.type === 'price-chart' ? (
+            <PriceChartWidget />
+          ) : (
+            <div style={{ color: '#888', padding: '20px 0' }}>
+              {WIDGET_TITLES[w.type]} (placeholder)
+            </div>
+          )}
         </Widget>
       ))}
 
