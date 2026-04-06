@@ -1,178 +1,84 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import {
-  createChart,
-  createSeriesMarkers,
-  HistogramSeries,
-  LineSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type ISeriesMarkersPluginApi,
-  type MouseEventParams,
-  type SeriesMarker,
-  type Time,
-  type UTCTimestamp,
-} from 'lightweight-charts'
+import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getEvents, getPrices, getTickers } from '../api/client'
 import type { DividendEvent } from '../api/types'
-import { priceChartSyncBus, type SyncGroup } from './chartSync'
+import { type SyncGroup } from './chartSync'
 import { groupRegistry, type ActiveEvent } from './groupRegistry'
-
-function dateToTs(d: string): UTCTimestamp {
-  return (new Date(d).getTime() / 1000) as UTCTimestamp
-}
+import { useChartCore } from './useChartCore'
 
 interface PriceChartWidgetProps {
   syncGroup: SyncGroup
 }
 
+function dateToTs(d: string): UTCTimestamp {
+  return (new Date(d).getTime() / 1000) as UTCTimestamp
+}
+
 export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   const widgetId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<IChartApi | null>(null)
-  const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const setGroupRef = useRef<((g: SyncGroup) => void) | null>(null)
-  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
-  const eventsRef = useRef<DividendEvent[]>([])
-  const activeEventRef = useRef<ActiveEvent | null>(null)
-  const syncGroupRef = useRef<SyncGroup>(syncGroup)
 
   const [tickers, setTickers] = useState<string[]>([])
   const [selectedTicker, setSelectedTicker] = useState<string>('')
   const [events, setEvents] = useState<DividendEvent[]>([])
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
 
-  // refs для использования внутри chart.subscribeClick (чтобы не пере-подписываться)
+  // refs для click-handler'а из useChartCore (без пере-подписки)
+  const eventsRef = useRef<DividendEvent[]>([])
+  const syncGroupRef = useRef<SyncGroup>(syncGroup)
   useEffect(() => {
     eventsRef.current = events
   }, [events])
   useEffect(() => {
-    activeEventRef.current = activeEvent
-  }, [activeEvent])
-  useEffect(() => {
     syncGroupRef.current = syncGroup
   }, [syncGroup])
 
-  // Initialize chart once
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
-      layout: {
-        background: { color: '#ffffff' },
-        textColor: '#333',
-        panes: { separatorColor: '#e0e0e0', separatorHoverColor: '#b0b0b0' },
-      },
-      grid: {
-        vertLines: { color: '#f0f0f0' },
-        horzLines: { color: '#f0f0f0' },
-      },
-      rightPriceScale: { borderColor: '#e0e0e0' },
-      timeScale: {
-        borderColor: '#e0e0e0',
-        fixLeftEdge: true,
-        fixRightEdge: true,
-      },
-    })
-
-    const priceSeries = chart.addSeries(
-      LineSeries,
-      { color: '#2962FF', lineWidth: 2, priceLineVisible: false },
-      0,
-    )
-    const volumeSeries = chart.addSeries(
-      HistogramSeries,
-      {
-        color: '#90a4ae',
-        priceFormat: { type: 'volume' },
-        priceLineVisible: false,
-      },
-      1,
-    )
-
-    chartRef.current = chart
-    priceSeriesRef.current = priceSeries
-    volumeSeriesRef.current = volumeSeries
-    markersRef.current = createSeriesMarkers(priceSeries, [])
-
-    // Клик по графику: если рядом с маркером события — публикуем выбор в группу
-    const onClick = (param: MouseEventParams) => {
-      if (param.time === undefined) return
-      const group = syncGroupRef.current
-      if (group === 'none') return
-      const evs = eventsRef.current
-      if (evs.length === 0) return
-      const clickedTs = typeof param.time === 'number' ? param.time : 0
-      // Ищем ближайшее событие в пределах 2 дней
-      let best: DividendEvent | null = null
-      let bestDiff = Infinity
-      for (const ev of evs) {
-        const diff = Math.abs(dateToTs(ev.event_date) - clickedTs)
-        if (diff < bestDiff) {
-          bestDiff = diff
-          best = ev
-        }
-      }
-      if (best && bestDiff <= 2 * 86400) {
-        groupRegistry.requestSelectEvent(group, {
-          ticker: best.ticker,
-          event_date: best.event_date,
-        })
+  // Клик по бару → ищем ближайшее событие в ±2 дня → publish select
+  const handleBarClick = (clickedTs: number) => {
+    const group = syncGroupRef.current
+    if (group === 'none') return
+    const evs = eventsRef.current
+    if (evs.length === 0) return
+    let best: DividendEvent | null = null
+    let bestDiff = Infinity
+    for (const ev of evs) {
+      const diff = Math.abs(dateToTs(ev.event_date) - clickedTs)
+      if (diff < bestDiff) {
+        bestDiff = diff
+        best = ev
       }
     }
-    chart.subscribeClick(onClick)
-
-    const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({
-        width: container.clientWidth,
-        height: container.clientHeight,
+    if (best && bestDiff <= 2 * 86400) {
+      groupRegistry.requestSelectEvent(group, {
+        ticker: best.ticker,
+        event_date: best.event_date,
       })
-    })
-    resizeObserver.observe(container)
-
-    const { setGroup, unregister } = priceChartSyncBus.register(
-      chart,
-      priceSeries,
-      syncGroup,
-    )
-    setGroupRef.current = setGroup
-
-    return () => {
-      chart.unsubscribeClick(onClick)
-      unregister()
-      setGroupRef.current = null
-      resizeObserver.disconnect()
-      chart.remove()
-      chartRef.current = null
-      priceSeriesRef.current = null
-      volumeSeriesRef.current = null
-      markersRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }
 
-  // Update group when prop changes
-  useEffect(() => {
-    setGroupRef.current?.(syncGroup)
-    groupRegistry.setGroup(widgetId, syncGroup)
-  }, [syncGroup, widgetId])
+  const { chartRef, priceSeriesRef, volumeSeriesRef, markersRef } = useChartCore({
+    containerRef,
+    syncGroup,
+    withVolume: true,
+    onBarClick: handleBarClick,
+  })
 
-  // Register/unregister in groupRegistry (для фильтра тикеров в Event Study)
+  // ── groupRegistry: регистрация члена группы (тикер) ──
   useEffect(() => {
     groupRegistry.register(widgetId, syncGroup, null)
     return () => groupRegistry.unregister(widgetId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Push current ticker into registry
+  useEffect(() => {
+    groupRegistry.setGroup(widgetId, syncGroup)
+  }, [syncGroup, widgetId])
+
   useEffect(() => {
     groupRegistry.setTicker(widgetId, selectedTicker || null)
   }, [selectedTicker, widgetId])
 
-  // Load tickers list
+  // ── Загрузка списка тикеров и котировок ──
   useEffect(() => {
     getTickers().then((ts) => {
       setTickers(ts)
@@ -180,16 +86,12 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     })
   }, [])
 
-  // Load prices when ticker changes
   useEffect(() => {
     if (!selectedTicker) return
     if (!priceSeriesRef.current || !volumeSeriesRef.current) return
 
     getPrices(selectedTicker).then((candles) => {
-      const priceData = candles.map((c) => ({
-        time: dateToTs(c.date),
-        value: c.close,
-      }))
+      const priceData = candles.map((c) => ({ time: dateToTs(c.date), value: c.close }))
       const volumeData = candles.map((c) => ({
         time: dateToTs(c.date),
         value: c.volume,
@@ -199,9 +101,9 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       volumeSeriesRef.current!.setData(volumeData)
       chartRef.current?.timeScale().fitContent()
     })
-  }, [selectedTicker])
+  }, [selectedTicker, chartRef, priceSeriesRef, volumeSeriesRef])
 
-  // Load dividend events for current ticker
+  // ── Дивидендные события для текущего тикера ──
   useEffect(() => {
     if (!selectedTicker) {
       setEvents([])
@@ -210,7 +112,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     getEvents({ ticker: selectedTicker }).then(setEvents)
   }, [selectedTicker])
 
-  // Подписка на активное событие группы
+  // ── Подписки на канал группы ──
   useEffect(() => {
     setActiveEvent(groupRegistry.getActiveEvent(syncGroup))
     if (syncGroup === 'none') {
@@ -220,7 +122,6 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     return groupRegistry.subscribeActiveEvent(syncGroup, setActiveEvent)
   }, [syncGroup])
 
-  // Подписка на hover-дату от CarChart → ставим crosshair на ближайший бар
   useEffect(() => {
     if (syncGroup === 'none') return
     return groupRegistry.subscribeHoverDate(syncGroup, (date) => {
@@ -234,7 +135,6 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       const targetTs = dateToTs(date)
       const data = series.data() as ReadonlyArray<{ time: Time; value: number }>
       if (data.length === 0) return
-      // ближайший бар
       let best = data[0]
       let bestDiff = Math.abs((typeof best.time === 'number' ? best.time : 0) - targetTs)
       for (let i = 1; i < data.length; i++) {
@@ -247,9 +147,8 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       }
       chart.setCrosshairPosition(best.value, best.time, series)
     })
-  }, [syncGroup])
+  }, [syncGroup, chartRef, priceSeriesRef])
 
-  // Подписка на zoom-команды от Event Study
   useEffect(() => {
     if (syncGroup === 'none') return
     return groupRegistry.subscribeZoom(syncGroup, (req) => {
@@ -260,16 +159,14 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
         to: dateToTs(req.to),
       })
     })
-  }, [syncGroup])
+  }, [syncGroup, chartRef])
 
-  // Перерисовка маркеров: все события + подсветка активного
+  // ── Маркеры: все дивиденды + подсветка активного события ──
   useEffect(() => {
     const markersApi = markersRef.current
     if (!markersApi) return
 
     const markers: SeriesMarker<Time>[] = []
-
-    // Все дивидендные события — маленькие серые треугольники снизу
     for (const ev of events) {
       markers.push({
         time: dateToTs(ev.event_date),
@@ -279,11 +176,9 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       })
     }
 
-    // Подсветка активного события (если тикер совпадает с нашим)
     if (activeEvent && activeEvent.ticker === selectedTicker) {
       const t0 = dateToTs(activeEvent.event_date)
       const dayMs = 86400
-      // Маркер t=0 (жирный красный)
       markers.push({
         time: t0,
         position: 'aboveBar',
@@ -291,7 +186,6 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
         shape: 'circle',
         text: 't=0',
       })
-      // Границы окна (приближённо в календарных днях; биржевых может быть меньше)
       const tFrom = (t0 - activeEvent.daysBefore * dayMs) as UTCTimestamp
       const tTo = (t0 + activeEvent.daysAfter * dayMs) as UTCTimestamp
       markers.push({
@@ -310,7 +204,6 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       })
     }
 
-    // Сортировка по времени — обязательное требование плагина маркеров
     markers.sort((a, b) => {
       const ta = typeof a.time === 'number' ? a.time : 0
       const tb = typeof b.time === 'number' ? b.time : 0
@@ -318,7 +211,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     })
 
     markersApi.setMarkers(markers)
-  }, [events, activeEvent, selectedTicker])
+  }, [events, activeEvent, selectedTicker, markersRef])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>

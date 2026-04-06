@@ -7,7 +7,12 @@ from datetime import date
 
 from core.dividend_data_provider import load_dividends
 from core.event_study import EventStudy
-from core.market_data_provider import load_market_index, load_risk_free_rate
+from core.market_data_provider import (
+    load_market_index,
+    load_market_index_prices,
+    load_risk_free_rate,
+    load_risk_free_rate_annual,
+)
 from core.stock_data_provider import get_log_returns, get_stock_data, list_avail_tickers
 
 # Служебные файлы, которые не являются тикерами акций
@@ -62,6 +67,32 @@ def get_prices(
             volume=row.VOL,
         )
         for row in df.itertuples()
+    ]
+
+
+class SeriesPoint(BaseModel):
+    date: str
+    value: float
+
+
+_SERIES_LOADERS = {
+    "IMOEX": load_market_index_prices,
+    "RUONIA": load_risk_free_rate_annual,
+}
+
+
+@app.get("/api/series/{name}")
+def get_series(name: str) -> list[SeriesPoint]:
+    """Возвращает временной ряд индекса/ставки: [{date, value}]."""
+    key = name.upper()
+    loader = _SERIES_LOADERS.get(key)
+    if loader is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Unknown series: {name}")
+    series = loader()
+    return [
+        SeriesPoint(date=ts.strftime("%Y-%m-%d"), value=float(val))
+        for ts, val in series.items()
     ]
 
 

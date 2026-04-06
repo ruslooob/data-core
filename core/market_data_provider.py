@@ -65,3 +65,53 @@ def load_market_index(
     log_ret = np.log(prices / prices.shift(1)).dropna()
     log_ret.index.name = "date"
     return log_ret
+
+
+def load_market_index_prices(
+        path: str = IMOEX_PATH,
+        start_date: str | None = None,
+        end_date: str | None = None,
+) -> pd.Series:
+    """
+    Загружает сырые дневные цены закрытия индекса IMOEX (без преобразования в доходности).
+
+    Возвращает pd.Series[float] с индексом pd.DatetimeIndex.
+    """
+    df = pd.read_csv(path, sep=";", header=0, encoding="utf-8")
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.replace(r"[<>]", "", regex=True)
+        .str.upper()
+    )
+    df["DATE"] = pd.to_datetime(df["DATE"].astype(str), format="%Y%m%d")
+    df = df[["DATE", "CLOSE"]].dropna().sort_values("DATE")
+
+    if start_date:
+        df = df[df["DATE"] >= pd.Timestamp(start_date)]
+    if end_date:
+        df = df[df["DATE"] <= pd.Timestamp(end_date)]
+
+    prices = df.set_index("DATE")["CLOSE"]
+    prices.index.name = "date"
+    return prices
+
+
+def load_risk_free_rate_annual(
+        path: str = RUONIA_PATH,
+        start: date | None = None,
+        end: date | None = None,
+) -> pd.Series:
+    """
+    Загружает безрисковую ставку RUONIA в годовых процентах (как в исходнике ЦБ).
+    """
+    df = pd.read_excel(path, sheet_name="RC", usecols=["DT", "ruo"])
+    df["DT"] = pd.to_datetime(df["DT"])
+    df = df.sort_values("DT").set_index("DT")
+    if start is not None:
+        df = df[df.index >= pd.Timestamp(start)]
+    if end is not None:
+        df = df[df.index <= pd.Timestamp(end)]
+    rf = df["ruo"]
+    rf.index.name = "date"
+    return rf

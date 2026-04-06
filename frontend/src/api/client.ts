@@ -3,6 +3,8 @@ import type {
   DividendEvent,
   EventStudyRequest,
   EventStudyResult,
+  SeriesName,
+  SeriesPoint,
 } from './types'
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -40,6 +42,10 @@ export function getEvents(
   const query = search.toString()
   const url = `/api/events${query ? `?${query}` : ''}`
   return fetchJson<DividendEvent[]>(url)
+}
+
+export function getSeries(name: SeriesName): Promise<SeriesPoint[]> {
+  return fetchJson<SeriesPoint[]>(`/api/series/${name}`)
 }
 
 export function runEventStudy(

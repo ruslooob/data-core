@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import type { SyncGroup } from './chartSync'
 import { EventStudyWidget } from './EventStudyWidget'
+import { IndexChartWidget } from './IndexChartWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { SyncGroupPicker } from './SyncGroupPicker'
 import { Widget } from './Widget'
 
-type WidgetType = 'price-chart' | 'event-study'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart'
 
 interface WidgetInstance {
   id: string
@@ -22,6 +23,7 @@ const CANVAS_HEIGHT = 3000
 const WIDGET_TITLES: Record<WidgetType, string> = {
   'price-chart': 'Price chart',
   'event-study': 'Event study',
+  'index-chart': 'Index chart',
 }
 
 const DEFAULT_WIDTH = 640
@@ -129,6 +131,9 @@ export function WidgetContainer() {
             <button onClick={() => addWidget('price-chart')} style={menuItemStyle}>
               Price chart
             </button>
+            <button onClick={() => addWidget('index-chart')} style={menuItemStyle}>
+              Index chart
+            </button>
             <button onClick={() => addWidget('event-study')} style={menuItemStyle}>
               Event study
             </button>
@@ -163,6 +168,8 @@ export function WidgetContainer() {
           >
             {w.type === 'price-chart' ? (
               <PriceChartWidget syncGroup={w.syncGroup} />
+            ) : w.type === 'index-chart' ? (
+              <IndexChartWidget syncGroup={w.syncGroup} />
             ) : (
               <EventStudyWidget syncGroup={w.syncGroup} />
             )}

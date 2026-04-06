@@ -7,6 +7,13 @@ export interface Candle {
   volume: number
 }
 
+export interface SeriesPoint {
+  date: string
+  value: number
+}
+
+export type SeriesName = 'IMOEX' | 'RUONIA'
+
 export interface DividendEvent {
   id: string
   ticker: string
