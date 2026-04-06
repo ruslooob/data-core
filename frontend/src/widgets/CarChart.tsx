@@ -68,12 +68,17 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
       crosshair: { mode: 0 },
     })
 
+    // CI и нулевая линия не должны влиять на autoscale,
+    // иначе CAR прижимается к нулю на фоне раздувшегося доверительного интервала
+    const ignoreAutoscale = { autoscaleInfoProvider: () => null }
+
     upperRef.current = chart.addSeries(LineSeries, {
       color: '#90caf9',
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
       lastValueVisible: false,
+      ...ignoreAutoscale,
     })
     lowerRef.current = chart.addSeries(LineSeries, {
       color: '#90caf9',
@@ -81,17 +86,24 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
       lastValueVisible: false,
+      ...ignoreAutoscale,
     })
     zeroRef.current = chart.addSeries(LineSeries, {
       color: '#bbbbbb',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
+      ...ignoreAutoscale,
     })
     carRef.current = chart.addSeries(LineSeries, {
       color: '#2962FF',
       lineWidth: 2,
       priceLineVisible: false,
+      priceFormat: {
+        type: 'custom',
+        formatter: (p: number) => `${p.toFixed(2)}%`,
+        minMove: 0.01,
+      },
     })
 
     chartRef.current = chart
@@ -129,12 +141,12 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
     const n = ar.length
     if (n === 0) return
 
-    // CAR[i] = sum(ar[0..i])
+    // CAR[i] = sum(ar[0..i]), значения в процентах для удобства восприятия
     const carValues: number[] = []
     let acc = 0
     for (let i = 0; i < n; i++) {
       acc += ar[i]
-      carValues.push(acc)
+      carValues.push(acc * 100)
     }
 
     // Ось t: -daysBefore..+daysAfter, длина n. Если n != daysBefore+daysAfter+1
@@ -142,8 +154,8 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
     const totalRequested = daysBefore + daysAfter + 1
     const tStart = n === totalRequested ? -daysBefore : -Math.floor(n / 2)
 
-    // CI: ±2 * std * sqrt(k), где k — количество дней от начала окна (1..n)
-    const std = result.estimation_std
+    // CI: ±2 * std * sqrt(k), в процентах
+    const std = result.estimation_std * 100
     const carData = []
     const upperData = []
     const lowerData = []

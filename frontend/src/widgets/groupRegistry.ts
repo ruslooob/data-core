@@ -2,9 +2,11 @@ import type { SyncGroup } from './chartSync'
 
 /**
  * Реестр участников sync-групп для целей фильтрации и связи между виджетами.
- * Не пересекается с chartSync (range/crosshair) — здесь только «кто в какой
- * группе и с каким тикером», чтобы Event Study мог сузить dropdown тикеров
- * до price chart'ов своей группы.
+ * Не пересекается с chartSync (range/crosshair) — здесь:
+ *  - кто в какой группе и с каким тикером (фильтр тикеров в Event Study)
+ *  - «активное событие» группы (Event Study публикует, Price chart рисует подсветку)
+ *  - «выбрать событие» (клик по маркеру на Price chart → Event Study выбирает)
+ *  - «зум на диапазон» (Event Study кнопка «Показать на графике»)
  */
 
 interface Member {
@@ -13,22 +15,50 @@ interface Member {
   ticker: string | null
 }
 
-type Listener = (tickers: string[]) => void
+export interface ActiveEvent {
+  ticker: string
+  event_date: string // YYYY-MM-DD
+  daysBefore: number
+  daysAfter: number
+}
+
+export interface ZoomRequest {
+  from: string // YYYY-MM-DD
+  to: string
+}
+
+export interface SelectEventRequest {
+  ticker: string
+  event_date: string
+}
+
+type TickersListener = (tickers: string[]) => void
+type ActiveEventListener = (ev: ActiveEvent | null) => void
+type ZoomListener = (req: ZoomRequest) => void
+type SelectListener = (req: SelectEventRequest) => void
 
 class GroupRegistry {
   private members = new Map<string, Member>()
-  private listeners = new Map<SyncGroup, Set<Listener>>()
+  private tickersListeners = new Map<SyncGroup, Set<TickersListener>>()
+
+  private activeEvents = new Map<SyncGroup, ActiveEvent | null>()
+  private activeListeners = new Map<SyncGroup, Set<ActiveEventListener>>()
+
+  private zoomListeners = new Map<SyncGroup, Set<ZoomListener>>()
+  private selectListeners = new Map<SyncGroup, Set<SelectListener>>()
+
+  // ───── члены группы ─────
 
   register(id: string, group: SyncGroup, ticker: string | null = null): void {
     this.members.set(id, { id, group, ticker })
-    this.notify(group)
+    this.notifyTickers(group)
   }
 
   unregister(id: string): void {
     const m = this.members.get(id)
     if (!m) return
     this.members.delete(id)
-    this.notify(m.group)
+    this.notifyTickers(m.group)
   }
 
   setGroup(id: string, group: SyncGroup): void {
@@ -37,8 +67,8 @@ class GroupRegistry {
     const oldGroup = m.group
     m.group = group
     if (oldGroup !== group) {
-      this.notify(oldGroup)
-      this.notify(group)
+      this.notifyTickers(oldGroup)
+      this.notifyTickers(group)
     }
   }
 
@@ -47,10 +77,9 @@ class GroupRegistry {
     if (!m) return
     if (m.ticker === ticker) return
     m.ticker = ticker
-    this.notify(m.group)
+    this.notifyTickers(m.group)
   }
 
-  /** Уникальные тикеры всех price chart'ов в группе (отсортированы). */
   getGroupTickers(group: SyncGroup): string[] {
     const set = new Set<string>()
     for (const m of this.members.values()) {
@@ -60,23 +89,81 @@ class GroupRegistry {
     return Array.from(set).sort()
   }
 
-  subscribe(group: SyncGroup, listener: Listener): () => void {
-    let set = this.listeners.get(group)
+  subscribe(group: SyncGroup, listener: TickersListener): () => void {
+    let set = this.tickersListeners.get(group)
     if (!set) {
       set = new Set()
-      this.listeners.set(group, set)
+      this.tickersListeners.set(group, set)
     }
     set.add(listener)
-    return () => {
-      set!.delete(listener)
-    }
+    return () => set!.delete(listener)
   }
 
-  private notify(group: SyncGroup): void {
-    const set = this.listeners.get(group)
+  private notifyTickers(group: SyncGroup): void {
+    const set = this.tickersListeners.get(group)
     if (!set || set.size === 0) return
     const tickers = this.getGroupTickers(group)
     for (const l of set) l(tickers)
+  }
+
+  // ───── активное событие группы ─────
+
+  setActiveEvent(group: SyncGroup, ev: ActiveEvent | null): void {
+    if (group === 'none') return
+    this.activeEvents.set(group, ev)
+    const set = this.activeListeners.get(group)
+    if (!set) return
+    for (const l of set) l(ev)
+  }
+
+  getActiveEvent(group: SyncGroup): ActiveEvent | null {
+    return this.activeEvents.get(group) ?? null
+  }
+
+  subscribeActiveEvent(group: SyncGroup, l: ActiveEventListener): () => void {
+    let set = this.activeListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.activeListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
+  }
+
+  // ───── команды: zoom и select event ─────
+
+  requestZoom(group: SyncGroup, req: ZoomRequest): void {
+    if (group === 'none') return
+    const set = this.zoomListeners.get(group)
+    if (!set) return
+    for (const l of set) l(req)
+  }
+
+  subscribeZoom(group: SyncGroup, l: ZoomListener): () => void {
+    let set = this.zoomListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.zoomListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
+  }
+
+  requestSelectEvent(group: SyncGroup, req: SelectEventRequest): void {
+    if (group === 'none') return
+    const set = this.selectListeners.get(group)
+    if (!set) return
+    for (const l of set) l(req)
+  }
+
+  subscribeSelectEvent(group: SyncGroup, l: SelectListener): () => void {
+    let set = this.selectListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.selectListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
   }
 }
 

@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getEvents, getTickers, runEventStudy } from '../api/client'
 import type { DividendEvent, EventStudyResult, ExpectedReturnModel } from '../api/types'
 import type { SyncGroup } from './chartSync'
 import { CarChart } from './CarChart'
 import { groupRegistry } from './groupRegistry'
+
+function shiftDate(iso: string, deltaDays: number): string {
+  const d = new Date(iso)
+  d.setUTCDate(d.getUTCDate() + deltaDays)
+  return d.toISOString().slice(0, 10)
+}
 
 const MODELS: { value: ExpectedReturnModel; label: string }[] = [
   { value: 'mean_adjusted', label: 'Mean adjusted' },
@@ -82,12 +88,76 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   }, [tickerEvents])
 
   const currentIdx = tickerEvents.findIndex((e) => e.id === eventId)
+  const currentEvent = tickerEvents[currentIdx]
+
+  // Публикация активного события в группу (для подсветки на price chart)
+  useEffect(() => {
+    if (syncGroup === 'none') return
+    if (!currentEvent) {
+      groupRegistry.setActiveEvent(syncGroup, null)
+      return
+    }
+    groupRegistry.setActiveEvent(syncGroup, {
+      ticker: currentEvent.ticker,
+      event_date: currentEvent.event_date,
+      daysBefore,
+      daysAfter,
+    })
+  }, [syncGroup, currentEvent, daysBefore, daysAfter])
+
+  // При размонтировании / смене группы — очистить старую
+  useEffect(() => {
+    return () => {
+      if (syncGroup !== 'none') {
+        groupRegistry.setActiveEvent(syncGroup, null)
+      }
+    }
+  }, [syncGroup])
+
+  // Подписка на «выбрать событие» из price chart (клик по маркеру)
+  // calcRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
+  const calcRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    if (syncGroup === 'none') return
+    return groupRegistry.subscribeSelectEvent(syncGroup, (req) => {
+      // Если тикер другой — сначала переключаем тикер, затем событие
+      if (req.ticker !== ticker) {
+        setTicker(req.ticker)
+      }
+      const found = allEvents.find(
+        (e) => e.ticker === req.ticker && e.event_date === req.event_date,
+      )
+      if (found) {
+        setEventId(found.id)
+        // Авторасчёт на следующем тике, когда state применится
+        setTimeout(() => calcRef.current(), 0)
+      }
+    })
+  }, [syncGroup, ticker, allEvents])
 
   const stepEvent = (delta: number) => {
     if (tickerEvents.length === 0) return
     const next = Math.max(0, Math.min(tickerEvents.length - 1, currentIdx + delta))
-    setEventId(tickerEvents[next].id)
+    const ev = tickerEvents[next]
+    setEventId(ev.id)
+    // Авто-зум на price chart этой группы
+    if (syncGroup !== 'none') {
+      const pad = 3
+      groupRegistry.requestZoom(syncGroup, {
+        from: shiftDate(ev.event_date, -daysBefore * pad),
+        to: shiftDate(ev.event_date, daysAfter * pad),
+      })
+    }
+    // Авто-расчёт после применения нового eventId
+    setTimeout(() => calcRef.current(), 0)
   }
+
+  // Обновляем calcRef на каждом рендере, чтобы select-handler звал актуальную версию
+  useEffect(() => {
+    calcRef.current = () => {
+      void handleCalculate()
+    }
+  })
 
   const handleCalculate = async () => {
     const ev = tickerEvents[currentIdx]
@@ -146,21 +216,6 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
           </select>
         </label>
 
-        <button
-          onClick={() => stepEvent(-1)}
-          disabled={currentIdx <= 0}
-          style={navButtonStyle}
-        >
-          ←
-        </button>
-        <button
-          onClick={() => stepEvent(1)}
-          disabled={currentIdx < 0 || currentIdx >= tickerEvents.length - 1}
-          style={navButtonStyle}
-        >
-          →
-        </button>
-
         <label style={labelStyle}>
           Модель
           <select
@@ -201,13 +256,31 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         />
       </div>
 
-      <button
-        onClick={handleCalculate}
-        style={calcButtonStyle}
-        disabled={!eventId || loading}
-      >
-        {loading ? 'Считаем…' : 'Рассчитать'}
-      </button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={handleCalculate}
+          style={calcButtonStyle}
+          disabled={!eventId || loading}
+        >
+          {loading ? 'Считаем…' : 'Рассчитать'}
+        </button>
+        <button
+          onClick={() => stepEvent(-1)}
+          disabled={currentIdx <= 0}
+          style={navButtonStyle}
+          title="Предыдущее событие"
+        >
+          ←
+        </button>
+        <button
+          onClick={() => stepEvent(1)}
+          disabled={currentIdx < 0 || currentIdx >= tickerEvents.length - 1}
+          style={navButtonStyle}
+          title="Следующее событие"
+        >
+          →
+        </button>
+      </div>
 
       {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
 
@@ -280,13 +353,12 @@ const selectStyle: React.CSSProperties = {
 }
 
 const navButtonStyle: React.CSSProperties = {
-  padding: '6px 12px',
+  padding: '8px 14px',
   fontSize: 14,
   border: '1px solid #ccc',
-  borderRadius: 4,
+  borderRadius: 6,
   background: 'white',
   cursor: 'pointer',
-  alignSelf: 'flex-end',
 }
 
 const calcButtonStyle: React.CSSProperties = {
@@ -297,5 +369,5 @@ const calcButtonStyle: React.CSSProperties = {
   border: 'none',
   borderRadius: 6,
   cursor: 'pointer',
-  alignSelf: 'flex-start',
 }
+
