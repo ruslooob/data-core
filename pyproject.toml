@@ -1,9 +1,13 @@
 [project]
 name = "data-core"
 version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+]
 
 [tool.setuptools.packages.find]
-include = ["core*"]
+include = ["core*", "backend*"]
 
 [build-system]
 requires = ["setuptools"]
