@@ -7,6 +7,7 @@ interface WidgetProps {
   initialWidth: number
   initialHeight: number
   onClose: () => void
+  headerLeft?: ReactNode
   children: ReactNode
 }
 
@@ -17,6 +18,7 @@ export function Widget({
   initialWidth,
   initialHeight,
   onClose,
+  headerLeft,
   children,
 }: WidgetProps) {
   const [position, setPosition] = useState({ x: initialX, y: initialY })
@@ -80,7 +82,10 @@ export function Widget({
           userSelect: 'none',
         }}
       >
-        <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {headerLeft}
+          <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+        </div>
         <button
           onClick={onClose}
           style={{

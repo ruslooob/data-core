@@ -8,12 +8,18 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { getPrices, getTickers } from '../api/client'
+import { priceChartSyncBus, type SyncGroup } from './chartSync'
 
-export function PriceChartWidget() {
+interface PriceChartWidgetProps {
+  syncGroup: SyncGroup
+}
+
+export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const setGroupRef = useRef<((g: SyncGroup) => void) | null>(null)
 
   const [tickers, setTickers] = useState<string[]>([])
   const [selectedTicker, setSelectedTicker] = useState<string>('')
@@ -36,7 +42,11 @@ export function PriceChartWidget() {
         horzLines: { color: '#f0f0f0' },
       },
       rightPriceScale: { borderColor: '#e0e0e0' },
-      timeScale: { borderColor: '#e0e0e0' },
+      timeScale: {
+        borderColor: '#e0e0e0',
+        fixLeftEdge: true,
+        fixRightEdge: true,
+      },
     })
 
     const priceSeries = chart.addSeries(
@@ -66,14 +76,29 @@ export function PriceChartWidget() {
     })
     resizeObserver.observe(container)
 
+    const { setGroup, unregister } = priceChartSyncBus.register(
+      chart,
+      priceSeries,
+      syncGroup,
+    )
+    setGroupRef.current = setGroup
+
     return () => {
+      unregister()
+      setGroupRef.current = null
       resizeObserver.disconnect()
       chart.remove()
       chartRef.current = null
       priceSeriesRef.current = null
       volumeSeriesRef.current = null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Update group when prop changes
+  useEffect(() => {
+    setGroupRef.current?.(syncGroup)
+  }, [syncGroup])
 
   // Load tickers list
   useEffect(() => {

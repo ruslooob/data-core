@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import type { SyncGroup } from './chartSync'
 import { PriceChartWidget } from './PriceChartWidget'
+import { SyncGroupPicker } from './SyncGroupPicker'
 import { Widget } from './Widget'
 
 type WidgetType = 'price-chart' | 'event-study'
@@ -9,6 +11,7 @@ interface WidgetInstance {
   type: WidgetType
   x: number
   y: number
+  syncGroup: SyncGroup
 }
 
 const WIDGET_TITLES: Record<WidgetType, string> = {
@@ -18,14 +21,13 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
 
 const DEFAULT_WIDTH = 640
 const DEFAULT_HEIGHT = 480
-const TOOLBAR_OFFSET_Y = 80 // toolbar + padding
+const TOOLBAR_OFFSET_Y = 80
 
 export function WidgetContainer() {
   const [widgets, setWidgets] = useState<WidgetInstance[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
 
   const addWidget = (type: WidgetType) => {
-    // Центр экрана с небольшим случайным смещением, чтобы виджеты не накладывались один в один
     const centerX = window.innerWidth / 2 - DEFAULT_WIDTH / 2
     const centerY =
       TOOLBAR_OFFSET_Y + (window.innerHeight - TOOLBAR_OFFSET_Y) / 2 - DEFAULT_HEIGHT / 2
@@ -38,6 +40,7 @@ export function WidgetContainer() {
         type,
         x: Math.max(20, centerX + offset),
         y: Math.max(TOOLBAR_OFFSET_Y, centerY + offset),
+        syncGroup: 'none',
       },
     ])
     setMenuOpen(false)
@@ -45,6 +48,12 @@ export function WidgetContainer() {
 
   const removeWidget = (id: string) => {
     setWidgets((prev) => prev.filter((w) => w.id !== id))
+  }
+
+  const setWidgetSyncGroup = (id: string, group: SyncGroup) => {
+    setWidgets((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, syncGroup: group } : w)),
+    )
   }
 
   return (
@@ -108,9 +117,17 @@ export function WidgetContainer() {
           initialWidth={DEFAULT_WIDTH}
           initialHeight={DEFAULT_HEIGHT}
           onClose={() => removeWidget(w.id)}
+          headerLeft={
+            w.type === 'price-chart' ? (
+              <SyncGroupPicker
+                group={w.syncGroup}
+                onChange={(g) => setWidgetSyncGroup(w.id, g)}
+              />
+            ) : null
+          }
         >
           {w.type === 'price-chart' ? (
-            <PriceChartWidget />
+            <PriceChartWidget syncGroup={w.syncGroup} />
           ) : (
             <div style={{ color: '#888', padding: '20px 0' }}>
               {WIDGET_TITLES[w.type]} (placeholder)
