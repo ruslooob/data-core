@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getEvents, getTickers } from '../api/client'
-import type { DividendEvent, ExpectedReturnModel } from '../api/types'
+import { getEvents, getTickers, runEventStudy } from '../api/client'
+import type { DividendEvent, EventStudyResult, ExpectedReturnModel } from '../api/types'
 import type { SyncGroup } from './chartSync'
+import { CarChart } from './CarChart'
 import { groupRegistry } from './groupRegistry'
 
 const MODELS: { value: ExpectedReturnModel; label: string }[] = [
@@ -26,6 +27,10 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const [daysBefore, setDaysBefore] = useState(10)
   const [daysAfter, setDaysAfter] = useState(10)
   const [estimationWindow, setEstimationWindow] = useState(200)
+  const [result, setResult] = useState<EventStudyResult | null>(null)
+  const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     getTickers().then((ts) => {
@@ -84,15 +89,27 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     setEventId(tickerEvents[next].id)
   }
 
-  const handleCalculate = () => {
-    // Шаг 4.2 — здесь будет вызов runEventStudy и отрисовка
-    console.log('calculate', {
-      ticker,
-      event_date: tickerEvents[currentIdx]?.event_date,
-      model,
-      event_window: [-daysBefore, daysAfter],
-      estimation_window: estimationWindow,
-    })
+  const handleCalculate = async () => {
+    const ev = tickerEvents[currentIdx]
+    if (!ev) return
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await runEventStudy({
+        ticker,
+        event_date: ev.event_date,
+        model,
+        event_window: [-daysBefore, daysAfter],
+        estimation_window: estimationWindow,
+      })
+      setResult(r)
+      setResultWindow({ before: daysBefore, after: daysAfter })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setResult(null)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -184,12 +201,36 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         />
       </div>
 
-      <button onClick={handleCalculate} style={calcButtonStyle} disabled={!eventId}>
-        Рассчитать
+      <button
+        onClick={handleCalculate}
+        style={calcButtonStyle}
+        disabled={!eventId || loading}
+      >
+        {loading ? 'Считаем…' : 'Рассчитать'}
       </button>
 
-      <div style={{ flex: 1, color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        График CAR появится после Шага 4.2
+      {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
+
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {result && resultWindow ? (
+          <CarChart
+            result={result}
+            daysBefore={resultWindow.before}
+            daysAfter={resultWindow.after}
+          />
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              color: '#888',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            Нажми «Рассчитать»
+          </div>
+        )}
       </div>
     </div>
   )
