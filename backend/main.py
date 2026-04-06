@@ -3,8 +3,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from datetime import date
+
 from core.dividend_data_provider import load_dividends
-from core.stock_data_provider import get_stock_data, list_avail_tickers
+from core.event_study import EventStudy
+from core.market_data_provider import load_market_index, load_risk_free_rate
+from core.stock_data_provider import get_log_returns, get_stock_data, list_avail_tickers
 
 # Служебные файлы, которые не являются тикерами акций
 _NON_TICKER_FILES = {"DIVIDENDS", "IMOEX", "RUONIA", "SPLITS"}
@@ -99,3 +103,45 @@ def get_events(
             year=ev.year,
         ))
     return result
+
+
+class EventStudyRequest(BaseModel):
+    ticker: str
+    event_date: str  # ISO format: YYYY-MM-DD
+    model: str  # 'mean_adjusted', 'market_model', 'capm'
+    event_window: tuple[int, int]  # (-10, 10)
+    estimation_window: int  # 200
+
+
+class EventStudyResponse(BaseModel):
+    event_date: str
+    ar: list[float]
+    car: float
+    n_days: int
+    estimation_std: float
+
+
+@app.post("/api/event-study")
+def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
+    """Рассчитывает AR и CAR для одного события."""
+    stock = get_log_returns(req.ticker)
+    market = load_market_index()
+    rf = load_risk_free_rate()
+
+    study = EventStudy(stock=stock)
+    result = study.analyze(
+        event_date=date.fromisoformat(req.event_date),
+        model=req.model,
+        event_window=req.event_window,
+        estimation_window=req.estimation_window,
+        market=market,
+        rf=rf,
+    )
+
+    return EventStudyResponse(
+        event_date=result.event_date.isoformat(),
+        ar=result.ar,
+        car=result.car,
+        n_days=result.n_days,
+        estimation_std=result.estimation_std,
+    )
