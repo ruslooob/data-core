@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   createChart,
   HistogramSeries,
@@ -9,12 +9,14 @@ import {
 } from 'lightweight-charts'
 import { getPrices, getTickers } from '../api/client'
 import { priceChartSyncBus, type SyncGroup } from './chartSync'
+import { groupRegistry } from './groupRegistry'
 
 interface PriceChartWidgetProps {
   syncGroup: SyncGroup
 }
 
 export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
+  const widgetId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -98,7 +100,20 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   // Update group when prop changes
   useEffect(() => {
     setGroupRef.current?.(syncGroup)
-  }, [syncGroup])
+    groupRegistry.setGroup(widgetId, syncGroup)
+  }, [syncGroup, widgetId])
+
+  // Register/unregister in groupRegistry (для фильтра тикеров в Event Study)
+  useEffect(() => {
+    groupRegistry.register(widgetId, syncGroup, null)
+    return () => groupRegistry.unregister(widgetId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Push current ticker into registry
+  useEffect(() => {
+    groupRegistry.setTicker(widgetId, selectedTicker || null)
+  }, [selectedTicker, widgetId])
 
   // Load tickers list
   useEffect(() => {

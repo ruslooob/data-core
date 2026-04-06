@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { SyncGroup } from './chartSync'
+import { EventStudyWidget } from './EventStudyWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { SyncGroupPicker } from './SyncGroupPicker'
 import { Widget } from './Widget'
@@ -118,20 +119,16 @@ export function WidgetContainer() {
           initialHeight={DEFAULT_HEIGHT}
           onClose={() => removeWidget(w.id)}
           headerLeft={
-            w.type === 'price-chart' ? (
-              <SyncGroupPicker
-                group={w.syncGroup}
-                onChange={(g) => setWidgetSyncGroup(w.id, g)}
-              />
-            ) : null
+            <SyncGroupPicker
+              group={w.syncGroup}
+              onChange={(g) => setWidgetSyncGroup(w.id, g)}
+            />
           }
         >
           {w.type === 'price-chart' ? (
             <PriceChartWidget syncGroup={w.syncGroup} />
           ) : (
-            <div style={{ color: '#888', padding: '20px 0' }}>
-              {WIDGET_TITLES[w.type]} (placeholder)
-            </div>
+            <EventStudyWidget syncGroup={w.syncGroup} />
           )}
         </Widget>
       ))}
