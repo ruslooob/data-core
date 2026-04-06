@@ -13,7 +13,11 @@ interface WidgetInstance {
   x: number
   y: number
   syncGroup: SyncGroup
+  zIndex: number
 }
+
+const CANVAS_WIDTH = 4000
+const CANVAS_HEIGHT = 3000
 
 const WIDGET_TITLES: Record<WidgetType, string> = {
   'price-chart': 'Price chart',
@@ -27,12 +31,18 @@ const TOOLBAR_OFFSET_Y = 80
 export function WidgetContainer() {
   const [widgets, setWidgets] = useState<WidgetInstance[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
+  const [topZ, setTopZ] = useState(1)
 
   const addWidget = (type: WidgetType) => {
-    const centerX = window.innerWidth / 2 - DEFAULT_WIDTH / 2
+    // Появляемся в центре видимой области полотна (с учётом скролла)
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+    const centerX = scrollX + window.innerWidth / 2 - DEFAULT_WIDTH / 2
     const centerY =
-      TOOLBAR_OFFSET_Y + (window.innerHeight - TOOLBAR_OFFSET_Y) / 2 - DEFAULT_HEIGHT / 2
+      scrollY + TOOLBAR_OFFSET_Y + (window.innerHeight - TOOLBAR_OFFSET_Y) / 2 - DEFAULT_HEIGHT / 2
     const offset = widgets.length * 30
+    const newZ = topZ + 1
+    setTopZ(newZ)
 
     setWidgets((prev) => [
       ...prev,
@@ -42,9 +52,23 @@ export function WidgetContainer() {
         x: Math.max(20, centerX + offset),
         y: Math.max(TOOLBAR_OFFSET_Y, centerY + offset),
         syncGroup: 'none',
+        zIndex: newZ,
       },
     ])
     setMenuOpen(false)
+  }
+
+  const focusWidget = (id: string) => {
+    setWidgets((prev) => {
+      const w = prev.find((x) => x.id === id)
+      if (!w) return prev
+      // Если уже самый верхний — ничего не делаем (избегаем лишних рендеров)
+      const maxZ = prev.reduce((m, x) => (x.zIndex > m ? x.zIndex : m), 0)
+      if (w.zIndex === maxZ) return prev
+      const newZ = topZ + 1
+      setTopZ(newZ)
+      return prev.map((x) => (x.id === id ? { ...x, zIndex: newZ } : x))
+    })
   }
 
   const removeWidget = (id: string) => {
@@ -65,9 +89,12 @@ export function WidgetContainer() {
           gap: 8,
           padding: '12px 20px',
           borderBottom: '1px solid #eee',
-          position: 'relative',
+          position: 'sticky',
+          top: 0,
+          left: 0,
           backgroundColor: 'white',
-          zIndex: 100,
+          zIndex: 1000000,
+          width: '100vw',
         }}
       >
         <button
@@ -109,29 +136,39 @@ export function WidgetContainer() {
         )}
       </div>
 
-      {widgets.map((w) => (
-        <Widget
-          key={w.id}
-          title={WIDGET_TITLES[w.type]}
-          initialX={w.x}
-          initialY={w.y}
-          initialWidth={DEFAULT_WIDTH}
-          initialHeight={DEFAULT_HEIGHT}
-          onClose={() => removeWidget(w.id)}
-          headerLeft={
-            <SyncGroupPicker
-              group={w.syncGroup}
-              onChange={(g) => setWidgetSyncGroup(w.id, g)}
-            />
-          }
-        >
-          {w.type === 'price-chart' ? (
-            <PriceChartWidget syncGroup={w.syncGroup} />
-          ) : (
-            <EventStudyWidget syncGroup={w.syncGroup} />
-          )}
-        </Widget>
-      ))}
+      <div
+        style={{
+          position: 'relative',
+          width: CANVAS_WIDTH,
+          height: CANVAS_HEIGHT,
+        }}
+      >
+        {widgets.map((w) => (
+          <Widget
+            key={w.id}
+            title={WIDGET_TITLES[w.type]}
+            initialX={w.x}
+            initialY={w.y}
+            initialWidth={DEFAULT_WIDTH}
+            initialHeight={DEFAULT_HEIGHT}
+            zIndex={w.zIndex}
+            onClose={() => removeWidget(w.id)}
+            onFocus={() => focusWidget(w.id)}
+            headerLeft={
+              <SyncGroupPicker
+                group={w.syncGroup}
+                onChange={(g) => setWidgetSyncGroup(w.id, g)}
+              />
+            }
+          >
+            {w.type === 'price-chart' ? (
+              <PriceChartWidget syncGroup={w.syncGroup} />
+            ) : (
+              <EventStudyWidget syncGroup={w.syncGroup} />
+            )}
+          </Widget>
+        ))}
+      </div>
     </>
   )
 }

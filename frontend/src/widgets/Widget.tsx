@@ -6,7 +6,9 @@ interface WidgetProps {
   initialY: number
   initialWidth: number
   initialHeight: number
+  zIndex: number
   onClose: () => void
+  onFocus: () => void
   headerLeft?: ReactNode
   children: ReactNode
 }
@@ -17,7 +19,9 @@ export function Widget({
   initialY,
   initialWidth,
   initialHeight,
+  zIndex,
   onClose,
+  onFocus,
   headerLeft,
   children,
 }: WidgetProps) {
@@ -26,6 +30,7 @@ export function Widget({
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).tagName === 'BUTTON') return
+    onFocus()
     dragOffsetRef.current = {
       dx: e.clientX - position.x,
       dy: e.clientY - position.y,
@@ -49,12 +54,14 @@ export function Widget({
 
   return (
     <div
+      onMouseDownCapture={onFocus}
       style={{
         position: 'absolute',
         left: position.x,
         top: position.y,
         width: initialWidth,
         height: initialHeight,
+        zIndex,
         border: '1px solid #ddd',
         borderRadius: 8,
         backgroundColor: 'white',
@@ -113,6 +120,19 @@ export function Widget({
       >
         {children}
       </div>
+      <div
+        onMouseDown={handleMouseDown}
+        title="Перетащить"
+        style={{
+          height: 10,
+          flexShrink: 0,
+          marginRight: 16, // оставляем угол для resize grabber
+          borderTop: '1px solid #eee',
+          backgroundColor: '#f9f9f9',
+          cursor: 'move',
+          userSelect: 'none',
+        }}
+      />
     </div>
   )
 }
