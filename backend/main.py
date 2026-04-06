@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from core.dividend_data_provider import load_dividends
 from core.stock_data_provider import get_stock_data, list_avail_tickers
 
 # Служебные файлы, которые не являются тикерами акций
@@ -58,3 +59,43 @@ def get_prices(
         )
         for row in df.itertuples()
     ]
+
+
+class DividendEventOut(BaseModel):
+    id: str
+    ticker: str
+    event_date: str
+    dividend: float
+    year: int
+
+
+@app.get("/api/events")
+def get_events(
+        ticker: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+) -> list[DividendEventOut]:
+    """Возвращает список дивидендных событий с опциональной фильтрацией."""
+    import pandas as pd
+
+    events = load_dividends()
+    start_ts = pd.Timestamp(start) if start else None
+    end_ts = pd.Timestamp(end) if end else None
+
+    result = []
+    for ev in events:
+        if ticker and ev.ticker != ticker.upper():
+            continue
+        ev_ts = pd.Timestamp(ev.event_date)
+        if start_ts and ev_ts < start_ts:
+            continue
+        if end_ts and ev_ts > end_ts:
+            continue
+        result.append(DividendEventOut(
+            id=f"{ev.ticker}_{ev.event_date.isoformat()}",
+            ticker=ev.ticker,
+            event_date=ev.event_date.isoformat(),
+            dividend=ev.dividend,
+            year=ev.year,
+        ))
+    return result
