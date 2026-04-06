@@ -11,11 +11,20 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { EventStudyResult } from '../api/types'
+import type { SyncGroup } from './chartSync'
+import { groupRegistry } from './groupRegistry'
 
 interface CarChartProps {
   result: EventStudyResult
   daysBefore: number
   daysAfter: number
+  syncGroup: SyncGroup
+}
+
+function shiftDate(iso: string, deltaDays: number): string {
+  const d = new Date(iso)
+  d.setUTCDate(d.getUTCDate() + deltaDays)
+  return d.toISOString().slice(0, 10)
 }
 
 // База для синтетических timestamp'ов: 2000-01-01. Каждый t = базе + i*86400.
@@ -27,7 +36,15 @@ function indexToTime(i: number): UTCTimestamp {
   return (BASE_TS + i * 86400) as UTCTimestamp
 }
 
-export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
+export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartProps) {
+  // refs для использования внутри обработчика crosshair (без пере-подписки)
+  const tStartRef = useRef(0)
+  const nRef = useRef(0)
+  const eventDateRef = useRef('')
+  const syncGroupRef = useRef<SyncGroup>(syncGroup)
+  useEffect(() => {
+    syncGroupRef.current = syncGroup
+  }, [syncGroup])
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const carRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -108,6 +125,23 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
 
     chartRef.current = chart
 
+    // Crosshair hover → broadcast соответствующей реальной даты в группу
+    const onCrosshair = (param: { time?: Time }) => {
+      const group = syncGroupRef.current
+      if (group === 'none') return
+      if (param.time === undefined || nRef.current === 0) {
+        groupRegistry.broadcastHoverDate(group, null)
+        return
+      }
+      const ts = typeof param.time === 'number' ? param.time : 0
+      const i = Math.round((ts - BASE_TS) / 86400)
+      const t = i // i здесь = tStart + offsetIdx, но мы уже строили time = base + (tStart+offset)
+      // Вычислили t как i; реальная дата = event_date + t календарных дней
+      const date = shiftDate(eventDateRef.current, t)
+      groupRegistry.broadcastHoverDate(group, date)
+    }
+    chart.subscribeCrosshairMove(onCrosshair)
+
     const ro = new ResizeObserver(() => {
       chart.applyOptions({
         width: container.clientWidth,
@@ -117,6 +151,10 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
     ro.observe(container)
 
     return () => {
+      chart.unsubscribeCrosshairMove(onCrosshair)
+      // Сбрасываем hover на price chart при размонтировании
+      const group = syncGroupRef.current
+      if (group !== 'none') groupRegistry.broadcastHoverDate(group, null)
       ro.disconnect()
       chart.remove()
       chartRef.current = null
@@ -153,6 +191,9 @@ export function CarChart({ result, daysBefore, daysAfter }: CarChartProps) {
     // (например, выходные/праздники в окне), всё равно центрируем по 0.
     const totalRequested = daysBefore + daysAfter + 1
     const tStart = n === totalRequested ? -daysBefore : -Math.floor(n / 2)
+    tStartRef.current = tStart
+    nRef.current = n
+    eventDateRef.current = result.event_date
 
     // CI: ±2 * std * sqrt(k), в процентах
     const std = result.estimation_std * 100

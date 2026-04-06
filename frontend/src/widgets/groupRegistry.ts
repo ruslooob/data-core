@@ -36,6 +36,7 @@ type TickersListener = (tickers: string[]) => void
 type ActiveEventListener = (ev: ActiveEvent | null) => void
 type ZoomListener = (req: ZoomRequest) => void
 type SelectListener = (req: SelectEventRequest) => void
+type HoverDateListener = (date: string | null) => void
 
 class GroupRegistry {
   private members = new Map<string, Member>()
@@ -46,6 +47,7 @@ class GroupRegistry {
 
   private zoomListeners = new Map<SyncGroup, Set<ZoomListener>>()
   private selectListeners = new Map<SyncGroup, Set<SelectListener>>()
+  private hoverDateListeners = new Map<SyncGroup, Set<HoverDateListener>>()
 
   // ───── члены группы ─────
 
@@ -161,6 +163,25 @@ class GroupRegistry {
     if (!set) {
       set = new Set()
       this.selectListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
+  }
+
+  // ───── hover date (CarChart → PriceChart crosshair) ─────
+
+  broadcastHoverDate(group: SyncGroup, date: string | null): void {
+    if (group === 'none') return
+    const set = this.hoverDateListeners.get(group)
+    if (!set) return
+    for (const l of set) l(date)
+  }
+
+  subscribeHoverDate(group: SyncGroup, l: HoverDateListener): () => void {
+    let set = this.hoverDateListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.hoverDateListeners.set(group, set)
     }
     set.add(l)
     return () => set!.delete(l)

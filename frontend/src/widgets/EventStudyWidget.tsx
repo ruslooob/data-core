@@ -162,6 +162,13 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const handleCalculate = async () => {
     const ev = tickerEvents[currentIdx]
     if (!ev) return
+    if (syncGroup !== 'none') {
+      const pad = 3
+      groupRegistry.requestZoom(syncGroup, {
+        from: shiftDate(ev.event_date, -daysBefore * pad),
+        to: shiftDate(ev.event_date, daysAfter * pad),
+      })
+    }
     setLoading(true)
     setError(null)
     try {
@@ -290,6 +297,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
             result={result}
             daysBefore={resultWindow.before}
             daysAfter={resultWindow.after}
+            syncGroup={syncGroup}
           />
         ) : (
           <div

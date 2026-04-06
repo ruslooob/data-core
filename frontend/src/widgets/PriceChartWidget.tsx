@@ -220,6 +220,35 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     return groupRegistry.subscribeActiveEvent(syncGroup, setActiveEvent)
   }, [syncGroup])
 
+  // Подписка на hover-дату от CarChart → ставим crosshair на ближайший бар
+  useEffect(() => {
+    if (syncGroup === 'none') return
+    return groupRegistry.subscribeHoverDate(syncGroup, (date) => {
+      const chart = chartRef.current
+      const series = priceSeriesRef.current
+      if (!chart || !series) return
+      if (date === null) {
+        chart.clearCrosshairPosition()
+        return
+      }
+      const targetTs = dateToTs(date)
+      const data = series.data() as ReadonlyArray<{ time: Time; value: number }>
+      if (data.length === 0) return
+      // ближайший бар
+      let best = data[0]
+      let bestDiff = Math.abs((typeof best.time === 'number' ? best.time : 0) - targetTs)
+      for (let i = 1; i < data.length; i++) {
+        const t = typeof data[i].time === 'number' ? (data[i].time as number) : 0
+        const diff = Math.abs(t - targetTs)
+        if (diff < bestDiff) {
+          best = data[i]
+          bestDiff = diff
+        }
+      }
+      chart.setCrosshairPosition(best.value, best.time, series)
+    })
+  }, [syncGroup])
+
   // Подписка на zoom-команды от Event Study
   useEffect(() => {
     if (syncGroup === 'none') return
