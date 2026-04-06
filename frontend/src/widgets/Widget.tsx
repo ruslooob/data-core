@@ -1,23 +1,72 @@
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 
 interface WidgetProps {
   title: string
+  initialX: number
+  initialY: number
+  initialWidth: number
+  initialHeight: number
   onClose: () => void
   children: ReactNode
 }
 
-export function Widget({ title, onClose, children }: WidgetProps) {
+export function Widget({
+  title,
+  initialX,
+  initialY,
+  initialWidth,
+  initialHeight,
+  onClose,
+  children,
+}: WidgetProps) {
+  const [position, setPosition] = useState({ x: initialX, y: initialY })
+  const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null)
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).tagName === 'BUTTON') return
+    dragOffsetRef.current = {
+      dx: e.clientX - position.x,
+      dy: e.clientY - position.y,
+    }
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!dragOffsetRef.current) return
+      setPosition({
+        x: ev.clientX - dragOffsetRef.current.dx,
+        y: ev.clientY - dragOffsetRef.current.dy,
+      })
+    }
+    const handleMouseUp = () => {
+      dragOffsetRef.current = null
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }
+
   return (
     <div
       style={{
+        position: 'absolute',
+        left: position.x,
+        top: position.y,
+        width: initialWidth,
+        height: initialHeight,
         border: '1px solid #ddd',
         borderRadius: 8,
-        marginBottom: 16,
         backgroundColor: 'white',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+        display: 'flex',
+        flexDirection: 'column',
+        resize: 'both',
+        overflow: 'hidden',
+        minWidth: 320,
+        minHeight: 260,
       }}
     >
       <div
+        onMouseDown={handleMouseDown}
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -26,6 +75,9 @@ export function Widget({ title, onClose, children }: WidgetProps) {
           borderBottom: '1px solid #eee',
           backgroundColor: '#f9f9f9',
           borderRadius: '8px 8px 0 0',
+          flexShrink: 0,
+          cursor: 'move',
+          userSelect: 'none',
         }}
       >
         <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
@@ -44,7 +96,18 @@ export function Widget({ title, onClose, children }: WidgetProps) {
           ×
         </button>
       </div>
-      <div style={{ padding: 16 }}>{children}</div>
+      <div
+        style={{
+          padding: 16,
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+        {children}
+      </div>
     </div>
   )
 }
