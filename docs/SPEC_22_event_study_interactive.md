@@ -98,7 +98,7 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
 |---|---|
 | `dividend_data_provider.py` | `load_dividends()` |
 | `stock_data_provider.py` | `get_log_returns()`, `get_stock_data()` |
-| `market_data_provider.py` | `load_market_index()`, `load_risk_free_rate()` |
+| `market_data_provider.py` | `load_market_index_log_returns()`, `load_daily_risk_free_rate()` |
 | `event_study.py` | `EventStudy`, `DividendEvent`, `EventResult` |
 | `expected_return_models.py` | `MeanAdjustedModel`, `MarketModel`, `CAPMModel` (через фабрику в `event_study.py`) |
 
@@ -112,7 +112,7 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
 
 ### Логика работы
 
-1. При старте: загрузить все данные один раз (`load_dividends`, `get_log_returns`, `load_market_index`, `load_risk_free_rate`), создать `EventStudy` для каждого тикера
+1. При старте: загрузить все данные один раз (`load_dividends`, `get_log_returns`, `load_market_index_log_returns`, `load_daily_risk_free_rate`), создать `EventStudy` для каждого тикера
 2. Callback 1: смена тикера → обновить список событий во втором дропдауне
 3. Callback 2: кнопка «Рассчитать» → `studies[ticker].analyze(...)` → обновить график и карточки метрик
 

@@ -216,7 +216,7 @@
 
 ## Этап 4+++: Index chart + рефакторинг в useChartCore (сверх плана)
 
-- **Backend**: `core/market_data_provider` дополнен `load_market_index_prices()` (сырые CLOSE IMOEX) и `load_risk_free_rate_annual()` (RUONIA в годовых %); endpoint `GET /api/series/{name}` с реестром лоадеров
+- **Backend**: `core/market_data_provider` дополнен `load_market_index_prices()` (сырые CLOSE IMOEX) и `load_annual_risk_free_rate()` (RUONIA в годовых %); endpoint `GET /api/series/{name}` с реестром лоадеров
 - **`useChartCore`** — общий хук для time-series виджетов (chart, серия цены, опц. объём, маркеры, ResizeObserver, регистрация в chartSync с `memberId`, click-handler)
 - **`PriceChartWidget`** переписан на хук — снаружи только специфичные подписки и dropdown
 - **`IndexChartWidget`** — новый виджет: дропдаун `IMOEX / RUONIA`, без объёма, без событий. Регистрируется в `groupRegistry` без тикера

@@ -12,10 +12,10 @@ RUONIA_PATH = os.path.join(_DATA_DIR, 'RUONIA_RC_F11_01_2010_T13_03_2026.xlsx')
 IMOEX_PATH = os.path.join(_DATA_DIR, 'IMOEX_Индекс_МосБиржи_1day_01032000_17032026.txt')
 
 
-def load_risk_free_rate(
+def load_daily_risk_free_rate(
         path: str = RUONIA_PATH,
-        start: date | None = None,
-        end: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
 ) -> pd.Series:
     """
     Загружает дневные безрисковые ставки RUONIA из файла .xlsx (ЦБ РФ).
@@ -27,16 +27,16 @@ def load_risk_free_rate(
     df = pd.read_excel(path, sheet_name="RC", usecols=["DT", "ruo"])
     df["DT"] = pd.to_datetime(df["DT"])
     df = df.sort_values("DT").set_index("DT")
-    if start is not None:
-        df = df[df.index >= pd.Timestamp(start)]
-    if end is not None:
-        df = df[df.index <= pd.Timestamp(end)]
+    if start_date is not None:
+        df = df[df.index >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        df = df[df.index <= pd.Timestamp(end_date)]
     rf = df["ruo"] / 100.0 / 252.0
     rf.index.name = "date"
     return rf
 
 
-def load_market_index(
+def load_market_index_log_returns(
         path: str = IMOEX_PATH,
         start_date: str | None = None,
         end_date: str | None = None,
@@ -97,10 +97,10 @@ def load_market_index_prices(
     return prices
 
 
-def load_risk_free_rate_annual(
+def load_annual_risk_free_rate(
         path: str = RUONIA_PATH,
-        start: date | None = None,
-        end: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
 ) -> pd.Series:
     """
     Загружает безрисковую ставку RUONIA в годовых процентах (как в исходнике ЦБ).
@@ -108,10 +108,10 @@ def load_risk_free_rate_annual(
     df = pd.read_excel(path, sheet_name="RC", usecols=["DT", "ruo"])
     df["DT"] = pd.to_datetime(df["DT"])
     df = df.sort_values("DT").set_index("DT")
-    if start is not None:
-        df = df[df.index >= pd.Timestamp(start)]
-    if end is not None:
-        df = df[df.index <= pd.Timestamp(end)]
+    if start_date is not None:
+        df = df[df.index >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        df = df[df.index <= pd.Timestamp(end_date)]
     rf = df["ruo"]
     rf.index.name = "date"
     return rf

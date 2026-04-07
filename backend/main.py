@@ -8,10 +8,10 @@ from datetime import date
 from core.dividend_data_provider import load_dividends
 from core.event_study import EventStudy
 from core.market_data_provider import (
-    load_market_index,
+    load_market_index_log_returns,
     load_market_index_prices,
-    load_risk_free_rate,
-    load_risk_free_rate_annual,
+    load_daily_risk_free_rate,
+    load_annual_risk_free_rate,
 )
 from core.stock_data_provider import get_candles, get_log_returns, list_tickers
 
@@ -77,7 +77,7 @@ class SeriesPoint(BaseModel):
 
 _SERIES_LOADERS = {
     "IMOEX": load_market_index_prices,
-    "RUONIA": load_risk_free_rate_annual,
+    "RUONIA": load_annual_risk_free_rate,
 }
 
 
@@ -156,8 +156,8 @@ class EventStudyResponse(BaseModel):
 def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
     """Рассчитывает AR и CAR для одного события."""
     stock_log_returns = get_log_returns(req.ticker)
-    market = load_market_index()
-    rf = load_risk_free_rate()
+    market = load_market_index_log_returns()
+    rf = load_daily_risk_free_rate()
 
     study = EventStudy(stock_log_returns=stock_log_returns)
     result = study.analyze(

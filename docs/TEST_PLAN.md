@@ -18,8 +18,8 @@
 - load_dividends: возвращает list[DividendEvent], 110 событий, даты парсятся корректно
 
 ### market_data_provider.py
-- load_risk_free_rate: возвращает pd.Series, значения > 0, индекс — даты
-- load_market_index: возвращает pd.Series логдоходностей, индекс — даты
+- load_daily_risk_free_rate: возвращает pd.Series, значения > 0, индекс — даты
+- load_market_index_log_returns: возвращает pd.Series логдоходностей, индекс — даты
 
 ## P2 — интеграционные
 
