@@ -11,3 +11,5 @@ reports
 *.log
 frontend/node_modules/
 frontend/dist/
+backend/notebooks/outputs/*
+!backend/notebooks/outputs/.gitkeep
