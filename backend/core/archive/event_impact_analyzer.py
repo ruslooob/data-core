@@ -14,7 +14,7 @@ from typing import Optional
 
 import pandas as pd
 
-from core.cpi_data_provider import load_normalized_ipc_data, IpcType
+from core.cpi_data_provider import load_normalized_cpi_data, CpiType
 from core.stock_data_provider import get_candles
 
 
@@ -37,7 +37,7 @@ class EventImpactParams:
     cpi_base_date: str = '2012-12-01'
     """Базовая дата для нормализации ИПЦ (только при normalize_cpi=True)."""
 
-    cpi_type: IpcType = IpcType.GOODS_AND_SERVICES
+    cpi_type: CpiType = CpiType.GOODS_AND_SERVICES
     """Тип ИПЦ (только при normalize_cpi=True)."""
 
 
@@ -102,7 +102,7 @@ def _prepare_stock_data(
     stock = stock.sort_values('DATE').reset_index(drop=True)
 
     if params.normalize_cpi:
-        cpi_norm = load_normalized_ipc_data(params.cpi_type, base_year=params.cpi_base_date)
+        cpi_norm = load_normalized_cpi_data(params.cpi_type, base_date=params.cpi_base_date)
         cpi_norm['date'] = pd.to_datetime(cpi_norm['date'])
         stock = pd.merge_asof(
             stock, cpi_norm[['date', 'real_ruble']],

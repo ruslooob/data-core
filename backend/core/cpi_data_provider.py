@@ -4,7 +4,7 @@ from enum import Enum
 import pandas as pd
 
 
-class IpcType(Enum):
+class CpiType(Enum):
     """Возможные страницы Excel-файла с индексами потребительских цен (ИПЦ или CPI)."""
     GOODS_AND_SERVICES = 1  # Потребительские цены на товары и услуги
     FOOD = 2  # Потребительские цены на продовольственные товары
@@ -12,7 +12,7 @@ class IpcType(Enum):
     SERVICES = 4  # Потребительские цены на услуги
 
 
-def load_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFrame:
+def load_cpi_data(cpi_type: CpiType = CpiType.GOODS_AND_SERVICES) -> pd.DataFrame:
     """
     Загружает и обрабатывает указанный лист Excel-файла с данными ИПЦ.
     Табличный формат удобен для восприятия и обработки.
@@ -21,17 +21,17 @@ def load_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFram
     iloc[1:13] — берём только строки месяцев (12 штук), пропуская заголовок.
     drop(columns[1:10]) — отбрасываем столбцы 1991–1999, оставляем с 2000 года.
     """
-    _ipc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stats', 'ipc_mes_08-2025.xlsx')
-    df = pd.read_excel(_ipc_path, sheet_name=ipc_type.value, skiprows=3)
+    _cpi_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stats', 'ipc_mes_08-2025.xlsx')
+    df = pd.read_excel(_cpi_path, sheet_name=cpi_type.value, skiprows=3)
     df = df.iloc[1:13]           # строки месяцев (январь–декабрь)
     df = df.drop(df.columns[1:10], axis=1)  # убираем годы 1991–1999
-    df.columns.values[0] = 'месяц'
+    df.columns.values[0] = 'month'
     return df
 
 
-def load_normalized_ipc_data(
-        ipc_type: IpcType = IpcType.GOODS_AND_SERVICES,
-        base_year: str = '2000-01-01'
+def load_normalized_cpi_data(
+        cpi_type: CpiType = CpiType.GOODS_AND_SERVICES,
+        base_date: str = '2000-01-01'
 ) -> pd.DataFrame:
     """
     Загружает CPI, рассчитывает накопленный индекс и реальную покупательную
@@ -40,8 +40,8 @@ def load_normalized_ipc_data(
     Возвращает DataFrame с колонками: date, cpi, cumulative_cpi, real_ruble.
     real_ruble = 1.0 в базовом месяце, убывает с ростом инфляции.
     """
-    df = load_melted_ipc_data(ipc_type)
-    base_date = pd.Timestamp(base_year)
+    df = load_melted_cpi_data(cpi_type)
+    base_date = pd.Timestamp(base_date)
 
     df['cumulative_cpi'] = (df['cpi'] / 100).cumprod()
 
@@ -51,15 +51,15 @@ def load_normalized_ipc_data(
     return df[['date', 'cpi', 'cumulative_cpi', 'real_ruble']]
 
 
-def load_melted_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.DataFrame:
+def load_melted_cpi_data(cpi_type: CpiType = CpiType.GOODS_AND_SERVICES) -> pd.DataFrame:
     """
     Возвращает преобразованный DataFrame с колонками 'date' и 'cpi'.
     Сплющенный формат, вместо табличного, удобнее для построения графиков.
     """
-    df = load_ipc_data(ipc_type)
+    df = load_cpi_data(cpi_type)
 
     # --- "Расплавляем" таблицу ---
-    df_melted = df.melt(id_vars='месяц', var_name='год', value_name='cpi')
+    df_melted = df.melt(id_vars='month', var_name='year', value_name='cpi')
     df_melted = df_melted.dropna(subset=['cpi'])
 
     month_map = {
@@ -67,11 +67,11 @@ def load_melted_ipc_data(ipc_type: IpcType = IpcType.GOODS_AND_SERVICES) -> pd.D
         'май': 5, 'июнь': 6, 'июль': 7, 'август': 8,
         'сентябрь': 9, 'октябрь': 10, 'ноябрь': 11, 'декабрь': 12
     }
-    df_melted['month_num'] = df_melted['месяц'].map(month_map)
-    df_melted['год'] = df_melted['год'].astype(int)
+    df_melted['month_num'] = df_melted['month'].map(month_map)
+    df_melted['year'] = df_melted['year'].astype(int)
 
     df_melted['date'] = pd.to_datetime(
-        df_melted['год'].astype(str) + '-' + df_melted['month_num'].astype(str) + '-01'
+        df_melted['year'].astype(str) + '-' + df_melted['month_num'].astype(str) + '-01'
     )
 
     # --- Выбираем только нужные столбцы ---

@@ -6,7 +6,7 @@ import pandas as pd
 CURRENCY_FOLDER = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'currencies')
 
 
-def list_avail_currency_pairs() -> list[str]:
+def list_currency_pairs() -> list[str]:
     """
     Возвращает список всех валютных пар на основе файлов в папке CURRENCY_FOLDER.
     Например: 'USD_RUB_1day_20000101_20250905.xlsx' -> 'USD/RUB'
@@ -30,7 +30,7 @@ def is_currency_pair_available(pair: str) -> bool:
     Например: 'USD/RUB' или 'RUB/USD'
     """
     pair = pair.upper()
-    available_pairs = list_avail_currency_pairs()
+    available_pairs = list_currency_pairs()
 
     if pair in available_pairs:
         return True
@@ -45,7 +45,7 @@ def get_currency_data(pair: str) -> pd.DataFrame:
     if not is_currency_pair_available(pair):
         raise ValueError(
             f"Валютная пара '{pair}' не найдена. "
-            f"Доступные пары: {', '.join(list_avail_currency_pairs())}"
+            f"Доступные пары: {', '.join(list_currency_pairs())}"
         )
     pair = pair.upper().replace('/', '_')
 

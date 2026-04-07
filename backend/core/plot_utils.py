@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from dash import Dash, html, dcc, Input, Output, Patch
 import plotly.graph_objects as go
 
-from core.cpi_data_provider import load_normalized_ipc_data, IpcType
+from core.cpi_data_provider import load_normalized_cpi_data, CpiType
 
 
 def _find_free_port(min_port: int = 10001) -> int:
@@ -110,7 +110,7 @@ def plot_price_real(
         normalize_date: str,
         cpi_normalized: bool = True,
         cpi_base_date: str = '2022-01-01',
-        cpi_type: IpcType = IpcType.GOODS_AND_SERVICES,
+        cpi_type: CpiType = CpiType.GOODS_AND_SERVICES,
         events_df: pd.DataFrame = None,
         title: Optional[str] = None,
 ):
@@ -136,7 +136,7 @@ def plot_price_real(
     stock = stock.sort_values('DATE').reset_index(drop=True)
 
     if cpi_normalized:
-        cpi_norm = load_normalized_ipc_data(cpi_type, base_year=cpi_base_date)
+        cpi_norm = load_normalized_cpi_data(cpi_type, base_date=cpi_base_date)
         cpi_norm['date'] = pd.to_datetime(cpi_norm['date'])
         stock = pd.merge_asof(
             stock, cpi_norm[['date', 'real_ruble']],

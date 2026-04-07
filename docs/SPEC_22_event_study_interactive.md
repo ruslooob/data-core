@@ -14,7 +14,7 @@ Dash-приложение внутри Jupyter-ноутбука для анал�
   - t=0 = `announcement_date` (дата объявления — информационное событие)
   - `payment_date` игнорируется
 - **Котировки:** через `get_stock_data(ticker)` из `core/stock_data_provider.py`
-- **ИПЦ:** через `load_normalized_ipc_data()` из `core/cpi_data_provider.py`
+- **ИПЦ:** через `load_normalized_cpi_data()` из `core/cpi_data_provider.py`
 - **Рыночный индекс (IMOEX):** для моделей `market_model` и `capm`
 - **Безрисковая ставка (RUONIA):** для модели `capm`
 
