@@ -7,7 +7,7 @@ import pandas as pd
 
 from core.models import DividendEvent
 
-DIVIDENDS_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'stocks', 'dividends_all.csv')
+DIVIDENDS_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks', 'dividends_all.csv')
 
 
 def load_dividends(path: str = DIVIDENDS_PATH) -> list[DividendEvent]:

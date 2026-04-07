@@ -29,11 +29,13 @@ conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb
 python -m spacy download ru_core_news_lg
 python -m spacy download en_core_web_sm
 
-# поставить core и backend в editable-режиме
+# поставить пакет core в editable-режиме (pyproject.toml лежит в backend/)
+cd backend
 pip install -e .
+cd ..
 ```
 
-После `pip install -e .` пакеты `core` и `backend` доступны для импорта откуда угодно. При изменении кода переустанавливать не нужно.
+После `pip install -e .` пакет `core` доступен для импорта откуда угодно (`from core.event_study import EventStudy`). При изменении кода переустанавливать не нужно.
 
 ### 2. Frontend (Node.js + npm)
 
@@ -53,7 +55,8 @@ npm install
 ### Терминал 1 — backend (порт 8080)
 
 ```bash
-python -m uvicorn backend.main:app --reload --port 8080 --host 127.0.0.1
+cd backend
+python -m uvicorn main:app --reload --port 8080 --host 127.0.0.1
 ```
 
 Проверка: http://127.0.0.1:8080/docs — Swagger UI с описанием API.
@@ -102,6 +105,7 @@ Event Study автоматически привязывается к ведущ�
 ## Тесты
 
 ```bash
+cd backend
 pytest tests/ -v
 ```
 
@@ -114,7 +118,7 @@ pytest tests/ -v
 - `docs/PLAN_FRONTEND.md` — план реализации фронта со статусами
 - `docs/SPEC_*.md` — спецификации других подсистем
 - `docs/TEST_PLAN.md` — план тестов
-- `notebooks/` — research-ноутбуки
+- `backend/notebooks/` — research-ноутбуки
 
 ---
 
@@ -122,14 +126,16 @@ pytest tests/ -v
 
 ```
 data-core/
-├── core/               # Python-пакет: загрузка данных, event study, метрики
-├── backend/            # FastAPI-сервер
-│   └── main.py         # все endpoints
+├── backend/            # вся Python-часть (директория, не пакет)
+│   ├── pyproject.toml  # editable-установка пакета core
+│   ├── main.py         # FastAPI-сервер, все endpoints
+│   ├── core/           # Python-пакет: загрузка данных, event study, метрики
+│   ├── notebooks/      # Jupyter-ноутбуки для research
+│   └── tests/
 ├── frontend/           # React + Vite + Lightweight Charts
 │   └── src/widgets/    # PriceChart, IndexChart, EventStudy + sync механика
-├── notebooks/          # Jupyter-ноутбуки для research
 ├── data/               # котировки, дивиденды, IMOEX, RUONIA, ИПЦ
-├── docs/               # спецификации, планы
-├── tests/
-└── scripts/            # ETL и вспомогательные скрипты
+├── docs/               # спецификации, планы, глоссарий
+├── scripts/            # ETL и вспомогательные скрипты
+└── models/             # артефакты ML-моделей (BERTopic и др.)
 ```

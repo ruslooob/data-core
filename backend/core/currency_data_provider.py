@@ -3,7 +3,7 @@ import warnings
 
 import pandas as pd
 
-CURRENCY_FOLDER = os.path.join(os.path.dirname(__file__), '..', 'data', 'currencies')
+CURRENCY_FOLDER = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'currencies')
 
 
 def list_avail_currency_pairs() -> list[str]:

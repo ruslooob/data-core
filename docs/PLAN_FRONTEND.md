@@ -28,7 +28,7 @@
 - CORS middleware разрешает `http://localhost:5173`
 
 **Критерий приёмки:**
-- `uvicorn backend.main:app --reload --port 8080` запускается
+- `cd backend && uvicorn main:app --reload --port 8080` запускается
 - `curl localhost:8080/api/health` возвращает `{"status": "ok"}`
 - `localhost:8080/docs` открывает Swagger UI
 

@@ -7,7 +7,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["core*", "backend*"]
+include = ["core*"]
 
 [build-system]
 requires = ["setuptools"]

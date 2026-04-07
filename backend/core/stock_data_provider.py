@@ -3,7 +3,7 @@ import os
 
 import pandas as pd
 
-STOCKS_FOLDER = os.path.join(os.path.dirname(__file__), '..', 'data', 'stocks')
+STOCKS_FOLDER = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks')
 
 
 def list_avail_tickers() -> list[str]:
@@ -46,7 +46,7 @@ def _load_stock_data(csv_path: str) -> pd.DataFrame:
     return df[['DATE', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOL']]
 
 
-_SPLITS_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'stocks', 'splits.json')
+_SPLITS_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks', 'splits.json')
 
 
 def get_ticker_splits(ticker: str, splits_path: str = _SPLITS_PATH) -> list[dict]:

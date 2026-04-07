@@ -7,7 +7,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-_DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'stocks')
+_DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks')
 RUONIA_PATH = os.path.join(_DATA_DIR, 'RUONIA_RC_F11_01_2010_T13_03_2026.xlsx')
 IMOEX_PATH = os.path.join(_DATA_DIR, 'IMOEX_Индекс_МосБиржи_1day_01032000_17032026.txt')
 

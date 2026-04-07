@@ -2,17 +2,33 @@
 
 Система событийного анализа (event study) влияния событий на котировки акций. Магистерская дипломная работа.
 
+## Раскладка репозитория
+
+Монорепо: Python и JS в отдельных директориях.
+
+- `backend/` — вся Python-часть: `core/` (доменная логика), `main.py` (FastAPI), `notebooks/`, `tests/`, `pyproject.toml`. Это **директория, а не Python-пакет** (нет `__init__.py` на верхнем уровне).
+- `frontend/` — React-приложение.
+- `data/`, `docs/`, `scripts/`, `models/` — общие ресурсы в корне.
+
 ## Команды
+
+Все команды, работающие с Python, запускаются из директории `backend/`.
 
 ```bash
 # Python — только через conda env
 C:/Users/Ruslan/anaconda3/envs/data-core/python.exe
 
-# Тесты
-C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest tests/ -v
+# Установка (editable-режим) — один раз после клона/переезда
+cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pip install -e .
 
-# Пакет core установлен в editable-режиме (pip install -e .)
+# Тесты
+cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest tests/ -v
+
+# Запуск backend (uvicorn из backend/)
+cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m uvicorn main:app --port 8080 --host 127.0.0.1
 ```
+
+Импорты внутри Python-кода остаются короткими: `from core.event_study import EventStudy`.
 
 ## Правила работы
 
