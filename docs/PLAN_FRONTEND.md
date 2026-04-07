@@ -10,8 +10,9 @@
 - 🟡 **Этап 4** — Event study widget: 4.1, 4.2, 4.4 готовы; 4.3 (карточки метрик) отложен
 - ✅ **Сверх плана** — Index chart widget (IMOEX/RUONIA) + рефакторинг в общий хук `useChartCore`
 - ✅ **Сверх плана** — связь ES↔price/index chart через `groupRegistry` (фильтр тикеров, активное событие, маркеры дивидендов, hover-sync, авто-зум всех графиков группы, клик по маркеру → выбор события)
-- ✅ **Сверх плана** — гранулярные флаги `rangeSync` / `crosshairSync` в `chartSync`; `markApplied` для подавления эха при внешнем `setVisibleRange`
+- ✅ **Сверх плана** — leader-driven sync: peer-to-peer выпилен, `chartSync` стал leader-aware (range/crosshair зеркалятся только от ведущего), `groupRegistry` получил состояние лидера, `SyncLeaderButton` с состояниями, Event Study привязан к тикеру ведущего графика
 - ✅ **Сверх плана** — UX полотна: z-order по клику, прокручиваемое полотно 4000×3000, sticky тулбар, перетаскивание за нижнюю полосу
+- ✅ **Сверх плана** — `docs/GLOSSARY.md` — единый словарь проекта (методология + сущности приложения)
 - ⏳ **Этап 5** — полировка и README
 
 Актуальное архитектурное состояние — см. `SPEC_FRONTEND.md`.
@@ -207,7 +208,6 @@
 
 Реализовано через `groupRegistry` — отдельную шину контекста, не пересекающуюся с `chartSync`.
 
-- **Фильтр тикеров** в Event Study по составу sync-группы (если в группе есть price chart — только их тикеры; иначе все)
 - **Маркеры дивидендов** на price chart — серые треугольники для всех событий тикера
 - **Подсветка активного события группы** — красный «t=0» + границы окна `−N`/`+M` на price chart
 - **Клик** по маркеру события на price chart → ES выбирает + автоматически считает (`requestSelectEvent`)
@@ -217,10 +217,22 @@
 ## Этап 4+++: Index chart + рефакторинг в useChartCore (сверх плана)
 
 - **Backend**: `core/market_data_provider` дополнен `load_market_index_prices()` (сырые CLOSE IMOEX) и `load_risk_free_rate_annual()` (RUONIA в годовых %); endpoint `GET /api/series/{name}` с реестром лоадеров
-- **`useChartCore`** — общий хук для time-series виджетов (chart, серия цены, опц. объём, маркеры, ResizeObserver, регистрация в chartSync с гранулярными флагами, click-handler)
+- **`useChartCore`** — общий хук для time-series виджетов (chart, серия цены, опц. объём, маркеры, ResizeObserver, регистрация в chartSync с `memberId`, click-handler)
 - **`PriceChartWidget`** переписан на хук — снаружи только специфичные подписки и dropdown
-- **`IndexChartWidget`** — новый виджет: дропдаун `IMOEX / RUONIA`, без объёма, без событий, не публикует «тикер» в groupRegistry. `rangeSync: false`, `crosshairSync: true` — индекс не ломает соседний price chart, но crosshair синхронизируется
-- **`chartSync`** разделён: `rangeSync` и `crosshairSync` — независимые флаги при регистрации; добавлен публичный `markApplied(chart)` для случая, когда виджет получает зум-команду извне (чтобы chartSync не превратил `setVisibleRange` в эхо для других price chart'ов и они тоже зумились на новую event-window)
+- **`IndexChartWidget`** — новый виджет: дропдаун `IMOEX / RUONIA`, без объёма, без событий. Регистрируется в `groupRegistry` без тикера
+
+## Этап 4++++: Leader-driven sync (сверх плана)
+
+Заменили peer-to-peer синхронизацию на модель «ведущий → ведомые». Подробнее — в `SPEC_FRONTEND.md` → «Логические группы и leader-driven sync».
+
+- **`groupRegistry`** получил состояние лидера: `setLeader / getLeader / toggleLeader / subscribeLeader / getLeaderTicker`. Лидер автоматически снимается при `unregister` или смене группы
+- **`chartSync`** переписан как leader-aware: range/crosshair зеркалятся всем членам группы только если источник изменения — лидер своей группы. Никакого center-shift, прямой `setVisibleRange`. `markApplied` сохранён для подавления эха при `requestZoom`
+- **`SyncLeaderButton`** — общий компонент-иконка с круговыми стрелками и четырьмя состояниями (none / нейтрально / лидер / disabled-другой-лидер). Подключён к Price/Index chart
+- **`EventStudyWidget`** — тикер форсится из ведущего price chart группы. Если лидера нет или лидер — index chart (без тикера) — виджет блокируется заглушкой. В группе `none` — старое автономное поведение
+
+## Этап 4+++++: Глоссарий проекта (сверх плана)
+
+- **`docs/GLOSSARY.md`** — единый ubiquitous-language словарь: 12 терминов методологии (от Stock/Ticker/Price до AR/CAR) + 10 сущностей приложения (от Canvas/Widget до EventStudyWidget). Принципы и порядок «от простого к сложному». Используется как опорный документ при написании спек и обсуждении задач
 
 ## Этап 4++: UX полотна (сверх плана)
 

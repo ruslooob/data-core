@@ -139,35 +139,41 @@ Backend — тонкая обёртка. Каждый endpoint вызывает 
 - создание `IChartApi`, основной серии цены (`LineSeries`), опционально серии объёма (`HistogramSeries` в pane 1)
 - `createSeriesMarkers` для маркеров событий
 - `ResizeObserver` для синхронизации размера chart с контейнером
-- регистрацию в `chartSync` с гранулярными флагами `rangeSync` / `crosshairSync` (default true)
+- регистрацию в `chartSync` с обязательным `memberId` (для leader-aware sync)
 - подписку на клик с колбэком `onBarClick(timeSec)`
 
 Виджеты сверху добавляют только специфическую логику: загрузку данных, маркеры по своим правилам, подписки на каналы `groupRegistry`. Это позволяет добавлять новые типы time-series виджетов с минимумом дублирования.
 
 #### 1. Price chart widget
 - Линейный график цены (CLOSE) для выбранного тикера + панель объёма снизу (panes Lightweight Charts)
-- `useChartCore({ withVolume: true, rangeSync: true, crosshairSync: true })`
+- `useChartCore({ withVolume: true, memberId })`
 - Тикер выбирается внутри виджета через дропдаун
+- В заголовке — `SyncLeaderButton` (кнопка-иконка с круговыми стрелками): toggle роли «ведущий группы»
 - Интеракция из коробки: зум колесом, drag, автоскейл Y, crosshair
 - **Маркеры дивидендных событий** — серые треугольники под барами для всех событий тикера (через `createSeriesMarkers`)
 - **Подсветка активного события группы** (если тикер совпадает): красный кружок «t=0» над баром, красные стрелки `−N` / `+M` на границах event window
 - **Клик** по маркеру (в пределах ±2 дней от события) → публикует `requestSelectEvent` в группу — Event Study виджет той же группы выбирает это событие и пересчитывает
-- Подписка на `requestZoom` группы → `priceChartSyncBus.markApplied(chart)` + `setVisibleRange`. `markApplied` нужен, чтобы chartSync не пропагировал получившееся range-change событие соседним price chart'ам как эхо и не «затёр» им свежий зум через `shiftRangeToCenter`
+- Подписка на `requestZoom` группы → `priceChartSyncBus.markApplied(chart)` + `setVisibleRange`. `markApplied` нужен, чтобы лидер не пропагировал получившееся range-change событие как эхо и не «затёр» свежий зум
 - Подписка на `broadcastHoverDate` → `setCrosshairPosition` на ближайший бар (синхронизация курсора с CarChart)
-- Регистрируется в `groupRegistry` как член группы со своим тикером (для фильтра в Event Study)
+- Регистрируется в `groupRegistry` как член группы со своим тикером (для определения «тикера ведущего» в Event Study)
 
 #### 2. Index chart widget
 - Линейный график значения индекса/ставки. Дропдаун: `IMOEX` (уровни) и `RUONIA` (% годовых)
-- `useChartCore({ withVolume: false, rangeSync: false, crosshairSync: true })` — **не участвует в range-sync**, потому что у IMOEX/RUONIA свой временной масштаб (с 2000 / 2010 года), и center-based range sync ломает bar spacing соседних price chart'ов. **Crosshair sync остаётся** — при наведении на price chart курсор отображается и на индексе, и обратно
-- **Не регистрируется в `groupRegistry`** как член группы (не публикует «тикер») — иначе фильтр тикеров в Event Study наполнится IMOEX/RUONIA
+- `useChartCore({ withVolume: false, memberId })`
+- В заголовке — `SyncLeaderButton`. Index chart **может быть ведущим** наравне с price chart: если он лидер, его range/crosshair зеркалятся на ведомых группы (это явный выбор пользователя — даже при разнице временных масштабов)
+- **Регистрируется в `groupRegistry`** как член группы **без тикера** (`ticker = null`) — нужен для валидного `memberId` в leader-state, но не публикует тикер, поэтому если ведущим становится index chart, виджет ES блокируется (нет тикера для исследования)
 - Подписан на каналы `groupRegistry`:
   - `subscribeActiveEvent` — рисует маркеры t=0 / границ окна **без фильтра по тикеру** (индекс глобален, нам важна только дата события)
   - `subscribeHoverDate` — `setCrosshairPosition` на ближайший бар (hover из CarChart двигает курсор)
   - `subscribeZoom` — `setVisibleRange` на ту же event-window, что и у price chart'ов
 
 #### 3. Event study widget
+- **Привязка к ведущему графику группы:** виджет ES не выбирает тикер сам. Тикер берётся из ведущего price chart его логической группы (`groupRegistry.getLeaderTicker(group)` + `subscribeLeader/subscribe`). Поведение по сценариям:
+  - **Группа `none`** — автономный режим, тикер выбирается дропдауном из всех доступных тикеров (как раньше)
+  - **В группе есть ведущий price chart** — тикер форсится из лидера, дропдаун disabled, метка «Тикер (ведущий)»
+  - **Ведущего нет ИЛИ ведущий — index chart (без тикера)** — виджет ES блокируется: дропдаун пустой, кнопка «Рассчитать» disabled, в области графика заглушка «Выберите ведущий price chart в группе»
 - Контролы:
-  - Дропдауны: тикер, событие (фильтруется по тикеру), модель
+  - Дропдауны: тикер (см. выше — обычно disabled), событие (фильтруется по тикеру), модель
   - Слайдеры: дней до t=0, дней после, длина оценочного окна
   - Кнопка «Рассчитать»
   - Кнопки навигации ←/→ по событиям (правее «Рассчитать»)
@@ -186,28 +192,51 @@ Backend — тонкая обёртка. Каждый endpoint вызывает 
 
 **Не реализовано:** карточки метрик (CAR%, vol_ratio, volume_ratio).
 
-### Sync-группы по цвету
+### Логические группы и leader-driven sync
 
-В заголовке **каждого** виджета — пикер цветовой группы: `none / red / blue / green / yellow`. Группа `none` = виджет автономен.
+В заголовке **каждого** виджета — пикер логической группы: `none / red / blue / green / yellow`. Группа `none` = виджет автономен. Цветовая палитра — это идентификатор группы, а не «уровень важности».
 
-Семантика группы — несколько независимых каналов связи. Реализованы в двух модулях:
+Внутри группы синхронизация работает по модели **«ведущий → ведомые»** (leader / follower). Никакого peer-to-peer.
 
-**`chartSync` (для time-series графиков)** — синхронизация навигации:
-- При регистрации участник передаёт два независимых флага: `rangeSync` и `crosshairSync` (оба default `true`). Это позволяет, например, у Index chart выключить range-sync (чтобы зум индекса не ломал price chart) и оставить crosshair-sync
-- **Visible time range** — по центру окна. При сдвиге master'а slave сохраняет свою длительность/масштаб (bar spacing), смещается только центр. Если новый диапазон выходит за края данных slave'а — клампится к границам. Slave с `rangeSync: false` пропускается
-- **Crosshair** — позиция курсора пробрасывается между графиками группы. Slave с `crosshairSync: false` пропускается
-- Защита от echo-feedback: `WeakMap<chart, lastAppliedAt>` с окном игнора 150 мс. Метод `markApplied(chart)` доступен публично — виджеты вызывают его перед программным `setVisibleRange` (например, в обработчике `requestZoom`), чтобы chartSync не превратил свой же зум в эхо
+#### Роли в группе
+
+- **Ведущий** *(leader)* — один на группу. Назначается пользователем через `SyncLeaderButton` в заголовке виджета (toggle). Если ведущий есть — его движения зеркалятся ведомым.
+- **Ведомый** *(follower)* — любой член группы, не являющийся ведущим. Автоматически повторяет за ведущим: **visible time range** и **позицию crosshair**. Между собой ведомые **не синхронизируются**.
+- **Без ведущего** — виджеты группы независимы, никакой автоматической синхронизации не происходит. Это и есть способ «отключить» sync.
+
+Сменить ведущего: либо текущий ведущий toggle-нет себя через свою кнопку, либо член группы переключит группу (тогда лидерство снимается автоматически).
+
+#### Реализация: `chartSync` (для time-series графиков)
+
+`chartSync` — это leader-aware шина синхронизации навигации. Каждый chart регистрируется с `memberId`. На каждое изменение visible range / crosshair шина проверяет, является ли источник лидером своей группы — если да, ретранслирует изменение всем остальным членам группы; если нет, событие игнорируется.
+
+- **Visible time range** — лидер вызывает `setVisibleRange` на всех ведомых напрямую. Никаких center-shift / shiftRangeToCenter — прямой mirror. Пользователь явно выбирает «синхронизировать всё с этим графиком», поэтому даже разница временных масштабов (price chart 1 год vs index chart 25 лет) — это его осознанный выбор
+- **Crosshair** — лидер пробрасывает позицию курсора всем ведомым (через ближайший бар каждого)
+- Защита от echo-feedback: `WeakMap<chart, lastAppliedAt>` с окном игнора 150 мс. Метод `markApplied(chart)` доступен публично — виджеты вызывают его перед программным `setVisibleRange` (например, в обработчике `requestZoom` от Event Study), чтобы лидер не превратил свой же зум в эхо
 - API Lightweight Charts v5: `subscribeVisibleTimeRangeChange` + `setVisibleRange` (НЕ logical range — он даёт расхождение по датам между тикерами с разной историей). `subscribe*` возвращает `void`, отписка через `unsubscribe*(handler)`
 - `timeScale.fixLeftEdge: true, fixRightEdge: true` — запретить пролистывание за края данных
 
-**`groupRegistry` (price chart ↔ event study)** — связь по контексту, отдельная шина:
-- **Состав группы** — `register/unregister/setGroup/setTicker`. Event Study фильтрует свой dropdown тикеров по объединению тикеров price chart'ов своей группы. Если в группе нет price chart — фоллбек на все тикеры. Если текущий тикер выпал из списка — авто-переключение на первый
-- **Активное событие группы** — `setActiveEvent / subscribeActiveEvent / getActiveEvent`. Event Study публикует `{ticker, event_date, daysBefore, daysAfter}`, price chart'ы рисуют подсветку. Конфликт двух ES в одной группе разрешается «последний победил»
-- **Zoom-команда** — `requestZoom / subscribeZoom`. Event Study запрашивает зум на event window ×3, price chart'ы группы зовут `setVisibleRange`
-- **Select-event-команда** — `requestSelectEvent / subscribeSelectEvent`. Клик по маркеру события на price chart → Event Study выбирает событие и автоматически пересчитывает (через `calcRef` + `setTimeout(0)` для применения state)
-- **Hover-date канал** — `broadcastHoverDate / subscribeHoverDate`. CarChart на crosshair публикует `event_date + t календарных дней`, price chart'ы зовут `setCrosshairPosition` на ближайший бар. Lightweight-charts снэпит к торговому дню, выходные округляются
+#### Реализация: `groupRegistry` (контекст исследования + лидер)
 
-Разделение `chartSync` vs `groupRegistry` сделано осознанно: range/crosshair sync — узкая механика только для price chart; всё остальное — про контекст и взаимосвязь виджетов.
+`groupRegistry` — отдельная шина, не пересекающаяся с `chartSync`. Хранит состав групп и состояние лидера, плюс несколько каналов связи между виджетами:
+
+- **Состав группы** — `register/unregister/setGroup/setTicker`. При смене группы или unregister участника, если он был лидером старой группы, лидерство автоматически снимается
+- **Лидер группы** — `setLeader / getLeader / toggleLeader / subscribeLeader`. Map `<group → memberId | null>`, по одному лидеру на ненулевую группу. `getLeaderTicker(group)` — удобный геттер тикера ведущего (используется в Event Study)
+- **Активное событие группы** — `setActiveEvent / subscribeActiveEvent / getActiveEvent`. Event Study публикует `{ticker, event_date, daysBefore, daysAfter}`, графики группы рисуют подсветку. Конфликт двух ES в одной группе разрешается «последний победил»
+- **Zoom-команда** — `requestZoom / subscribeZoom`. Event Study запрашивает зум на event window ×3, графики группы зовут `setVisibleRange`. Этот канал работает независимо от наличия лидера — это «контекст исследования», а не навигация
+- **Select-event-команда** — `requestSelectEvent / subscribeSelectEvent`. Клик по маркеру события на price chart → Event Study выбирает событие и автоматически пересчитывает (через `calcRef` + `setTimeout(0)` для применения state)
+- **Hover-date канал** — `broadcastHoverDate / subscribeHoverDate`. CarChart на crosshair публикует `event_date + t календарных дней`, графики группы зовут `setCrosshairPosition` на ближайший бар. Lightweight-charts снэпит к торговому дню, выходные округляются
+
+Разделение `chartSync` vs `groupRegistry` сделано осознанно: первый отвечает за leader-driven навигацию (range/crosshair), второй — за состояние лидера и каналы контекста исследования.
+
+#### `SyncLeaderButton` — UI-компонент
+
+Минималистичная иконка-кнопка с круговыми стрелками в заголовке time-series виджета. Состояния:
+
+- **Группа `none`** — disabled, серая. Подсказка: «Выберите цветовую группу, чтобы синхронизировать графики»
+- **Группа выбрана, лидера нет** — enabled, нейтральная. Клик → этот виджет становится лидером
+- **Этот виджет — лидер** — подсвечена акцентным цветом (синий fill). Клик → снять лидерство (группа возвращается в состояние «без ведущего», синхронизация выключается)
+- **Лидер есть, но это не я** — disabled, бледная. Подсказка: «В группе уже есть ведущий график. Снимите его, чтобы выбрать другой»
 
 ### Данные
 - Frontend кэширует ответы API на клиенте
