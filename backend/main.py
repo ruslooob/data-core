@@ -52,11 +52,11 @@ class Candle(BaseModel):
 @app.get("/api/prices/{ticker}")
 def get_prices(
         ticker: str,
-        start: str | None = None,
-        end: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
 ) -> list[Candle]:
     """Возвращает OHLCV-котировки для тикера."""
-    df = get_candles(ticker, normalized=True, start_date=start, end_date=end)
+    df = get_candles(ticker, normalized=True, start_date=start_date, end_date=end_date)
     return [
         Candle(
             date=row.DATE.strftime("%Y-%m-%d"),
@@ -107,15 +107,15 @@ class DividendEventOut(BaseModel):
 @app.get("/api/events")
 def get_events(
         ticker: str | None = None,
-        start: str | None = None,
-        end: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
 ) -> list[DividendEventOut]:
     """Возвращает список дивидендных событий с опциональной фильтрацией."""
     import pandas as pd
 
     events = load_dividends()
-    start_ts = pd.Timestamp(start) if start else None
-    end_ts = pd.Timestamp(end) if end else None
+    start_ts = pd.Timestamp(start_date) if start_date else None
+    end_ts = pd.Timestamp(end_date) if end_date else None
 
     result = []
     for ev in events:

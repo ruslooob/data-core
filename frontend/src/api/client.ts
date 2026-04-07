@@ -21,24 +21,24 @@ export function getTickers(): Promise<string[]> {
 
 export function getPrices(
   ticker: string,
-  start?: string,
-  end?: string,
+  startDate?: string,
+  endDate?: string,
 ): Promise<Candle[]> {
   const params = new URLSearchParams()
-  if (start) params.set('start', start)
-  if (end) params.set('end', end)
+  if (startDate) params.set('start_date', startDate)
+  if (endDate) params.set('end_date', endDate)
   const query = params.toString()
   const url = `/api/prices/${ticker}${query ? `?${query}` : ''}`
   return fetchJson<Candle[]>(url)
 }
 
 export function getEvents(
-  params: { ticker?: string; start?: string; end?: string } = {},
+  params: { ticker?: string; startDate?: string; endDate?: string } = {},
 ): Promise<DividendEvent[]> {
   const search = new URLSearchParams()
   if (params.ticker) search.set('ticker', params.ticker)
-  if (params.start) search.set('start', params.start)
-  if (params.end) search.set('end', params.end)
+  if (params.startDate) search.set('start_date', params.startDate)
+  if (params.endDate) search.set('end_date', params.endDate)
   const query = search.toString()
   const url = `/api/events${query ? `?${query}` : ''}`
   return fetchJson<DividendEvent[]>(url)
