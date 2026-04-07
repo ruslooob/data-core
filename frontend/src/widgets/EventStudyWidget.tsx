@@ -17,6 +17,9 @@ const MODELS: { value: ExpectedReturnModel; label: string }[] = [
   { value: 'capm', label: 'CAPM' },
 ]
 
+/** При зуме на event window показываем в N раз больший контекст вокруг. */
+const ZOOM_CONTEXT_FACTOR = 3
+
 interface EventStudyWidgetProps {
   group: WidgetGroup
 }
@@ -143,8 +146,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   }, [group])
 
   // Подписка на «выбрать событие» из price chart (клик по маркеру)
-  // calcRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
-  const calcRef = useRef<() => void>(() => {})
+  // handleCalculateRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
+  const handleCalculateRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (group === 'none') return
     return groupRegistry.subscribeSelectEvent(group, (req) => {
@@ -158,7 +161,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
       if (found) {
         setEventId(found.id)
         // Авторасчёт на следующем тике, когда state применится
-        setTimeout(() => calcRef.current(), 0)
+        setTimeout(() => handleCalculateRef.current(), 0)
       }
     })
   }, [group, ticker, allEvents])
@@ -170,19 +173,18 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     setEventId(ev.id)
     // Авто-зум на price chart этой группы
     if (group !== 'none') {
-      const pad = 3
       groupRegistry.requestZoom(group, {
-        from: shiftDate(ev.eventDate, -daysBefore * pad),
-        to: shiftDate(ev.eventDate, daysAfter * pad),
+        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     // Авто-расчёт после применения нового eventId
-    setTimeout(() => calcRef.current(), 0)
+    setTimeout(() => handleCalculateRef.current(), 0)
   }
 
-  // Обновляем calcRef на каждом рендере, чтобы select-handler звал актуальную версию
+  // Обновляем handleCalculateRef на каждом рендере, чтобы select-handler звал актуальную версию
   useEffect(() => {
-    calcRef.current = () => {
+    handleCalculateRef.current = () => {
       void handleCalculate()
     }
   })
@@ -191,10 +193,9 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     const ev = tickerEvents[currentIdx]
     if (!ev) return
     if (group !== 'none') {
-      const pad = 3
       groupRegistry.requestZoom(group, {
-        from: shiftDate(ev.eventDate, -daysBefore * pad),
-        to: shiftDate(ev.eventDate, daysAfter * pad),
+        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     setLoading(true)

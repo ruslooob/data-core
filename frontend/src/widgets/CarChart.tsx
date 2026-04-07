@@ -27,13 +27,14 @@ function shiftDate(iso: string, deltaDays: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-// База для синтетических timestamp'ов: 2000-01-01. Каждый t = базе + i*86400.
+// База для синтетических timestamp'ов: 2000-01-01. Каждый t = базе + i*SECONDS_PER_DAY.
 // Lightweight Charts работает с временной шкалой, поэтому используем фиктивные
 // даты, а формат тика переопределяем через localization.timeFormatter.
 const BASE_TS = 946684800 // 2000-01-01 00:00:00 UTC
+const SECONDS_PER_DAY = 86400
 
 function indexToTime(i: number): UTCTimestamp {
-  return (BASE_TS + i * 86400) as UTCTimestamp
+  return (BASE_TS + i * SECONDS_PER_DAY) as UTCTimestamp
 }
 
 export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps) {
@@ -72,13 +73,13 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
         fixLeftEdge: true,
         fixRightEdge: true,
         tickMarkFormatter: (time: number) => {
-          const t = Math.round((time - BASE_TS) / 86400)
+          const t = Math.round((time - BASE_TS) / SECONDS_PER_DAY)
           return t > 0 ? `+${t}` : `${t}`
         },
       },
       localization: {
         timeFormatter: (time: number) => {
-          const t = Math.round((time - BASE_TS) / 86400)
+          const t = Math.round((time - BASE_TS) / SECONDS_PER_DAY)
           return `t=${t > 0 ? '+' : ''}${t}`
         },
       },
@@ -127,18 +128,17 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
 
     // Crosshair hover → broadcast соответствующей реальной даты в группу
     const onCrosshair = (param: { time?: Time }) => {
-      const group = groupRef.current
-      if (group === 'none') return
+      const currentGroup = groupRef.current
+      if (currentGroup === 'none') return
       if (param.time === undefined || nRef.current === 0) {
-        groupRegistry.broadcastHoverDate(group, null)
+        groupRegistry.broadcastHoverDate(currentGroup, null)
         return
       }
+      // ts (synthetic) → t (relative day from event), затем добавляем к event_date
       const ts = typeof param.time === 'number' ? param.time : 0
-      const i = Math.round((ts - BASE_TS) / 86400)
-      const t = i // i здесь = tStart + offsetIdx, но мы уже строили time = base + (tStart+offset)
-      // Вычислили t как i; реальная дата = eventDate + t календарных дней
+      const t = Math.round((ts - BASE_TS) / SECONDS_PER_DAY)
       const date = shiftDate(eventDateRef.current, t)
-      groupRegistry.broadcastHoverDate(group, date)
+      groupRegistry.broadcastHoverDate(currentGroup, date)
     }
     chart.subscribeCrosshairMove(onCrosshair)
 
@@ -153,8 +153,8 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
     return () => {
       chart.unsubscribeCrosshairMove(onCrosshair)
       // Сбрасываем hover на price chart при размонтировании
-      const group = groupRef.current
-      if (group !== 'none') groupRegistry.broadcastHoverDate(group, null)
+      const currentGroup = groupRef.current
+      if (currentGroup !== 'none') groupRegistry.broadcastHoverDate(currentGroup, null)
       ro.disconnect()
       chart.remove()
       chartRef.current = null
