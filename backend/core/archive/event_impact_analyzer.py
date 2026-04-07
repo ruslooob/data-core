@@ -91,29 +91,30 @@ class EventImpactResult:
     """Коэффициент объёма: volume_after / volume_before."""
 
 
-def _prepare_stock_data(
-        stock: pd.DataFrame,
+def _prepare_analysis_context(
+        candles: pd.DataFrame,
         params: EventImpactParams,
 ) -> tuple[pd.Series, pd.Series, pd.DatetimeIndex, float]:
     """
-    Подготавливает ряды цены и объёма, вычисляет базовую дневную доходность.
+    Подготавливает контекст анализа: ряды цены и объёма + базовую дневную доходность.
+    Опционально нормализует цены по инфляции (CPI).
     Возвращает: price, vol_series, t_days, baseline_daily
     """
-    stock = stock.sort_values('DATE').reset_index(drop=True)
+    candles = candles.sort_values('DATE').reset_index(drop=True)
 
     if params.normalize_cpi:
         cpi_norm = load_normalized_cpi_data(params.cpi_type, base_date=params.cpi_base_date)
         cpi_norm['date'] = pd.to_datetime(cpi_norm['date'])
-        stock = pd.merge_asof(
-            stock, cpi_norm[['date', 'real_ruble']],
+        candles = pd.merge_asof(
+            candles, cpi_norm[['date', 'real_ruble']],
             left_on='DATE', right_on='date', direction='backward'
         )
-        stock['real_ruble'] = stock['real_ruble'].infer_objects(copy=False)
-        price = stock.set_index('DATE')['CLOSE'] * stock.set_index('DATE')['real_ruble']
+        candles['real_ruble'] = candles['real_ruble'].infer_objects(copy=False)
+        price = candles.set_index('DATE')['CLOSE'] * candles.set_index('DATE')['real_ruble']
     else:
-        price = stock.set_index('DATE')['CLOSE']
+        price = candles.set_index('DATE')['CLOSE']
 
-    vol_series = stock.set_index('DATE')['VOL']
+    vol_series = candles.set_index('DATE')['VOL']
     t_days = price.index.sort_values()
 
     baseline_idx = t_days[
@@ -220,8 +221,8 @@ def analyze_event_impact(
         EventImpactResult или None, если данных недостаточно для расчёта
     """
     event_date = pd.Timestamp(event_date)
-    stock = get_candles(ticker)
-    price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
+    candles = get_candles(ticker)
+    price, vol_series, t_days, baseline_daily = _prepare_analysis_context(candles, params)
 
     return _compute_event_metrics(
         ticker, event_date, event_text,
@@ -253,8 +254,8 @@ def analyze_events_impact(
         Список EventImpactResult (или None для событий с недостаточными данными),
         в том же порядке, что и строки events.
     """
-    stock = get_candles(ticker)
-    price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
+    candles = get_candles(ticker)
+    price, vol_series, t_days, baseline_daily = _prepare_analysis_context(candles, params)
 
     neighbor_dates = pd.to_datetime(events[date_col]).tolist()
 

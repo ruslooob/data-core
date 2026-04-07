@@ -106,7 +106,7 @@ def plot_2d(x, y, xlabel=None, ylabel=None, title=None, mode='interactive'):
 
 
 def plot_price_real(
-        stock_data: pd.DataFrame,
+        candles: pd.DataFrame,
         normalize_date: str,
         cpi_normalized: bool = True,
         cpi_base_date: str = '2022-01-01',
@@ -123,7 +123,7 @@ def plot_price_real(
       при наведении отображается текст события и затемняется интервал date_start–date_end.
 
     Параметры:
-        stock_data:      DataFrame с колонками DATE и CLOSE
+        candles:         DataFrame со свечами (колонки DATE и CLOSE)
         normalize_date:  дата, относительно которой нормировать (= 100)
         cpi_normalized:  применять поправку на инфляцию
         cpi_base_date:   базовая дата для CPI (только при cpi_normalized=True)
@@ -131,7 +131,7 @@ def plot_price_real(
         events_df:       опционально — DataFrame с колонками id, date_start, date_end, event
         title:           заголовок графика
     """
-    stock = stock_data.copy()
+    stock = candles.copy()
     stock['DATE'] = pd.to_datetime(stock['DATE'])
     stock = stock.sort_values('DATE').reset_index(drop=True)
 
