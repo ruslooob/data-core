@@ -37,6 +37,16 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showEvents, setShowEvents] = useState<boolean>(() =>
+    groupRegistry.getShowEvents(syncGroup),
+  )
+
+  // Подписка на group-level показ событий (sync «глазика» между всеми ES группы)
+  useEffect(() => {
+    setShowEvents(groupRegistry.getShowEvents(syncGroup))
+    if (syncGroup === 'none') return
+    return groupRegistry.subscribeShowEvents(syncGroup, setShowEvents)
+  }, [syncGroup])
 
   useEffect(() => {
     getTickers().then((ts) => {
@@ -243,6 +253,13 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
           </select>
         </label>
 
+        <ShowEventsToggleButton
+          show={showEvents}
+          disabled={isBlockedNoLeader || syncGroup === 'none'}
+          syncGroup={syncGroup}
+          onToggle={() => groupRegistry.toggleShowEvents(syncGroup)}
+        />
+
         <label style={labelStyle}>
           Модель
           <select
@@ -350,6 +367,58 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         )}
       </div>
     </div>
+  )
+}
+
+function ShowEventsToggleButton({
+  show,
+  disabled,
+  syncGroup,
+  onToggle,
+}: {
+  show: boolean
+  disabled: boolean
+  syncGroup: SyncGroup
+  onToggle: () => void
+}) {
+  let title: string
+  if (syncGroup === 'none') {
+    title = 'Выберите цветовую группу, чтобы показывать события на ведущем графике'
+  } else if (disabled) {
+    title = 'В группе нет ведущего price chart — некому показывать события'
+  } else if (show) {
+    title = 'Скрыть события на ведущем графике'
+  } else {
+    title = 'Показать все события тикера на ведущем графике'
+  }
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      style={{
+        alignSelf: 'flex-end',
+        marginBottom: 1,
+        width: 32,
+        height: 32,
+        padding: 0,
+        border: '1px solid #d0d0d0',
+        borderRadius: 4,
+        background: show ? '#2962FF' : 'transparent',
+        color: show ? '#ffffff' : '#666',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
   )
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
+import type { MouseEventParams, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getEvents, getPrices, getTickers } from '../api/client'
 import type { DividendEvent } from '../api/types'
 import { priceChartSyncBus, type SyncGroup } from './chartSync'
@@ -23,6 +23,13 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   const [selectedTicker, setSelectedTicker] = useState<string>('')
   const [events, setEvents] = useState<DividendEvent[]>([])
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
+  const [isLeader, setIsLeader] = useState<boolean>(
+    () => groupRegistry.getLeader(syncGroup) === widgetId,
+  )
+  const [showEvents, setShowEvents] = useState<boolean>(() =>
+    groupRegistry.getShowEvents(syncGroup),
+  )
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
@@ -105,14 +112,36 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     })
   }, [selectedTicker, chartRef, priceSeriesRef, volumeSeriesRef])
 
-  // ── Дивидендные события для текущего тикера ──
+  // ── Подписка на состояние лидера группы ──
   useEffect(() => {
-    if (!selectedTicker) {
+    setIsLeader(groupRegistry.getLeader(syncGroup) === widgetId)
+    if (syncGroup === 'none') {
+      setIsLeader(false)
+      return
+    }
+    return groupRegistry.subscribeLeader(syncGroup, (leaderId) => {
+      setIsLeader(leaderId === widgetId)
+    })
+  }, [syncGroup, widgetId])
+
+  // ── Подписка на group-level «показывать события» ──
+  useEffect(() => {
+    setShowEvents(groupRegistry.getShowEvents(syncGroup))
+    if (syncGroup === 'none') {
+      setShowEvents(false)
+      return
+    }
+    return groupRegistry.subscribeShowEvents(syncGroup, setShowEvents)
+  }, [syncGroup])
+
+  // ── Дивидендные события: только если этот график — ведущий И «глазик» включён ──
+  useEffect(() => {
+    if (!isLeader || !showEvents || !selectedTicker) {
       setEvents([])
       return
     }
     getEvents({ ticker: selectedTicker }).then(setEvents)
-  }, [selectedTicker])
+  }, [isLeader, showEvents, selectedTicker])
 
   // ── Подписки на канал группы ──
   useEffect(() => {
@@ -166,6 +195,40 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     })
   }, [syncGroup, chartRef])
 
+  // ── Tooltip + cursor pointer на маркере события ──
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const onMove = (param: MouseEventParams) => {
+      if (param.time === undefined || !param.point) {
+        setTooltip(null)
+        return
+      }
+      const targetTs = typeof param.time === 'number' ? param.time : 0
+      const evs = eventsRef.current
+      let best: DividendEvent | null = null
+      let bestDiff = Infinity
+      for (const ev of evs) {
+        const diff = Math.abs(dateToTs(ev.event_date) - targetTs)
+        if (diff < bestDiff) {
+          bestDiff = diff
+          best = ev
+        }
+      }
+      if (best && bestDiff <= 2 * 86400) {
+        setTooltip({
+          x: param.point.x,
+          y: param.point.y,
+          text: `${best.event_date} — ${best.dividend.toFixed(2)} ₽`,
+        })
+      } else {
+        setTooltip(null)
+      }
+    }
+    chart.subscribeCrosshairMove(onMove)
+    return () => chart.unsubscribeCrosshairMove(onMove)
+  }, [chartRef])
+
   // ── Маркеры: все дивиденды + подсветка активного события ──
   useEffect(() => {
     const markersApi = markersRef.current
@@ -181,7 +244,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       })
     }
 
-    if (activeEvent && activeEvent.ticker === selectedTicker) {
+    if (activeEvent && isLeader && activeEvent.ticker === selectedTicker) {
       const t0 = dateToTs(activeEvent.event_date)
       const dayMs = 86400
       markers.push({
@@ -216,7 +279,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     })
 
     markersApi.setMarkers(markers)
-  }, [events, activeEvent, selectedTicker, markersRef])
+  }, [events, activeEvent, selectedTicker, markersRef, isLeader])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -235,7 +298,36 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
         </select>
         <SyncLeaderButton group={syncGroup} memberId={widgetId} />
       </div>
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+      <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
+        <div
+          ref={containerRef}
+          style={{
+            width: '100%',
+            height: '100%',
+            cursor: tooltip ? 'pointer' : 'crosshair',
+          }}
+        />
+        {tooltip && (
+          <div
+            style={{
+              position: 'absolute',
+              left: tooltip.x + 14,
+              top: tooltip.y + 14,
+              padding: '4px 8px',
+              background: 'rgba(33, 33, 33, 0.92)',
+              color: '#fff',
+              fontSize: 12,
+              borderRadius: 4,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+              zIndex: 5,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+            }}
+          >
+            {tooltip.text}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

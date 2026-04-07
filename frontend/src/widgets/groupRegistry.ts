@@ -38,6 +38,7 @@ type ZoomListener = (req: ZoomRequest) => void
 type SelectListener = (req: SelectEventRequest) => void
 type HoverDateListener = (date: string | null) => void
 type LeaderListener = (leaderId: string | null) => void
+type ShowEventsListener = (show: boolean) => void
 
 class GroupRegistry {
   private members = new Map<string, Member>()
@@ -52,6 +53,9 @@ class GroupRegistry {
 
   private leaders = new Map<SyncGroup, string | null>()
   private leaderListeners = new Map<SyncGroup, Set<LeaderListener>>()
+
+  private showEventsByGroup = new Map<SyncGroup, boolean>()
+  private showEventsListeners = new Map<SyncGroup, Set<ShowEventsListener>>()
 
   // ───── члены группы ─────
 
@@ -122,6 +126,36 @@ class GroupRegistry {
     if (!leaderId) return null
     const m = this.members.get(leaderId)
     return m?.ticker ?? null
+  }
+
+  // ───── показ событий на ведущем графике (toggle от Event Study) ─────
+
+  getShowEvents(group: SyncGroup): boolean {
+    return this.showEventsByGroup.get(group) ?? false
+  }
+
+  setShowEvents(group: SyncGroup, show: boolean): void {
+    if (group === 'none') return
+    const cur = this.showEventsByGroup.get(group) ?? false
+    if (cur === show) return
+    this.showEventsByGroup.set(group, show)
+    const set = this.showEventsListeners.get(group)
+    if (set) for (const l of set) l(show)
+  }
+
+  toggleShowEvents(group: SyncGroup): void {
+    if (group === 'none') return
+    this.setShowEvents(group, !this.getShowEvents(group))
+  }
+
+  subscribeShowEvents(group: SyncGroup, l: ShowEventsListener): () => void {
+    let set = this.showEventsListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.showEventsListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
   }
 
   setTicker(id: string, ticker: string | null): void {
