@@ -10,7 +10,7 @@ import {
   type MouseEventParams,
   type Time,
 } from 'lightweight-charts'
-import { priceChartSyncBus, type SyncGroup } from './chartSync'
+import { chartSyncBus, type WidgetGroup } from './chartSync'
 
 /**
  * Базовый хук для time-series виджета (price chart, index chart и т.п.).
@@ -21,7 +21,7 @@ import { priceChartSyncBus, type SyncGroup } from './chartSync'
  */
 export interface ChartCoreOptions {
   containerRef: RefObject<HTMLDivElement | null>
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
   /** Идентификатор виджета (для leader-aware chartSync). */
   memberId: string
   withVolume?: boolean
@@ -55,7 +55,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
-  const setSyncGroupRef = useRef<((g: SyncGroup) => void) | null>(null)
+  const setWidgetGroupRef = useRef<((g: WidgetGroup) => void) | null>(null)
   const onBarClickRef = useRef(onBarClick)
 
   useEffect(() => {
@@ -136,18 +136,18 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     ro.observe(container)
 
     // Регистрация в chartSync (range/crosshair sync с другими графиками группы)
-    const { setGroup, unregister: unregisterSync } = priceChartSyncBus.register(
+    const { setGroup, unregister: unregisterSync } = chartSyncBus.register(
       chart,
       priceSeries,
       syncGroup,
       { memberId },
     )
-    setSyncGroupRef.current = setGroup
+    setWidgetGroupRef.current = setGroup
 
     return () => {
       chart.unsubscribeClick(onClick)
       unregisterSync()
-      setSyncGroupRef.current = null
+      setWidgetGroupRef.current = null
       ro.disconnect()
       chart.remove()
       chartRef.current = null
@@ -160,7 +160,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
 
   // Обновление группы при смене prop'а
   useEffect(() => {
-    setSyncGroupRef.current?.(syncGroup)
+    setWidgetGroupRef.current?.(syncGroup)
   }, [syncGroup])
 
   return { chartRef, priceSeriesRef, volumeSeriesRef, markersRef }

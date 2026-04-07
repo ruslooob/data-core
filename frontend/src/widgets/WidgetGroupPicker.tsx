@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { SYNC_GROUPS, SYNC_GROUP_COLORS, type SyncGroup } from './chartSync'
+import { WIDGET_GROUPS, WIDGET_GROUP_COLORS, type WidgetGroup } from './chartSync'
 
-interface SyncGroupPickerProps {
-  group: SyncGroup
-  onChange: (group: SyncGroup) => void
+interface WidgetGroupPickerProps {
+  group: WidgetGroup
+  onChange: (group: WidgetGroup) => void
 }
 
-export function SyncGroupPicker({ group, onChange }: SyncGroupPickerProps) {
+export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -34,7 +34,7 @@ export function SyncGroupPicker({ group, onChange }: SyncGroupPickerProps) {
           width: 16,
           height: 16,
           borderRadius: '50%',
-          backgroundColor: SYNC_GROUP_COLORS[group],
+          backgroundColor: WIDGET_GROUP_COLORS[group],
           border: group === 'none' ? '1px solid #999' : '1px solid rgba(0,0,0,0.2)',
           cursor: 'pointer',
           padding: 0,
@@ -58,7 +58,7 @@ export function SyncGroupPicker({ group, onChange }: SyncGroupPickerProps) {
             zIndex: 200,
           }}
         >
-          {SYNC_GROUPS.map((g) => (
+          {WIDGET_GROUPS.map((g) => (
             <button
               key={g}
               onClick={(e) => {
@@ -71,7 +71,7 @@ export function SyncGroupPicker({ group, onChange }: SyncGroupPickerProps) {
                 width: 18,
                 height: 18,
                 borderRadius: '50%',
-                backgroundColor: SYNC_GROUP_COLORS[g],
+                backgroundColor: WIDGET_GROUP_COLORS[g],
                 border:
                   g === group
                     ? '2px solid #333'

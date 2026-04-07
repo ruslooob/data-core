@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { groupRegistry } from './groupRegistry'
-import type { SyncGroup } from './chartSync'
+import type { WidgetGroup } from './chartSync'
 
 interface Props {
-  group: SyncGroup
+  group: WidgetGroup
   memberId: string
 }
 

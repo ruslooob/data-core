@@ -7,9 +7,9 @@ import type {
 } from 'lightweight-charts'
 import { groupRegistry } from './groupRegistry'
 
-export type SyncGroup = 'none' | 'red' | 'blue' | 'green' | 'yellow'
+export type WidgetGroup = 'none' | 'red' | 'blue' | 'green' | 'yellow'
 
-export const SYNC_GROUP_COLORS: Record<SyncGroup, string> = {
+export const WIDGET_GROUP_COLORS: Record<WidgetGroup, string> = {
   none: '#cccccc',
   red: '#e53935',
   blue: '#1e88e5',
@@ -17,12 +17,12 @@ export const SYNC_GROUP_COLORS: Record<SyncGroup, string> = {
   yellow: '#fdd835',
 }
 
-export const SYNC_GROUPS: SyncGroup[] = ['none', 'red', 'blue', 'green', 'yellow']
+export const WIDGET_GROUPS: WidgetGroup[] = ['none', 'red', 'blue', 'green', 'yellow']
 
 interface Entry {
   chart: IChartApi
   priceSeries: ISeriesApi<'Line'>
-  group: SyncGroup
+  group: WidgetGroup
   memberId: string
 }
 
@@ -57,9 +57,9 @@ class ChartSyncBus {
   register(
     chart: IChartApi,
     priceSeries: ISeriesApi<'Line'>,
-    initialGroup: SyncGroup,
+    initialGroup: WidgetGroup,
     options: RegisterOptions,
-  ): { setGroup: (g: SyncGroup) => void; unregister: () => void } {
+  ): { setGroup: (g: WidgetGroup) => void; unregister: () => void } {
     const entry: Entry = {
       chart,
       priceSeries,
@@ -115,7 +115,7 @@ class ChartSyncBus {
     }
     chart.subscribeCrosshairMove(onCrosshairMove)
 
-    const setGroup = (g: SyncGroup) => {
+    const setGroup = (g: WidgetGroup) => {
       entry.group = g
     }
 
@@ -153,4 +153,4 @@ function timeToNumber(t: Time): number {
   return 0
 }
 
-export const priceChartSyncBus = new ChartSyncBus()
+export const chartSyncBus = new ChartSyncBus()

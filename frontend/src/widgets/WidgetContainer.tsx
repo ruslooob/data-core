@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { SyncGroup } from './chartSync'
+import type { WidgetGroup } from './chartSync'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
 import { PriceChartWidget } from './PriceChartWidget'
-import { SyncGroupPicker } from './SyncGroupPicker'
+import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { Widget } from './Widget'
 
 type WidgetType = 'price-chart' | 'event-study' | 'index-chart'
@@ -13,7 +13,7 @@ interface WidgetInstance {
   type: WidgetType
   x: number
   y: number
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
   zIndex: number
 }
 
@@ -77,7 +77,7 @@ export function WidgetContainer() {
     setWidgets((prev) => prev.filter((w) => w.id !== id))
   }
 
-  const setWidgetSyncGroup = (id: string, group: SyncGroup) => {
+  const setWidgetWidgetGroup = (id: string, group: WidgetGroup) => {
     setWidgets((prev) =>
       prev.map((w) => (w.id === id ? { ...w, syncGroup: group } : w)),
     )
@@ -160,9 +160,9 @@ export function WidgetContainer() {
             onClose={() => removeWidget(w.id)}
             onFocus={() => focusWidget(w.id)}
             headerLeft={
-              <SyncGroupPicker
+              <WidgetGroupPicker
                 group={w.syncGroup}
-                onChange={(g) => setWidgetSyncGroup(w.id, g)}
+                onChange={(g) => setWidgetWidgetGroup(w.id, g)}
               />
             }
           >

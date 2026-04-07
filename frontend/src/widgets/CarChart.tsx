@@ -11,14 +11,14 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { EventStudyResult } from '../api/types'
-import type { SyncGroup } from './chartSync'
+import type { WidgetGroup } from './chartSync'
 import { groupRegistry } from './groupRegistry'
 
 interface CarChartProps {
   result: EventStudyResult
   daysBefore: number
   daysAfter: number
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
 }
 
 function shiftDate(iso: string, deltaDays: number): string {
@@ -41,7 +41,7 @@ export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartP
   const tStartRef = useRef(0)
   const nRef = useRef(0)
   const eventDateRef = useRef('')
-  const syncGroupRef = useRef<SyncGroup>(syncGroup)
+  const syncGroupRef = useRef<WidgetGroup>(syncGroup)
   useEffect(() => {
     syncGroupRef.current = syncGroup
   }, [syncGroup])

@@ -1,4 +1,4 @@
-import type { SyncGroup } from './chartSync'
+import type { WidgetGroup } from './chartSync'
 
 /**
  * Реестр участников логических групп и шина каналов контекста исследования.
@@ -14,7 +14,7 @@ import type { SyncGroup } from './chartSync'
 
 interface Member {
   id: string
-  group: SyncGroup
+  group: WidgetGroup
   ticker: string | null
 }
 
@@ -45,24 +45,24 @@ type ShowEventsListener = (show: boolean) => void
 
 class GroupRegistry {
   private members = new Map<string, Member>()
-  private tickersListeners = new Map<SyncGroup, Set<TickersListener>>()
+  private tickersListeners = new Map<WidgetGroup, Set<TickersListener>>()
 
-  private activeEvents = new Map<SyncGroup, ActiveEvent | null>()
-  private activeListeners = new Map<SyncGroup, Set<ActiveEventListener>>()
+  private activeEvents = new Map<WidgetGroup, ActiveEvent | null>()
+  private activeListeners = new Map<WidgetGroup, Set<ActiveEventListener>>()
 
-  private zoomListeners = new Map<SyncGroup, Set<ZoomListener>>()
-  private selectListeners = new Map<SyncGroup, Set<SelectListener>>()
-  private hoverDateListeners = new Map<SyncGroup, Set<HoverDateListener>>()
+  private zoomListeners = new Map<WidgetGroup, Set<ZoomListener>>()
+  private selectListeners = new Map<WidgetGroup, Set<SelectListener>>()
+  private hoverDateListeners = new Map<WidgetGroup, Set<HoverDateListener>>()
 
-  private leaders = new Map<SyncGroup, string | null>()
-  private leaderListeners = new Map<SyncGroup, Set<LeaderListener>>()
+  private leaders = new Map<WidgetGroup, string | null>()
+  private leaderListeners = new Map<WidgetGroup, Set<LeaderListener>>()
 
-  private showEventsByGroup = new Map<SyncGroup, boolean>()
-  private showEventsListeners = new Map<SyncGroup, Set<ShowEventsListener>>()
+  private showEventsByGroup = new Map<WidgetGroup, boolean>()
+  private showEventsListeners = new Map<WidgetGroup, Set<ShowEventsListener>>()
 
   // ───── члены группы ─────
 
-  register(id: string, group: SyncGroup, ticker: string | null = null): void {
+  register(id: string, group: WidgetGroup, ticker: string | null = null): void {
     this.members.set(id, { id, group, ticker })
     this.notifyTickers(group)
   }
@@ -77,7 +77,7 @@ class GroupRegistry {
     this.notifyTickers(m.group)
   }
 
-  setGroup(id: string, group: SyncGroup): void {
+  setGroup(id: string, group: WidgetGroup): void {
     const m = this.members.get(id)
     if (!m) return
     const oldGroup = m.group
@@ -94,11 +94,11 @@ class GroupRegistry {
 
   // ───── ведущий график группы ─────
 
-  getLeader(group: SyncGroup): string | null {
+  getLeader(group: WidgetGroup): string | null {
     return this.leaders.get(group) ?? null
   }
 
-  setLeader(group: SyncGroup, id: string | null): void {
+  setLeader(group: WidgetGroup, id: string | null): void {
     if (group === 'none') return
     const cur = this.leaders.get(group) ?? null
     if (cur === id) return
@@ -107,13 +107,13 @@ class GroupRegistry {
     if (set) for (const l of set) l(id)
   }
 
-  toggleLeader(group: SyncGroup, id: string): void {
+  toggleLeader(group: WidgetGroup, id: string): void {
     if (group === 'none') return
     const cur = this.leaders.get(group) ?? null
     this.setLeader(group, cur === id ? null : id)
   }
 
-  subscribeLeader(group: SyncGroup, l: LeaderListener): () => void {
+  subscribeLeader(group: WidgetGroup, l: LeaderListener): () => void {
     let set = this.leaderListeners.get(group)
     if (!set) {
       set = new Set()
@@ -124,7 +124,7 @@ class GroupRegistry {
   }
 
   /** Тикер ведущего графика группы (если лидер существует и это price chart с тикером). */
-  getLeaderTicker(group: SyncGroup): string | null {
+  getLeaderTicker(group: WidgetGroup): string | null {
     const leaderId = this.leaders.get(group)
     if (!leaderId) return null
     const m = this.members.get(leaderId)
@@ -133,11 +133,11 @@ class GroupRegistry {
 
   // ───── показ событий на ведущем графике (toggle от Event Study) ─────
 
-  getShowEvents(group: SyncGroup): boolean {
+  getShowEvents(group: WidgetGroup): boolean {
     return this.showEventsByGroup.get(group) ?? false
   }
 
-  setShowEvents(group: SyncGroup, show: boolean): void {
+  setShowEvents(group: WidgetGroup, show: boolean): void {
     if (group === 'none') return
     const cur = this.showEventsByGroup.get(group) ?? false
     if (cur === show) return
@@ -146,12 +146,12 @@ class GroupRegistry {
     if (set) for (const l of set) l(show)
   }
 
-  toggleShowEvents(group: SyncGroup): void {
+  toggleShowEvents(group: WidgetGroup): void {
     if (group === 'none') return
     this.setShowEvents(group, !this.getShowEvents(group))
   }
 
-  subscribeShowEvents(group: SyncGroup, l: ShowEventsListener): () => void {
+  subscribeShowEvents(group: WidgetGroup, l: ShowEventsListener): () => void {
     let set = this.showEventsListeners.get(group)
     if (!set) {
       set = new Set()
@@ -169,7 +169,7 @@ class GroupRegistry {
     this.notifyTickers(m.group)
   }
 
-  getGroupTickers(group: SyncGroup): string[] {
+  getGroupTickers(group: WidgetGroup): string[] {
     const set = new Set<string>()
     for (const m of this.members.values()) {
       if (m.group !== group) continue
@@ -178,7 +178,7 @@ class GroupRegistry {
     return Array.from(set).sort()
   }
 
-  subscribeTickers(group: SyncGroup, listener: TickersListener): () => void {
+  subscribeTickers(group: WidgetGroup, listener: TickersListener): () => void {
     let set = this.tickersListeners.get(group)
     if (!set) {
       set = new Set()
@@ -188,7 +188,7 @@ class GroupRegistry {
     return () => set!.delete(listener)
   }
 
-  private notifyTickers(group: SyncGroup): void {
+  private notifyTickers(group: WidgetGroup): void {
     const set = this.tickersListeners.get(group)
     if (!set || set.size === 0) return
     const tickers = this.getGroupTickers(group)
@@ -197,7 +197,7 @@ class GroupRegistry {
 
   // ───── активное событие группы ─────
 
-  setActiveEvent(group: SyncGroup, ev: ActiveEvent | null): void {
+  setActiveEvent(group: WidgetGroup, ev: ActiveEvent | null): void {
     if (group === 'none') return
     this.activeEvents.set(group, ev)
     const set = this.activeListeners.get(group)
@@ -205,11 +205,11 @@ class GroupRegistry {
     for (const l of set) l(ev)
   }
 
-  getActiveEvent(group: SyncGroup): ActiveEvent | null {
+  getActiveEvent(group: WidgetGroup): ActiveEvent | null {
     return this.activeEvents.get(group) ?? null
   }
 
-  subscribeActiveEvent(group: SyncGroup, l: ActiveEventListener): () => void {
+  subscribeActiveEvent(group: WidgetGroup, l: ActiveEventListener): () => void {
     let set = this.activeListeners.get(group)
     if (!set) {
       set = new Set()
@@ -221,14 +221,14 @@ class GroupRegistry {
 
   // ───── команды: zoom и select event ─────
 
-  requestZoom(group: SyncGroup, req: ZoomRequest): void {
+  requestZoom(group: WidgetGroup, req: ZoomRequest): void {
     if (group === 'none') return
     const set = this.zoomListeners.get(group)
     if (!set) return
     for (const l of set) l(req)
   }
 
-  subscribeZoom(group: SyncGroup, l: ZoomListener): () => void {
+  subscribeZoom(group: WidgetGroup, l: ZoomListener): () => void {
     let set = this.zoomListeners.get(group)
     if (!set) {
       set = new Set()
@@ -238,14 +238,14 @@ class GroupRegistry {
     return () => set!.delete(l)
   }
 
-  requestSelectEvent(group: SyncGroup, req: SelectEventRequest): void {
+  requestSelectEvent(group: WidgetGroup, req: SelectEventRequest): void {
     if (group === 'none') return
     const set = this.selectListeners.get(group)
     if (!set) return
     for (const l of set) l(req)
   }
 
-  subscribeSelectEvent(group: SyncGroup, l: SelectListener): () => void {
+  subscribeSelectEvent(group: WidgetGroup, l: SelectListener): () => void {
     let set = this.selectListeners.get(group)
     if (!set) {
       set = new Set()
@@ -257,14 +257,14 @@ class GroupRegistry {
 
   // ───── hover date (CarChart → PriceChart crosshair) ─────
 
-  broadcastHoverDate(group: SyncGroup, date: string | null): void {
+  broadcastHoverDate(group: WidgetGroup, date: string | null): void {
     if (group === 'none') return
     const set = this.hoverDateListeners.get(group)
     if (!set) return
     for (const l of set) l(date)
   }
 
-  subscribeHoverDate(group: SyncGroup, l: HoverDateListener): () => void {
+  subscribeHoverDate(group: WidgetGroup, l: HoverDateListener): () => void {
     let set = this.hoverDateListeners.get(group)
     if (!set) {
       set = new Set()

@@ -2,13 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { MouseEventParams, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getEvents, getPrices, getTickers } from '../api/client'
 import type { DividendEvent } from '../api/types'
-import { priceChartSyncBus, type SyncGroup } from './chartSync'
+import { chartSyncBus, type WidgetGroup } from './chartSync'
 import { groupRegistry, type ActiveEvent } from './groupRegistry'
 import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface PriceChartWidgetProps {
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
 }
 
 function dateToTs(d: string): UTCTimestamp {
@@ -33,7 +33,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
 
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
-  const syncGroupRef = useRef<SyncGroup>(syncGroup)
+  const syncGroupRef = useRef<WidgetGroup>(syncGroup)
   useEffect(() => {
     eventsRef.current = events
   }, [events])
@@ -187,7 +187,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       if (!chart) return
       // Помечаем chart, чтобы chartSync не пропагировал получившееся range-change
       // событие соседним price chart'ам как эхо (и не «затёр» их свежий зум).
-      priceChartSyncBus.markApplied(chart)
+      chartSyncBus.markApplied(chart)
       chart.timeScale().setVisibleRange({
         from: dateToTs(req.from),
         to: dateToTs(req.to),

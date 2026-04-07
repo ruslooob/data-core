@@ -2,13 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getSeries } from '../api/client'
 import type { SeriesName } from '../api/types'
-import { type SyncGroup } from './chartSync'
+import { type WidgetGroup } from './chartSync'
 import { groupRegistry, type ActiveEvent } from './groupRegistry'
 import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface IndexChartWidgetProps {
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
 }
 
 const SERIES: { value: SeriesName; label: string }[] = [

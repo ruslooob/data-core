@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getEvents, getTickers, runEventStudy } from '../api/client'
 import type { DividendEvent, EventStudyResult, ExpectedReturnModel } from '../api/types'
-import type { SyncGroup } from './chartSync'
+import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
 import { groupRegistry } from './groupRegistry'
 
@@ -18,7 +18,7 @@ const MODELS: { value: ExpectedReturnModel; label: string }[] = [
 ]
 
 interface EventStudyWidgetProps {
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
 }
 
 export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
@@ -378,7 +378,7 @@ function ShowEventsToggleButton({
 }: {
   show: boolean
   disabled: boolean
-  syncGroup: SyncGroup
+  syncGroup: WidgetGroup
   onToggle: () => void
 }) {
   let title: string
