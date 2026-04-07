@@ -18,13 +18,13 @@ const MODELS: { value: ExpectedReturnModel; label: string }[] = [
 ]
 
 interface EventStudyWidgetProps {
-  syncGroup: WidgetGroup
+  group: WidgetGroup
 }
 
-export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
+export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [allTickers, setAllTickers] = useState<string[]>([])
   const [leaderTicker, setLeaderTicker] = useState<string | null>(() =>
-    groupRegistry.getLeaderTicker(syncGroup),
+    groupRegistry.getLeaderTicker(group),
   )
   const [allEvents, setAllEvents] = useState<DividendEvent[]>([])
   const [ticker, setTicker] = useState<string>('')
@@ -38,15 +38,15 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showEvents, setShowEvents] = useState<boolean>(() =>
-    groupRegistry.getShowEvents(syncGroup),
+    groupRegistry.getShowEvents(group),
   )
 
   // Подписка на group-level показ событий (sync «глазика» между всеми ES группы)
   useEffect(() => {
-    setShowEvents(groupRegistry.getShowEvents(syncGroup))
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeShowEvents(syncGroup, setShowEvents)
-  }, [syncGroup])
+    setShowEvents(groupRegistry.getShowEvents(group))
+    if (group === 'none') return
+    return groupRegistry.subscribeShowEvents(group, setShowEvents)
+  }, [group])
 
   useEffect(() => {
     getTickers().then((ts) => {
@@ -61,34 +61,34 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
 
   // Подписка на ведущего графика группы (его тикер используется в ES)
   useEffect(() => {
-    const recompute = () => setLeaderTicker(groupRegistry.getLeaderTicker(syncGroup))
+    const recompute = () => setLeaderTicker(groupRegistry.getLeaderTicker(group))
     recompute()
-    if (syncGroup === 'none') return
-    const unsubLeader = groupRegistry.subscribeLeader(syncGroup, recompute)
+    if (group === 'none') return
+    const unsubLeader = groupRegistry.subscribeLeader(group, recompute)
     // Тикер ведущего может смениться без смены лидера → слушаем и tickers группы
-    const unsubTickers = groupRegistry.subscribeTickers(syncGroup, recompute)
+    const unsubTickers = groupRegistry.subscribeTickers(group, recompute)
     return () => {
       unsubLeader()
       unsubTickers()
     }
-  }, [syncGroup])
+  }, [group])
 
   // Доступные тикеры:
   //  - none → все (автономный режим)
   //  - есть ведущий с тикером → только его тикер (forced)
   //  - нет ведущего / индекс-лидер → пусто (placeholder)
   const tickers = useMemo(() => {
-    if (syncGroup === 'none') return allTickers
+    if (group === 'none') return allTickers
     if (leaderTicker) return [leaderTicker]
     return []
-  }, [syncGroup, leaderTicker, allTickers])
+  }, [group, leaderTicker, allTickers])
 
-  const isLockedToLeader = syncGroup !== 'none' && leaderTicker !== null
-  const isBlockedNoLeader = syncGroup !== 'none' && leaderTicker === null
+  const isLockedToLeader = group !== 'none' && leaderTicker !== null
+  const isBlockedNoLeader = group !== 'none' && leaderTicker === null
 
   // Синхронизация выбранного тикера с ведущим
   useEffect(() => {
-    if (syncGroup === 'none') {
+    if (group === 'none') {
       if (tickers.length > 0 && !tickers.includes(ticker)) setTicker(tickers[0])
       return
     }
@@ -97,7 +97,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     } else {
       if (ticker !== '') setTicker('')
     }
-  }, [syncGroup, leaderTicker, tickers, ticker])
+  }, [group, leaderTicker, tickers, ticker])
 
   const tickerEvents = useMemo(
     () =>
@@ -120,34 +120,34 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
 
   // Публикация активного события в группу (для подсветки на price chart)
   useEffect(() => {
-    if (syncGroup === 'none') return
+    if (group === 'none') return
     if (!currentEvent) {
-      groupRegistry.setActiveEvent(syncGroup, null)
+      groupRegistry.setActiveEvent(group, null)
       return
     }
-    groupRegistry.setActiveEvent(syncGroup, {
+    groupRegistry.setActiveEvent(group, {
       ticker: currentEvent.ticker,
       eventDate: currentEvent.eventDate,
       daysBefore,
       daysAfter,
     })
-  }, [syncGroup, currentEvent, daysBefore, daysAfter])
+  }, [group, currentEvent, daysBefore, daysAfter])
 
   // При размонтировании / смене группы — очистить старую
   useEffect(() => {
     return () => {
-      if (syncGroup !== 'none') {
-        groupRegistry.setActiveEvent(syncGroup, null)
+      if (group !== 'none') {
+        groupRegistry.setActiveEvent(group, null)
       }
     }
-  }, [syncGroup])
+  }, [group])
 
   // Подписка на «выбрать событие» из price chart (клик по маркеру)
   // calcRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
   const calcRef = useRef<() => void>(() => {})
   useEffect(() => {
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeSelectEvent(syncGroup, (req) => {
+    if (group === 'none') return
+    return groupRegistry.subscribeSelectEvent(group, (req) => {
       // Если тикер другой — сначала переключаем тикер, затем событие
       if (req.ticker !== ticker) {
         setTicker(req.ticker)
@@ -161,7 +161,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         setTimeout(() => calcRef.current(), 0)
       }
     })
-  }, [syncGroup, ticker, allEvents])
+  }, [group, ticker, allEvents])
 
   const stepEvent = (delta: number) => {
     if (tickerEvents.length === 0) return
@@ -169,9 +169,9 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     const ev = tickerEvents[next]
     setEventId(ev.id)
     // Авто-зум на price chart этой группы
-    if (syncGroup !== 'none') {
+    if (group !== 'none') {
       const pad = 3
-      groupRegistry.requestZoom(syncGroup, {
+      groupRegistry.requestZoom(group, {
         from: shiftDate(ev.eventDate, -daysBefore * pad),
         to: shiftDate(ev.eventDate, daysAfter * pad),
       })
@@ -190,9 +190,9 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const handleCalculate = async () => {
     const ev = tickerEvents[currentIdx]
     if (!ev) return
-    if (syncGroup !== 'none') {
+    if (group !== 'none') {
       const pad = 3
-      groupRegistry.requestZoom(syncGroup, {
+      groupRegistry.requestZoom(group, {
         from: shiftDate(ev.eventDate, -daysBefore * pad),
         to: shiftDate(ev.eventDate, daysAfter * pad),
       })
@@ -255,9 +255,9 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
 
         <ShowEventsToggleButton
           show={showEvents}
-          disabled={isBlockedNoLeader || syncGroup === 'none'}
-          syncGroup={syncGroup}
-          onToggle={() => groupRegistry.toggleShowEvents(syncGroup)}
+          disabled={isBlockedNoLeader || group === 'none'}
+          group={group}
+          onToggle={() => groupRegistry.toggleShowEvents(group)}
         />
 
         <label style={labelStyle}>
@@ -350,7 +350,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
             result={result}
             daysBefore={resultWindow.before}
             daysAfter={resultWindow.after}
-            syncGroup={syncGroup}
+            group={group}
           />
         ) : (
           <div
@@ -373,16 +373,16 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
 function ShowEventsToggleButton({
   show,
   disabled,
-  syncGroup,
+  group,
   onToggle,
 }: {
   show: boolean
   disabled: boolean
-  syncGroup: WidgetGroup
+  group: WidgetGroup
   onToggle: () => void
 }) {
   let title: string
-  if (syncGroup === 'none') {
+  if (group === 'none') {
     title = 'Выберите цветовую группу, чтобы показывать события на ведущем графике'
   } else if (disabled) {
     title = 'В группе нет ведущего price chart — некому показывать события'

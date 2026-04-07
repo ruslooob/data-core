@@ -21,7 +21,7 @@ import { chartSyncBus, type WidgetGroup } from './chartSync'
  */
 export interface ChartCoreOptions {
   containerRef: RefObject<HTMLDivElement | null>
-  syncGroup: WidgetGroup
+  group: WidgetGroup
   /** Идентификатор виджета (для leader-aware chartSync). */
   memberId: string
   withVolume?: boolean
@@ -45,7 +45,7 @@ export interface ChartCoreRefs {
 export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   const {
     containerRef,
-    syncGroup,
+    group,
     memberId,
     withVolume = false,
     onBarClick,
@@ -55,7 +55,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
-  const setWidgetGroupRef = useRef<((g: WidgetGroup) => void) | null>(null)
+  const setGroupRef = useRef<((g: WidgetGroup) => void) | null>(null)
   const onBarClickRef = useRef(onBarClick)
 
   useEffect(() => {
@@ -139,15 +139,15 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     const { setGroup, unregister: unregisterSync } = chartSyncBus.register(
       chart,
       priceSeries,
-      syncGroup,
+      group,
       { memberId },
     )
-    setWidgetGroupRef.current = setGroup
+    setGroupRef.current = setGroup
 
     return () => {
       chart.unsubscribeClick(onClick)
       unregisterSync()
-      setWidgetGroupRef.current = null
+      setGroupRef.current = null
       ro.disconnect()
       chart.remove()
       chartRef.current = null
@@ -160,8 +160,8 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
 
   // Обновление группы при смене prop'а
   useEffect(() => {
-    setWidgetGroupRef.current?.(syncGroup)
-  }, [syncGroup])
+    setGroupRef.current?.(group)
+  }, [group])
 
   return { chartRef, priceSeriesRef, volumeSeriesRef, markersRef }
 }

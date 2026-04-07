@@ -13,7 +13,7 @@ interface WidgetInstance {
   type: WidgetType
   x: number
   y: number
-  syncGroup: WidgetGroup
+  group: WidgetGroup
   zIndex: number
 }
 
@@ -53,7 +53,7 @@ export function WidgetContainer() {
         type,
         x: Math.max(20, centerX + offset),
         y: Math.max(TOOLBAR_OFFSET_Y, centerY + offset),
-        syncGroup: 'none',
+        group: 'none',
         zIndex: newZ,
       },
     ])
@@ -79,7 +79,7 @@ export function WidgetContainer() {
 
   const setWidgetWidgetGroup = (id: string, group: WidgetGroup) => {
     setWidgets((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, syncGroup: group } : w)),
+      prev.map((w) => (w.id === id ? { ...w, group: group } : w)),
     )
   }
 
@@ -161,17 +161,17 @@ export function WidgetContainer() {
             onFocus={() => focusWidget(w.id)}
             headerLeft={
               <WidgetGroupPicker
-                group={w.syncGroup}
+                group={w.group}
                 onChange={(g) => setWidgetWidgetGroup(w.id, g)}
               />
             }
           >
             {w.type === 'price-chart' ? (
-              <PriceChartWidget syncGroup={w.syncGroup} />
+              <PriceChartWidget group={w.group} />
             ) : w.type === 'index-chart' ? (
-              <IndexChartWidget syncGroup={w.syncGroup} />
+              <IndexChartWidget group={w.group} />
             ) : (
-              <EventStudyWidget syncGroup={w.syncGroup} />
+              <EventStudyWidget group={w.group} />
             )}
           </Widget>
         ))}

@@ -8,7 +8,7 @@ import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface IndexChartWidgetProps {
-  syncGroup: WidgetGroup
+  group: WidgetGroup
 }
 
 const SERIES: { value: SeriesName; label: string }[] = [
@@ -20,7 +20,7 @@ function dateToTs(d: string): UTCTimestamp {
   return (new Date(d).getTime() / 1000) as UTCTimestamp
 }
 
-export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
+export function IndexChartWidget({ group }: IndexChartWidgetProps) {
   const widgetId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
   const [series, setSeries] = useState<SeriesName>('IMOEX')
@@ -28,21 +28,21 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
 
   const { chartRef, priceSeriesRef, markersRef } = useChartCore({
     containerRef,
-    syncGroup,
+    group,
     memberId: widgetId,
     withVolume: false,
   })
 
   // Регистрация в groupRegistry (без тикера — индекс не публикует тикер)
   useEffect(() => {
-    groupRegistry.register(widgetId, syncGroup, null)
+    groupRegistry.register(widgetId, group, null)
     return () => groupRegistry.unregister(widgetId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    groupRegistry.setGroup(widgetId, syncGroup)
-  }, [syncGroup, widgetId])
+    groupRegistry.setGroup(widgetId, group)
+  }, [group, widgetId])
 
   // Загрузка ряда
   useEffect(() => {
@@ -57,18 +57,18 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
   // Подписка на активное событие группы (без фильтра по тикеру —
   // индекс глобален, нам важна только дата события на оси X)
   useEffect(() => {
-    setActiveEvent(groupRegistry.getActiveEvent(syncGroup))
-    if (syncGroup === 'none') {
+    setActiveEvent(groupRegistry.getActiveEvent(group))
+    if (group === 'none') {
       setActiveEvent(null)
       return
     }
-    return groupRegistry.subscribeActiveEvent(syncGroup, setActiveEvent)
-  }, [syncGroup])
+    return groupRegistry.subscribeActiveEvent(group, setActiveEvent)
+  }, [group])
 
   // Hover sync (CarChart → crosshair на индексе)
   useEffect(() => {
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeHoverDate(syncGroup, (date) => {
+    if (group === 'none') return
+    return groupRegistry.subscribeHoverDate(group, (date) => {
       const chart = chartRef.current
       const ps = priceSeriesRef.current
       if (!chart || !ps) return
@@ -91,12 +91,12 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
       }
       chart.setCrosshairPosition(best.value, best.time, ps)
     })
-  }, [syncGroup, chartRef, priceSeriesRef])
+  }, [group, chartRef, priceSeriesRef])
 
   // Зум по команде ES
   useEffect(() => {
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeZoom(syncGroup, (req) => {
+    if (group === 'none') return
+    return groupRegistry.subscribeZoom(group, (req) => {
       const chart = chartRef.current
       if (!chart) return
       chart.timeScale().setVisibleRange({
@@ -104,7 +104,7 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
         to: dateToTs(req.to),
       })
     })
-  }, [syncGroup, chartRef])
+  }, [group, chartRef])
 
   // Подсветка активного события (без проверки тикера)
   useEffect(() => {
@@ -162,7 +162,7 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
             </option>
           ))}
         </select>
-        <SyncLeaderButton group={syncGroup} memberId={widgetId} />
+        <SyncLeaderButton group={group} memberId={widgetId} />
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
     </div>

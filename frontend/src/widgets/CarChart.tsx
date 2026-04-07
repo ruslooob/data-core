@@ -18,7 +18,7 @@ interface CarChartProps {
   result: EventStudyResult
   daysBefore: number
   daysAfter: number
-  syncGroup: WidgetGroup
+  group: WidgetGroup
 }
 
 function shiftDate(iso: string, deltaDays: number): string {
@@ -36,15 +36,15 @@ function indexToTime(i: number): UTCTimestamp {
   return (BASE_TS + i * 86400) as UTCTimestamp
 }
 
-export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartProps) {
+export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps) {
   // refs для использования внутри обработчика crosshair (без пере-подписки)
   const tStartRef = useRef(0)
   const nRef = useRef(0)
   const eventDateRef = useRef('')
-  const syncGroupRef = useRef<WidgetGroup>(syncGroup)
+  const groupRef = useRef<WidgetGroup>(group)
   useEffect(() => {
-    syncGroupRef.current = syncGroup
-  }, [syncGroup])
+    groupRef.current = group
+  }, [group])
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const carRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -127,7 +127,7 @@ export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartP
 
     // Crosshair hover → broadcast соответствующей реальной даты в группу
     const onCrosshair = (param: { time?: Time }) => {
-      const group = syncGroupRef.current
+      const group = groupRef.current
       if (group === 'none') return
       if (param.time === undefined || nRef.current === 0) {
         groupRegistry.broadcastHoverDate(group, null)
@@ -153,7 +153,7 @@ export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartP
     return () => {
       chart.unsubscribeCrosshairMove(onCrosshair)
       // Сбрасываем hover на price chart при размонтировании
-      const group = syncGroupRef.current
+      const group = groupRef.current
       if (group !== 'none') groupRegistry.broadcastHoverDate(group, null)
       ro.disconnect()
       chart.remove()

@@ -8,14 +8,14 @@ import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface PriceChartWidgetProps {
-  syncGroup: WidgetGroup
+  group: WidgetGroup
 }
 
 function dateToTs(d: string): UTCTimestamp {
   return (new Date(d).getTime() / 1000) as UTCTimestamp
 }
 
-export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
+export function PriceChartWidget({ group }: PriceChartWidgetProps) {
   const widgetId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -24,26 +24,26 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   const [events, setEvents] = useState<DividendEvent[]>([])
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
   const [isLeader, setIsLeader] = useState<boolean>(
-    () => groupRegistry.getLeader(syncGroup) === widgetId,
+    () => groupRegistry.getLeader(group) === widgetId,
   )
   const [showEvents, setShowEvents] = useState<boolean>(() =>
-    groupRegistry.getShowEvents(syncGroup),
+    groupRegistry.getShowEvents(group),
   )
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
-  const syncGroupRef = useRef<WidgetGroup>(syncGroup)
+  const groupRef = useRef<WidgetGroup>(group)
   useEffect(() => {
     eventsRef.current = events
   }, [events])
   useEffect(() => {
-    syncGroupRef.current = syncGroup
-  }, [syncGroup])
+    groupRef.current = group
+  }, [group])
 
   // Клик по бару → ищем ближайшее событие в ±2 дня → publish select
   const handleBarClick = (clickedTs: number) => {
-    const group = syncGroupRef.current
+    const group = groupRef.current
     if (group === 'none') return
     const evs = eventsRef.current
     if (evs.length === 0) return
@@ -66,7 +66,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
 
   const { chartRef, priceSeriesRef, volumeSeriesRef, markersRef } = useChartCore({
     containerRef,
-    syncGroup,
+    group,
     memberId: widgetId,
     withVolume: true,
     onBarClick: handleBarClick,
@@ -74,14 +74,14 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
 
   // ── groupRegistry: регистрация члена группы (тикер) ──
   useEffect(() => {
-    groupRegistry.register(widgetId, syncGroup, null)
+    groupRegistry.register(widgetId, group, null)
     return () => groupRegistry.unregister(widgetId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    groupRegistry.setGroup(widgetId, syncGroup)
-  }, [syncGroup, widgetId])
+    groupRegistry.setGroup(widgetId, group)
+  }, [group, widgetId])
 
   useEffect(() => {
     groupRegistry.setTicker(widgetId, selectedTicker || null)
@@ -114,25 +114,25 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
 
   // ── Подписка на состояние лидера группы ──
   useEffect(() => {
-    setIsLeader(groupRegistry.getLeader(syncGroup) === widgetId)
-    if (syncGroup === 'none') {
+    setIsLeader(groupRegistry.getLeader(group) === widgetId)
+    if (group === 'none') {
       setIsLeader(false)
       return
     }
-    return groupRegistry.subscribeLeader(syncGroup, (leaderId) => {
+    return groupRegistry.subscribeLeader(group, (leaderId) => {
       setIsLeader(leaderId === widgetId)
     })
-  }, [syncGroup, widgetId])
+  }, [group, widgetId])
 
   // ── Подписка на group-level «показывать события» ──
   useEffect(() => {
-    setShowEvents(groupRegistry.getShowEvents(syncGroup))
-    if (syncGroup === 'none') {
+    setShowEvents(groupRegistry.getShowEvents(group))
+    if (group === 'none') {
       setShowEvents(false)
       return
     }
-    return groupRegistry.subscribeShowEvents(syncGroup, setShowEvents)
-  }, [syncGroup])
+    return groupRegistry.subscribeShowEvents(group, setShowEvents)
+  }, [group])
 
   // ── Дивидендные события: только если этот график — ведущий И «глазик» включён ──
   useEffect(() => {
@@ -145,17 +145,17 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
 
   // ── Подписки на канал группы ──
   useEffect(() => {
-    setActiveEvent(groupRegistry.getActiveEvent(syncGroup))
-    if (syncGroup === 'none') {
+    setActiveEvent(groupRegistry.getActiveEvent(group))
+    if (group === 'none') {
       setActiveEvent(null)
       return
     }
-    return groupRegistry.subscribeActiveEvent(syncGroup, setActiveEvent)
-  }, [syncGroup])
+    return groupRegistry.subscribeActiveEvent(group, setActiveEvent)
+  }, [group])
 
   useEffect(() => {
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeHoverDate(syncGroup, (date) => {
+    if (group === 'none') return
+    return groupRegistry.subscribeHoverDate(group, (date) => {
       const chart = chartRef.current
       const series = priceSeriesRef.current
       if (!chart || !series) return
@@ -178,11 +178,11 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       }
       chart.setCrosshairPosition(best.value, best.time, series)
     })
-  }, [syncGroup, chartRef, priceSeriesRef])
+  }, [group, chartRef, priceSeriesRef])
 
   useEffect(() => {
-    if (syncGroup === 'none') return
-    return groupRegistry.subscribeZoom(syncGroup, (req) => {
+    if (group === 'none') return
+    return groupRegistry.subscribeZoom(group, (req) => {
       const chart = chartRef.current
       if (!chart) return
       // Помечаем chart, чтобы chartSync не пропагировал получившееся range-change
@@ -193,7 +193,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
         to: dateToTs(req.to),
       })
     })
-  }, [syncGroup, chartRef])
+  }, [group, chartRef])
 
   // ── Tooltip + cursor pointer на маркере события ──
   useEffect(() => {
@@ -296,7 +296,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
             </option>
           ))}
         </select>
-        <SyncLeaderButton group={syncGroup} memberId={widgetId} />
+        <SyncLeaderButton group={group} memberId={widgetId} />
       </div>
       <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
         <div
