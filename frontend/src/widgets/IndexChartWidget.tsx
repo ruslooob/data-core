@@ -128,14 +128,14 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
         time: (t0 - activeEvent.daysBefore * SECONDS_PER_DAY) as UTCTimestamp,
         position: 'belowBar',
         color: '#e53935',
-        shape: 'arrowRight',
+        shape: 'square',
         text: `−${activeEvent.daysBefore}`,
       },
       {
         time: (t0 + activeEvent.daysAfter * SECONDS_PER_DAY) as UTCTimestamp,
         position: 'belowBar',
         color: '#e53935',
-        shape: 'arrowLeft',
+        shape: 'square',
         text: `+${activeEvent.daysAfter}`,
       },
     ]

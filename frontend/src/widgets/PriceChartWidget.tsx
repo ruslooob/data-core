@@ -260,14 +260,14 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
         time: tFrom,
         position: 'belowBar',
         color: '#e53935',
-        shape: 'arrowRight',
+        shape: 'square',
         text: `−${activeEvent.daysBefore}`,
       })
       markers.push({
         time: tTo,
         position: 'belowBar',
         color: '#e53935',
-        shape: 'arrowLeft',
+        shape: 'square',
         text: `+${activeEvent.daysAfter}`,
       })
     }
