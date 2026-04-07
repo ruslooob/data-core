@@ -1,12 +1,15 @@
 import type { SyncGroup } from './chartSync'
 
 /**
- * Реестр участников sync-групп для целей фильтрации и связи между виджетами.
- * Не пересекается с chartSync (range/crosshair) — здесь:
- *  - кто в какой группе и с каким тикером (фильтр тикеров в Event Study)
- *  - «активное событие» группы (Event Study публикует, Price chart рисует подсветку)
- *  - «выбрать событие» (клик по маркеру на Price chart → Event Study выбирает)
- *  - «зум на диапазон» (Event Study кнопка «Показать на графике»)
+ * Реестр участников логических групп и шина каналов контекста исследования.
+ * Не пересекается с chartSync (он отвечает за leader-driven навигацию). Здесь:
+ *  - состав группы: кто в какой группе и с каким тикером
+ *  - ведущий график группы (leader / followers)
+ *  - флаг «показывать события на ведущем» (toggle от Event Study)
+ *  - активное событие группы (Event Study → подсветка на графиках)
+ *  - запрос выбора события (клик по маркеру на price chart → Event Study)
+ *  - запрос зума на event window (Event Study → графики группы)
+ *  - hover-дата (CarChart → crosshair на price/index chart)
  */
 
 interface Member {
@@ -17,7 +20,7 @@ interface Member {
 
 export interface ActiveEvent {
   ticker: string
-  event_date: string // YYYY-MM-DD
+  eventDate: string // YYYY-MM-DD
   daysBefore: number
   daysAfter: number
 }
@@ -29,7 +32,7 @@ export interface ZoomRequest {
 
 export interface SelectEventRequest {
   ticker: string
-  event_date: string
+  eventDate: string
 }
 
 type TickersListener = (tickers: string[]) => void
@@ -175,7 +178,7 @@ class GroupRegistry {
     return Array.from(set).sort()
   }
 
-  subscribe(group: SyncGroup, listener: TickersListener): () => void {
+  subscribeTickers(group: SyncGroup, listener: TickersListener): () => void {
     let set = this.tickersListeners.get(group)
     if (!set) {
       set = new Set()

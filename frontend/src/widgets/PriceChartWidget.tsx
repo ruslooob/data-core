@@ -50,7 +50,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     let best: DividendEvent | null = null
     let bestDiff = Infinity
     for (const ev of evs) {
-      const diff = Math.abs(dateToTs(ev.event_date) - clickedTs)
+      const diff = Math.abs(dateToTs(ev.eventDate) - clickedTs)
       if (diff < bestDiff) {
         bestDiff = diff
         best = ev
@@ -59,7 +59,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     if (best && bestDiff <= 2 * 86400) {
       groupRegistry.requestSelectEvent(group, {
         ticker: best.ticker,
-        event_date: best.event_date,
+        eventDate: best.eventDate,
       })
     }
   }
@@ -209,7 +209,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
       let best: DividendEvent | null = null
       let bestDiff = Infinity
       for (const ev of evs) {
-        const diff = Math.abs(dateToTs(ev.event_date) - targetTs)
+        const diff = Math.abs(dateToTs(ev.eventDate) - targetTs)
         if (diff < bestDiff) {
           bestDiff = diff
           best = ev
@@ -219,7 +219,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
         setTooltip({
           x: param.point.x,
           y: param.point.y,
-          text: `${best.event_date} — ${best.dividend.toFixed(2)} ₽`,
+          text: `${best.eventDate} — ${best.dividend.toFixed(2)} ₽`,
         })
       } else {
         setTooltip(null)
@@ -237,7 +237,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     const markers: SeriesMarker<Time>[] = []
     for (const ev of events) {
       markers.push({
-        time: dateToTs(ev.event_date),
+        time: dateToTs(ev.eventDate),
         position: 'belowBar',
         color: '#9e9e9e',
         shape: 'arrowUp',
@@ -245,7 +245,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
     }
 
     if (activeEvent && isLeader && activeEvent.ticker === selectedTicker) {
-      const t0 = dateToTs(activeEvent.event_date)
+      const t0 = dateToTs(activeEvent.eventDate)
       const dayMs = 86400
       markers.push({
         time: t0,

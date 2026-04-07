@@ -1,9 +1,20 @@
 """FastAPI backend для data-core."""
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 from datetime import date
+
+
+class CamelModel(BaseModel):
+    """Базовый Pydantic-класс с camelCase-сериализацией для JSON DTO.
+
+    Поля внутри Python-класса остаются snake_case (Python-конвенция),
+    а в JSON попадают как camelCase через alias_generator.
+    populate_by_name=True позволяет принимать и snake_case, и camelCase на входе.
+    """
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 from core.dividend_data_provider import load_dividends
 from core.event_study import EventStudy
@@ -40,7 +51,10 @@ def get_tickers() -> list[str]:
     return [t for t in list_tickers() if t not in _NON_TICKER_FILES]
 
 
-class Candle(BaseModel):
+# Все DTO-эндпоинты сериализуют JSON через by_alias=True (camelCase)
+
+
+class Candle(CamelModel):
     date: str
     open: float
     high: float
@@ -49,11 +63,11 @@ class Candle(BaseModel):
     volume: float
 
 
-@app.get("/api/prices/{ticker}")
+@app.get("/api/prices/{ticker}", response_model_by_alias=True)
 def get_prices(
         ticker: str,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: str | None = Query(None, alias="startDate"),
+        end_date: str | None = Query(None, alias="endDate"),
 ) -> list[Candle]:
     """Возвращает OHLCV-котировки для тикера."""
     df = get_candles(ticker, normalized=True, start_date=start_date, end_date=end_date)
@@ -70,7 +84,7 @@ def get_prices(
     ]
 
 
-class SeriesPoint(BaseModel):
+class SeriesPoint(CamelModel):
     date: str
     value: float
 
@@ -81,7 +95,7 @@ _SERIES_LOADERS = {
 }
 
 
-@app.get("/api/series/{name}")
+@app.get("/api/series/{name}", response_model_by_alias=True)
 def get_series(name: str) -> list[SeriesPoint]:
     """Возвращает временной ряд индекса/ставки: [{date, value}]."""
     key = name.upper()
@@ -96,7 +110,7 @@ def get_series(name: str) -> list[SeriesPoint]:
     ]
 
 
-class DividendEventOut(BaseModel):
+class DividendEventOut(CamelModel):
     id: str
     ticker: str
     event_date: str
@@ -104,11 +118,11 @@ class DividendEventOut(BaseModel):
     year: int
 
 
-@app.get("/api/events")
+@app.get("/api/events", response_model_by_alias=True)
 def get_events(
         ticker: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
+        start_date: str | None = Query(None, alias="startDate"),
+        end_date: str | None = Query(None, alias="endDate"),
 ) -> list[DividendEventOut]:
     """Возвращает список дивидендных событий с опциональной фильтрацией."""
     import pandas as pd
@@ -136,7 +150,7 @@ def get_events(
     return result
 
 
-class EventStudyRequest(BaseModel):
+class EventStudyRequest(CamelModel):
     ticker: str
     event_date: str  # ISO format: YYYY-MM-DD
     model: str  # 'mean_adjusted', 'market_model', 'capm'
@@ -144,7 +158,7 @@ class EventStudyRequest(BaseModel):
     estimation_window: int  # 200
 
 
-class EventStudyResponse(BaseModel):
+class EventStudyResponse(CamelModel):
     event_date: str
     ar: list[float]
     car: float
@@ -152,7 +166,7 @@ class EventStudyResponse(BaseModel):
     estimation_std: float
 
 
-@app.post("/api/event-study")
+@app.post("/api/event-study", response_model_by_alias=True)
 def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
     """Рассчитывает AR и CAR для одного события."""
     stock_log_returns = get_log_returns(req.ticker)

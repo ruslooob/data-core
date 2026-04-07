@@ -136,7 +136,7 @@ export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartP
       const ts = typeof param.time === 'number' ? param.time : 0
       const i = Math.round((ts - BASE_TS) / 86400)
       const t = i // i здесь = tStart + offsetIdx, но мы уже строили time = base + (tStart+offset)
-      // Вычислили t как i; реальная дата = event_date + t календарных дней
+      // Вычислили t как i; реальная дата = eventDate + t календарных дней
       const date = shiftDate(eventDateRef.current, t)
       groupRegistry.broadcastHoverDate(group, date)
     }
@@ -193,10 +193,10 @@ export function CarChart({ result, daysBefore, daysAfter, syncGroup }: CarChartP
     const tStart = n === totalRequested ? -daysBefore : -Math.floor(n / 2)
     tStartRef.current = tStart
     nRef.current = n
-    eventDateRef.current = result.event_date
+    eventDateRef.current = result.eventDate
 
     // CI: ±2 * std * sqrt(k), в процентах
-    const std = result.estimation_std * 100
+    const std = result.estimationStd * 100
     const carData = []
     const upperData = []
     const lowerData = []

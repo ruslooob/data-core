@@ -17,7 +17,7 @@ export type SeriesName = 'IMOEX' | 'RUONIA'
 export interface DividendEvent {
   id: string
   ticker: string
-  event_date: string
+  eventDate: string
   dividend: number
   year: number
 }
@@ -26,16 +26,16 @@ export type ExpectedReturnModel = 'mean_adjusted' | 'market_model' | 'capm'
 
 export interface EventStudyRequest {
   ticker: string
-  event_date: string
+  eventDate: string
   model: ExpectedReturnModel
-  event_window: [number, number]
-  estimation_window: number
+  eventWindow: [number, number]
+  estimationWindow: number
 }
 
 export interface EventStudyResult {
-  event_date: string
+  eventDate: string
   ar: number[]
   car: number
-  n_days: number
-  estimation_std: number
+  nDays: number
+  estimationStd: number
 }

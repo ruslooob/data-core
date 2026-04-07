@@ -114,7 +114,7 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
       api.setMarkers([])
       return
     }
-    const t0 = dateToTs(activeEvent.event_date)
+    const t0 = dateToTs(activeEvent.eventDate)
     const dayMs = 86400
     const markers: SeriesMarker<Time>[] = [
       {

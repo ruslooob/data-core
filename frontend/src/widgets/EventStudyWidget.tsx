@@ -66,7 +66,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     if (syncGroup === 'none') return
     const unsubLeader = groupRegistry.subscribeLeader(syncGroup, recompute)
     // Тикер ведущего может смениться без смены лидера → слушаем и tickers группы
-    const unsubTickers = groupRegistry.subscribe(syncGroup, recompute)
+    const unsubTickers = groupRegistry.subscribeTickers(syncGroup, recompute)
     return () => {
       unsubLeader()
       unsubTickers()
@@ -103,7 +103,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     () =>
       allEvents
         .filter((e) => e.ticker === ticker)
-        .sort((a, b) => a.event_date.localeCompare(b.event_date)),
+        .sort((a, b) => a.eventDate.localeCompare(b.eventDate)),
     [allEvents, ticker],
   )
 
@@ -127,7 +127,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     }
     groupRegistry.setActiveEvent(syncGroup, {
       ticker: currentEvent.ticker,
-      event_date: currentEvent.event_date,
+      eventDate: currentEvent.eventDate,
       daysBefore,
       daysAfter,
     })
@@ -153,7 +153,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         setTicker(req.ticker)
       }
       const found = allEvents.find(
-        (e) => e.ticker === req.ticker && e.event_date === req.event_date,
+        (e) => e.ticker === req.ticker && e.eventDate === req.eventDate,
       )
       if (found) {
         setEventId(found.id)
@@ -172,8 +172,8 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     if (syncGroup !== 'none') {
       const pad = 3
       groupRegistry.requestZoom(syncGroup, {
-        from: shiftDate(ev.event_date, -daysBefore * pad),
-        to: shiftDate(ev.event_date, daysAfter * pad),
+        from: shiftDate(ev.eventDate, -daysBefore * pad),
+        to: shiftDate(ev.eventDate, daysAfter * pad),
       })
     }
     // Авто-расчёт после применения нового eventId
@@ -193,8 +193,8 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     if (syncGroup !== 'none') {
       const pad = 3
       groupRegistry.requestZoom(syncGroup, {
-        from: shiftDate(ev.event_date, -daysBefore * pad),
-        to: shiftDate(ev.event_date, daysAfter * pad),
+        from: shiftDate(ev.eventDate, -daysBefore * pad),
+        to: shiftDate(ev.eventDate, daysAfter * pad),
       })
     }
     setLoading(true)
@@ -202,10 +202,10 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     try {
       const r = await runEventStudy({
         ticker,
-        event_date: ev.event_date,
+        eventDate: ev.eventDate,
         model,
-        event_window: [-daysBefore, daysAfter],
-        estimation_window: estimationWindow,
+        eventWindow: [-daysBefore, daysAfter],
+        estimationWindow: estimationWindow,
       })
       setResult(r)
       setResultWindow({ before: daysBefore, after: daysAfter })
@@ -247,7 +247,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
           >
             {tickerEvents.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.event_date} — {e.dividend.toFixed(2)} ₽
+                {e.eventDate} — {e.dividend.toFixed(2)} ₽
               </option>
             ))}
           </select>
