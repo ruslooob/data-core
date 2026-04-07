@@ -155,11 +155,11 @@ class EventStudyResponse(BaseModel):
 @app.post("/api/event-study")
 def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
     """Рассчитывает AR и CAR для одного события."""
-    stock = get_log_returns(req.ticker)
+    stock_log_returns = get_log_returns(req.ticker)
     market = load_market_index()
     rf = load_risk_free_rate()
 
-    study = EventStudy(stock=stock)
+    study = EventStudy(stock_log_returns=stock_log_returns)
     result = study.analyze(
         event_date=date.fromisoformat(req.event_date),
         model=req.model,

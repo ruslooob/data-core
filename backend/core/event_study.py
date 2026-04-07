@@ -1,8 +1,8 @@
 """
-Событийный анализ (event study) для одной акции.
+Событийный анализ для одной акции.
 
-EventStudy     — расчёт AR и CAR для одного события на одной акции.
-EventResult    — результат анализа одного события.
+EventStudy        — расчёт AR и CAR для одного события на одной акции.
+EventStudyResult  — результат анализа одного события.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ ModelType = str  # 'mean_adjusted', 'market_model', 'capm'
 
 
 @dataclass
-class EventResult:
+class EventStudyResult:
     """Результат расчёта CAR для одного события."""
     event_date: date
     ar: list[float]          # аномальные доходности по дням окна
@@ -60,7 +60,7 @@ class EventStudy:
 
     Пример::
 
-        study = EventStudy(stock=get_log_returns('LKOH', start_date='2013-01-01'))
+        study = EventStudy(stock_log_returns=get_log_returns('LKOH', start_date='2013-01-01'))
         result = study.analyze(
             event_date=date(2018, 5, 14),
             model='market_model',
@@ -70,8 +70,8 @@ class EventStudy:
         )
     """
 
-    def __init__(self, stock: pd.Series) -> None:
-        self.stock = stock
+    def __init__(self, stock_log_returns: pd.Series) -> None:
+        self.stock_log_returns = stock_log_returns
 
     def _resolve_windows(
         self,
@@ -80,7 +80,7 @@ class EventStudy:
         estimation_window: int,
     ) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex] | None:
         """Определяет индексы оценочного и событийного окон. None если данных мало."""
-        trading_days = self.stock.index.sort_values()
+        trading_days = self.stock_log_returns.index.sort_values()
         t0 = pd.Timestamp(event_date)
         ew_start, ew_end = event_window
         esw = estimation_window
@@ -111,13 +111,13 @@ class EventStudy:
 
     @staticmethod
     def _align_series(
-        stock: pd.Series,
+        stock_log_returns: pd.Series,
         market: pd.Series | None,
         rf: pd.Series | None,
         idx: pd.DatetimeIndex,
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """Выравнивает stock/market/rf по индексу дат."""
-        s = stock.reindex(idx).dropna()
+        """Выравнивает доходности акции/рынка/безрисковой ставки по индексу дат."""
+        s = stock_log_returns.reindex(idx).dropna()
         m = market.reindex(idx).ffill().fillna(0.0) if market is not None else pd.Series(0.0, index=idx)
         r = rf.reindex(idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=idx)
         return s, m, r
@@ -131,7 +131,7 @@ class EventStudy:
         *,
         market: pd.Series | None = None,
         rf: pd.Series | None = None,
-    ) -> EventResult | None:
+    ) -> EventStudyResult | None:
         """
         Рассчитывает AR и CAR для одного события.
 
@@ -143,14 +143,14 @@ class EventStudy:
             market:            pd.Series логдоходностей индекса (для market_model, capm)
             rf:                pd.Series безрисковых ставок (для capm)
 
-        Возвращает EventResult или None, если данных недостаточно.
+        Возвращает EventStudyResult или None, если данных недостаточно.
         """
         windows = self._resolve_windows(event_date, event_window, estimation_window)
         if windows is None:
             return None
         est_idx, ev_idx = windows
 
-        stock_est, mkt_est, rf_est = self._align_series(self.stock, market, rf, est_idx)
+        stock_est, mkt_est, rf_est = self._align_series(self.stock_log_returns, market, rf, est_idx)
         if len(stock_est) < 10:
             return None
 
@@ -160,7 +160,7 @@ class EventStudy:
         mkt_est = mkt_est.reindex(common_est)
         rf_est = rf_est.reindex(common_est)
 
-        stock_ev = self.stock.reindex(ev_idx).fillna(0.0)
+        stock_ev = self.stock_log_returns.reindex(ev_idx).fillna(0.0)
         mkt_ev = market.reindex(ev_idx).ffill().fillna(0.0) if market is not None else pd.Series(0.0, index=ev_idx)
         rf_ev = rf.reindex(ev_idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=ev_idx)
 
@@ -176,7 +176,7 @@ class EventStudy:
         ar = (stock_ev.values - expected_ev.values).tolist()
         car = float(np.sum(ar))
 
-        return EventResult(
+        return EventStudyResult(
             event_date=event_date,
             ar=ar,
             car=car,
