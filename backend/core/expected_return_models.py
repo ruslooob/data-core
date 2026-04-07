@@ -2,7 +2,7 @@
 Модели ожидаемой (нормальной) доходности для событийного анализа.
 
 Иерархия:
-    BaseModel (ABC)
+    BaseExpectedReturnModel (ABC)
     ├── MeanAdjustedModel  — модель постоянной средней доходности
     ├── MarketModel        — рыночная модель (OLS: r_i = α + β·r_m)
     └── CAPMModel          — CAPM (r_i = rf + β·(r_m − rf))
@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 
-class BaseModel(ABC):
+class BaseExpectedReturnModel(ABC):
     """
     Абстрактный базовый класс модели ожидаемой доходности.
 
@@ -36,28 +36,28 @@ class BaseModel(ABC):
         """Возвращает ожидаемые (нормальные) доходности для окна события."""
 
 
-class MeanAdjustedModel(BaseModel):
+class MeanAdjustedModel(BaseExpectedReturnModel):
     """
     Модель постоянной средней доходности.
 
     Нормальная доходность = среднее значение доходности акции
     в оценочном окне. Рыночные данные не используются.
 
-    fit:     stock_returns
+    fit:     stock_log_returns
     predict: dates (DatetimeIndex)
     """
 
     def __init__(self) -> None:
         self._mean: float = 0.0
 
-    def fit(self, *, stock_returns: pd.Series, **kwargs) -> None:
-        self._mean = float(stock_returns.mean())
+    def fit(self, *, stock_log_returns: pd.Series, **kwargs) -> None:
+        self._mean = float(stock_log_returns.mean())
 
     def predict(self, *, dates: pd.DatetimeIndex, **kwargs) -> pd.Series:
         return pd.Series(self._mean, index=dates)
 
 
-class MarketModel(BaseModel):
+class MarketModel(BaseExpectedReturnModel):
     """
     Рыночная модель (Market Model).
 
@@ -67,7 +67,7 @@ class MarketModel(BaseModel):
     Ожидаемая доходность в окне события:
         E[r_i] = α + β·r_m
 
-    fit:     stock_returns, market_returns
+    fit:     stock_log_returns, market_returns
     predict: market_returns
     """
 
@@ -75,8 +75,8 @@ class MarketModel(BaseModel):
         self._alpha: float = 0.0
         self._beta: float = 1.0
 
-    def fit(self, *, stock_returns: pd.Series, market_returns: pd.Series, **kwargs) -> None:
-        beta, alpha = np.polyfit(market_returns.values, stock_returns.values, 1)
+    def fit(self, *, stock_log_returns: pd.Series, market_returns: pd.Series, **kwargs) -> None:
+        beta, alpha = np.polyfit(market_returns.values, stock_log_returns.values, 1)
         self._alpha = float(alpha)
         self._beta = float(beta)
 
@@ -87,7 +87,7 @@ class MarketModel(BaseModel):
         )
 
 
-class CAPMModel(BaseModel):
+class CAPMModel(BaseExpectedReturnModel):
     """
     Модель CAPM.
 
@@ -97,16 +97,16 @@ class CAPMModel(BaseModel):
     Ожидаемая доходность в окне события:
         E[r_i] = rf + β·(r_m − rf)
 
-    fit:     stock_returns, market_returns, rf_returns
+    fit:     stock_log_returns, market_returns, rf_returns
     predict: market_returns, rf_returns
     """
 
     def __init__(self) -> None:
         self._beta: float = 1.0
 
-    def fit(self, *, stock_returns: pd.Series, market_returns: pd.Series,
+    def fit(self, *, stock_log_returns: pd.Series, market_returns: pd.Series,
             rf_returns: pd.Series, **kwargs) -> None:
-        excess_stock = stock_returns.values - rf_returns.values
+        excess_stock = stock_log_returns.values - rf_returns.values
         excess_market = market_returns.values - rf_returns.values
         denom = float(np.dot(excess_market, excess_market))
         self._beta = float(np.dot(excess_market, excess_stock) / denom) if denom != 0.0 else 1.0

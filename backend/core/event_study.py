@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core.expected_return_models import (
-    BaseModel, MeanAdjustedModel, MarketModel, CAPMModel,
+    BaseExpectedReturnModel, MeanAdjustedModel, MarketModel, CAPMModel,
 )
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ class EventStudyResult:
 # Фабрика моделей
 # ---------------------------------------------------------------------------
 
-def _make_model(model_type: ModelType) -> BaseModel:
+def _make_model(model_type: ModelType) -> BaseExpectedReturnModel:
     if model_type == 'mean_adjusted':
         return MeanAdjustedModel()
     elif model_type == 'market_model':
@@ -165,7 +165,7 @@ class EventStudy:
         rf_ev = rf.reindex(ev_idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=ev_idx)
 
         mdl = _make_model(model)
-        mdl.fit(stock_returns=stock_est, market_returns=mkt_est, rf_returns=rf_est)
+        mdl.fit(stock_log_returns=stock_est, market_returns=mkt_est, rf_returns=rf_est)
         expected_ev = mdl.predict(dates=ev_idx, market_returns=mkt_ev, rf_returns=rf_ev)
 
         # σ аномальных доходностей в оценочном окне
