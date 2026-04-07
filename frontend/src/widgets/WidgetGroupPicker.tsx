@@ -29,7 +29,7 @@ export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
           setOpen(!open)
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        title="Группа синхронизации"
+        title="Логическая группа"
         style={{
           width: 16,
           height: 16,

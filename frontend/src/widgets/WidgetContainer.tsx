@@ -77,7 +77,7 @@ export function WidgetContainer() {
     setWidgets((prev) => prev.filter((w) => w.id !== id))
   }
 
-  const setWidgetWidgetGroup = (id: string, group: WidgetGroup) => {
+  const setWidgetGroup = (id: string, group: WidgetGroup) => {
     setWidgets((prev) =>
       prev.map((w) => (w.id === id ? { ...w, group: group } : w)),
     )
@@ -162,7 +162,7 @@ export function WidgetContainer() {
             headerLeft={
               <WidgetGroupPicker
                 group={w.group}
-                onChange={(g) => setWidgetWidgetGroup(w.id, g)}
+                onChange={(g) => setWidgetGroup(w.id, g)}
               />
             }
           >
