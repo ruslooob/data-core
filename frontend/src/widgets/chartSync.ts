@@ -21,7 +21,7 @@ export const WIDGET_GROUPS: WidgetGroup[] = ['none', 'red', 'blue', 'green', 'ye
 
 interface Entry {
   chart: IChartApi
-  priceSeries: ISeriesApi<'Line'>
+  mainSeries: ISeriesApi<'Line'>
   group: WidgetGroup
   memberId: string
 }
@@ -56,13 +56,13 @@ class ChartSyncBus {
 
   register(
     chart: IChartApi,
-    priceSeries: ISeriesApi<'Line'>,
+    mainSeries: ISeriesApi<'Line'>,
     initialGroup: WidgetGroup,
     options: RegisterOptions,
   ): { setGroup: (g: WidgetGroup) => void; unregister: () => void } {
     const entry: Entry = {
       chart,
-      priceSeries,
+      mainSeries,
       group: initialGroup,
       memberId: options.memberId,
     }
@@ -100,13 +100,13 @@ class ChartSyncBus {
             other.chart.clearCrosshairPosition()
             continue
           }
-          const data = other.priceSeries.data() as ReadonlyArray<{
+          const data = other.mainSeries.data() as ReadonlyArray<{
             time: Time
             value: number
           }>
           const point = findClosestPoint(data, param.time)
           if (point) {
-            other.chart.setCrosshairPosition(point.value, point.time, other.priceSeries)
+            other.chart.setCrosshairPosition(point.value, point.time, other.mainSeries)
           }
         }
       } finally {

@@ -43,8 +43,8 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
 
   // Клик по бару → ищем ближайшее событие в ±2 дня → publish select
   const handleBarClick = (clickedTs: number) => {
-    const group = groupRef.current
-    if (group === 'none') return
+    const currentGroup = groupRef.current
+    if (currentGroup === 'none') return
     const evs = eventsRef.current
     if (evs.length === 0) return
     let best: DividendEvent | null = null
@@ -57,14 +57,14 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
       }
     }
     if (best && bestDiff <= 2 * 86400) {
-      groupRegistry.requestSelectEvent(group, {
+      groupRegistry.requestSelectEvent(currentGroup, {
         ticker: best.ticker,
         eventDate: best.eventDate,
       })
     }
   }
 
-  const { chartRef, priceSeriesRef, volumeSeriesRef, markersRef } = useChartCore({
+  const { chartRef, mainSeriesRef, volumeSeriesRef, markersRef } = useChartCore({
     containerRef,
     group,
     memberId: widgetId,
@@ -72,7 +72,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     onBarClick: handleBarClick,
   })
 
-  // ── groupRegistry: регистрация члена группы (тикер) ──
+  // ── Регистрация в groupRegistry как член группы ──
   useEffect(() => {
     groupRegistry.register(widgetId, group, null)
     return () => groupRegistry.unregister(widgetId)
@@ -97,7 +97,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
 
   useEffect(() => {
     if (!selectedTicker) return
-    if (!priceSeriesRef.current || !volumeSeriesRef.current) return
+    if (!mainSeriesRef.current || !volumeSeriesRef.current) return
 
     getPrices(selectedTicker).then((candles) => {
       const priceData = candles.map((c) => ({ time: dateToTs(c.date), value: c.close }))
@@ -106,11 +106,11 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
         value: c.volume,
         color: '#90a4ae80',
       }))
-      priceSeriesRef.current!.setData(priceData)
+      mainSeriesRef.current!.setData(priceData)
       volumeSeriesRef.current!.setData(volumeData)
       chartRef.current?.timeScale().fitContent()
     })
-  }, [selectedTicker, chartRef, priceSeriesRef, volumeSeriesRef])
+  }, [selectedTicker, chartRef, mainSeriesRef, volumeSeriesRef])
 
   // ── Подписка на состояние лидера группы ──
   useEffect(() => {
@@ -157,7 +157,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     if (group === 'none') return
     return groupRegistry.subscribeHoverDate(group, (date) => {
       const chart = chartRef.current
-      const series = priceSeriesRef.current
+      const series = mainSeriesRef.current
       if (!chart || !series) return
       if (date === null) {
         chart.clearCrosshairPosition()
@@ -178,7 +178,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
       }
       chart.setCrosshairPosition(best.value, best.time, series)
     })
-  }, [group, chartRef, priceSeriesRef])
+  }, [group, chartRef, mainSeriesRef])
 
   useEffect(() => {
     if (group === 'none') return
@@ -246,7 +246,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
 
     if (activeEvent && isLeader && activeEvent.ticker === selectedTicker) {
       const t0 = dateToTs(activeEvent.eventDate)
-      const dayMs = 86400
+      const SECONDS_PER_DAY = 86400
       markers.push({
         time: t0,
         position: 'aboveBar',
@@ -254,8 +254,8 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
         shape: 'circle',
         text: 't=0',
       })
-      const tFrom = (t0 - activeEvent.daysBefore * dayMs) as UTCTimestamp
-      const tTo = (t0 + activeEvent.daysAfter * dayMs) as UTCTimestamp
+      const tFrom = (t0 - activeEvent.daysBefore * SECONDS_PER_DAY) as UTCTimestamp
+      const tTo = (t0 + activeEvent.daysAfter * SECONDS_PER_DAY) as UTCTimestamp
       markers.push({
         time: tFrom,
         position: 'belowBar',

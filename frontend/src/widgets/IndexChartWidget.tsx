@@ -26,7 +26,7 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
   const [series, setSeries] = useState<SeriesName>('IMOEX')
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
 
-  const { chartRef, priceSeriesRef, markersRef } = useChartCore({
+  const { chartRef, mainSeriesRef, markersRef } = useChartCore({
     containerRef,
     group,
     memberId: widgetId,
@@ -46,13 +46,13 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
 
   // Загрузка ряда
   useEffect(() => {
-    const ps = priceSeriesRef.current
+    const ps = mainSeriesRef.current
     if (!ps) return
     getSeries(series).then((points) => {
       ps.setData(points.map((p) => ({ time: dateToTs(p.date), value: p.value })))
       chartRef.current?.timeScale().fitContent()
     })
-  }, [series, chartRef, priceSeriesRef])
+  }, [series, chartRef, mainSeriesRef])
 
   // Подписка на активное событие группы (без фильтра по тикеру —
   // индекс глобален, нам важна только дата события на оси X)
@@ -70,7 +70,7 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
     if (group === 'none') return
     return groupRegistry.subscribeHoverDate(group, (date) => {
       const chart = chartRef.current
-      const ps = priceSeriesRef.current
+      const ps = mainSeriesRef.current
       if (!chart || !ps) return
       if (date === null) {
         chart.clearCrosshairPosition()
@@ -91,7 +91,7 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
       }
       chart.setCrosshairPosition(best.value, best.time, ps)
     })
-  }, [group, chartRef, priceSeriesRef])
+  }, [group, chartRef, mainSeriesRef])
 
   // Зум по команде ES
   useEffect(() => {
@@ -115,7 +115,7 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
       return
     }
     const t0 = dateToTs(activeEvent.eventDate)
-    const dayMs = 86400
+    const SECONDS_PER_DAY = 86400
     const markers: SeriesMarker<Time>[] = [
       {
         time: t0,
@@ -125,14 +125,14 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
         text: `t=0 ${activeEvent.ticker}`,
       },
       {
-        time: (t0 - activeEvent.daysBefore * dayMs) as UTCTimestamp,
+        time: (t0 - activeEvent.daysBefore * SECONDS_PER_DAY) as UTCTimestamp,
         position: 'belowBar',
         color: '#e53935',
         shape: 'arrowRight',
         text: `−${activeEvent.daysBefore}`,
       },
       {
-        time: (t0 + activeEvent.daysAfter * dayMs) as UTCTimestamp,
+        time: (t0 + activeEvent.daysAfter * SECONDS_PER_DAY) as UTCTimestamp,
         position: 'belowBar',
         color: '#e53935',
         shape: 'arrowLeft',

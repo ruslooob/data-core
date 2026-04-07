@@ -37,7 +37,7 @@ export interface ChartCoreOptions {
 
 export interface ChartCoreRefs {
   chartRef: RefObject<IChartApi | null>
-  priceSeriesRef: RefObject<ISeriesApi<'Line'> | null>
+  mainSeriesRef: RefObject<ISeriesApi<'Line'> | null>
   volumeSeriesRef: RefObject<ISeriesApi<'Histogram'> | null>
   markersRef: RefObject<ISeriesMarkersPluginApi<Time> | null>
 }
@@ -52,7 +52,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   } = opts
 
   const chartRef = useRef<IChartApi | null>(null)
-  const priceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const mainSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const setGroupRef = useRef<((g: WidgetGroup) => void) | null>(null)
@@ -87,7 +87,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
       },
     })
 
-    const priceSeries = chart.addSeries(
+    const mainSeries = chart.addSeries(
       LineSeries,
       {
         color: '#2962FF',
@@ -112,9 +112,9 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     }
 
     chartRef.current = chart
-    priceSeriesRef.current = priceSeries
+    mainSeriesRef.current = mainSeries
     volumeSeriesRef.current = volumeSeries
-    markersRef.current = createSeriesMarkers(priceSeries, [])
+    markersRef.current = createSeriesMarkers(mainSeries, [])
 
     // Click → callback (через ref, чтобы не пере-инициализировать график)
     const onClick = (param: MouseEventParams) => {
@@ -138,7 +138,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     // Регистрация в chartSync (range/crosshair sync с другими графиками группы)
     const { setGroup, unregister: unregisterSync } = chartSyncBus.register(
       chart,
-      priceSeries,
+      mainSeries,
       group,
       { memberId },
     )
@@ -151,7 +151,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
       ro.disconnect()
       chart.remove()
       chartRef.current = null
-      priceSeriesRef.current = null
+      mainSeriesRef.current = null
       volumeSeriesRef.current = null
       markersRef.current = null
     }
@@ -163,5 +163,5 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     setGroupRef.current?.(group)
   }, [group])
 
-  return { chartRef, priceSeriesRef, volumeSeriesRef, markersRef }
+  return { chartRef, mainSeriesRef, volumeSeriesRef, markersRef }
 }
