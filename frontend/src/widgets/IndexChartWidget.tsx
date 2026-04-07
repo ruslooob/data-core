@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getSeries } from '../api/client'
 import type { SeriesName } from '../api/types'
 import { type SyncGroup } from './chartSync'
 import { groupRegistry, type ActiveEvent } from './groupRegistry'
+import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface IndexChartWidgetProps {
@@ -20,6 +21,7 @@ function dateToTs(d: string): UTCTimestamp {
 }
 
 export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
+  const widgetId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
   const [series, setSeries] = useState<SeriesName>('IMOEX')
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
@@ -27,10 +29,20 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
   const { chartRef, priceSeriesRef, markersRef } = useChartCore({
     containerRef,
     syncGroup,
+    memberId: widgetId,
     withVolume: false,
-    rangeSync: false, // у индекса другой масштаб времени — range-sync ломает price chart
-    crosshairSync: true,
   })
+
+  // Регистрация в groupRegistry (без тикера — индекс не публикует тикер)
+  useEffect(() => {
+    groupRegistry.register(widgetId, syncGroup, null)
+    return () => groupRegistry.unregister(widgetId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    groupRegistry.setGroup(widgetId, syncGroup)
+  }, [syncGroup, widgetId])
 
   // Загрузка ряда
   useEffect(() => {
@@ -150,6 +162,7 @@ export function IndexChartWidget({ syncGroup }: IndexChartWidgetProps) {
             </option>
           ))}
         </select>
+        <SyncLeaderButton group={syncGroup} memberId={widgetId} />
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
     </div>

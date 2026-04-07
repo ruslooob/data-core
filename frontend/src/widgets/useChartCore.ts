@@ -22,19 +22,9 @@ import { priceChartSyncBus, type SyncGroup } from './chartSync'
 export interface ChartCoreOptions {
   containerRef: RefObject<HTMLDivElement | null>
   syncGroup: SyncGroup
+  /** Идентификатор виджета (для leader-aware chartSync). */
+  memberId: string
   withVolume?: boolean
-  /**
-   * Участвует ли в range-sync chartSync. Default true.
-   * Для index chart — false: у IMOEX/RUONIA другой временной масштаб,
-   * центр-based range sync ломает bar spacing соседнего price chart.
-   */
-  rangeSync?: boolean
-  /**
-   * Участвует ли в crosshair-sync chartSync. Default true.
-   * Index chart использует crosshair-sync, чтобы при наведении на price chart
-   * на нём подсвечивалась соответствующая дата.
-   */
-  crosshairSync?: boolean
   /** Кастомный priceFormat для серии цены (например, для процентов). */
   priceFormat?: Parameters<IChartApi['addSeries']>[1] extends infer O
     ? O extends { priceFormat?: infer P }
@@ -56,9 +46,8 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   const {
     containerRef,
     syncGroup,
+    memberId,
     withVolume = false,
-    rangeSync = true,
-    crosshairSync = true,
     onBarClick,
   } = opts
 
@@ -151,7 +140,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
       chart,
       priceSeries,
       syncGroup,
-      { rangeSync, crosshairSync },
+      { memberId },
     )
     setSyncGroupRef.current = setGroup
 

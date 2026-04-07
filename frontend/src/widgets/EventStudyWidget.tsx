@@ -23,8 +23,8 @@ interface EventStudyWidgetProps {
 
 export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
   const [allTickers, setAllTickers] = useState<string[]>([])
-  const [groupTickers, setGroupTickers] = useState<string[]>(() =>
-    groupRegistry.getGroupTickers(syncGroup),
+  const [leaderTicker, setLeaderTicker] = useState<string | null>(() =>
+    groupRegistry.getLeaderTicker(syncGroup),
   )
   const [allEvents, setAllEvents] = useState<DividendEvent[]>([])
   const [ticker, setTicker] = useState<string>('')
@@ -49,27 +49,45 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Подписка на изменения тикеров в текущей sync-группе
+  // Подписка на ведущего графика группы (его тикер используется в ES)
   useEffect(() => {
-    setGroupTickers(groupRegistry.getGroupTickers(syncGroup))
+    const recompute = () => setLeaderTicker(groupRegistry.getLeaderTicker(syncGroup))
+    recompute()
     if (syncGroup === 'none') return
-    return groupRegistry.subscribe(syncGroup, setGroupTickers)
+    const unsubLeader = groupRegistry.subscribeLeader(syncGroup, recompute)
+    // Тикер ведущего может смениться без смены лидера → слушаем и tickers группы
+    const unsubTickers = groupRegistry.subscribe(syncGroup, recompute)
+    return () => {
+      unsubLeader()
+      unsubTickers()
+    }
   }, [syncGroup])
 
-  // Доступные тикеры: фильтр по группе если есть participants, иначе все
+  // Доступные тикеры:
+  //  - none → все (автономный режим)
+  //  - есть ведущий с тикером → только его тикер (forced)
+  //  - нет ведущего / индекс-лидер → пусто (placeholder)
   const tickers = useMemo(() => {
     if (syncGroup === 'none') return allTickers
-    if (groupTickers.length === 0) return allTickers
-    return groupTickers
-  }, [syncGroup, groupTickers, allTickers])
+    if (leaderTicker) return [leaderTicker]
+    return []
+  }, [syncGroup, leaderTicker, allTickers])
 
-  // Если текущий тикер выпал из доступных — переключиться на первый
+  const isLockedToLeader = syncGroup !== 'none' && leaderTicker !== null
+  const isBlockedNoLeader = syncGroup !== 'none' && leaderTicker === null
+
+  // Синхронизация выбранного тикера с ведущим
   useEffect(() => {
-    if (tickers.length === 0) return
-    if (!tickers.includes(ticker)) {
-      setTicker(tickers[0])
+    if (syncGroup === 'none') {
+      if (tickers.length > 0 && !tickers.includes(ticker)) setTicker(tickers[0])
+      return
     }
-  }, [tickers, ticker])
+    if (leaderTicker) {
+      if (ticker !== leaderTicker) setTicker(leaderTicker)
+    } else {
+      if (ticker !== '') setTicker('')
+    }
+  }, [syncGroup, leaderTicker, tickers, ticker])
 
   const tickerEvents = useMemo(
     () =>
@@ -193,12 +211,14 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
         <label style={labelStyle}>
-          Тикер
+          Тикер{isLockedToLeader && ' (ведущий)'}
           <select
             value={ticker}
             onChange={(e) => setTicker(e.target.value)}
             style={selectStyle}
+            disabled={isLockedToLeader || isBlockedNoLeader}
           >
+            {tickers.length === 0 && <option value="">—</option>}
             {tickers.map((t) => (
               <option key={t} value={t}>
                 {t}
@@ -267,7 +287,7 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
         <button
           onClick={handleCalculate}
           style={calcButtonStyle}
-          disabled={!eventId || loading}
+          disabled={!eventId || loading || isBlockedNoLeader}
         >
           {loading ? 'Считаем…' : 'Рассчитать'}
         </button>
@@ -292,7 +312,23 @@ export function EventStudyWidget({ syncGroup }: EventStudyWidgetProps) {
       {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {result && resultWindow ? (
+        {isBlockedNoLeader ? (
+          <div
+            style={{
+              flex: 1,
+              color: '#888',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+              padding: 16,
+            }}
+          >
+            Выберите ведущий price chart в группе
+            <br />
+            (кнопка ⟳ на нужном графике)
+          </div>
+        ) : result && resultWindow ? (
           <CarChart
             result={result}
             daysBefore={resultWindow.before}

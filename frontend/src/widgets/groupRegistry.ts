@@ -37,6 +37,7 @@ type ActiveEventListener = (ev: ActiveEvent | null) => void
 type ZoomListener = (req: ZoomRequest) => void
 type SelectListener = (req: SelectEventRequest) => void
 type HoverDateListener = (date: string | null) => void
+type LeaderListener = (leaderId: string | null) => void
 
 class GroupRegistry {
   private members = new Map<string, Member>()
@@ -49,6 +50,9 @@ class GroupRegistry {
   private selectListeners = new Map<SyncGroup, Set<SelectListener>>()
   private hoverDateListeners = new Map<SyncGroup, Set<HoverDateListener>>()
 
+  private leaders = new Map<SyncGroup, string | null>()
+  private leaderListeners = new Map<SyncGroup, Set<LeaderListener>>()
+
   // ───── члены группы ─────
 
   register(id: string, group: SyncGroup, ticker: string | null = null): void {
@@ -60,6 +64,9 @@ class GroupRegistry {
     const m = this.members.get(id)
     if (!m) return
     this.members.delete(id)
+    if (this.leaders.get(m.group) === id) {
+      this.setLeader(m.group, null)
+    }
     this.notifyTickers(m.group)
   }
 
@@ -69,9 +76,52 @@ class GroupRegistry {
     const oldGroup = m.group
     m.group = group
     if (oldGroup !== group) {
+      // Если переезжающий участник был лидером старой группы — снять лидерство
+      if (this.leaders.get(oldGroup) === id) {
+        this.setLeader(oldGroup, null)
+      }
       this.notifyTickers(oldGroup)
       this.notifyTickers(group)
     }
+  }
+
+  // ───── ведущий график группы ─────
+
+  getLeader(group: SyncGroup): string | null {
+    return this.leaders.get(group) ?? null
+  }
+
+  setLeader(group: SyncGroup, id: string | null): void {
+    if (group === 'none') return
+    const cur = this.leaders.get(group) ?? null
+    if (cur === id) return
+    this.leaders.set(group, id)
+    const set = this.leaderListeners.get(group)
+    if (set) for (const l of set) l(id)
+  }
+
+  toggleLeader(group: SyncGroup, id: string): void {
+    if (group === 'none') return
+    const cur = this.leaders.get(group) ?? null
+    this.setLeader(group, cur === id ? null : id)
+  }
+
+  subscribeLeader(group: SyncGroup, l: LeaderListener): () => void {
+    let set = this.leaderListeners.get(group)
+    if (!set) {
+      set = new Set()
+      this.leaderListeners.set(group, set)
+    }
+    set.add(l)
+    return () => set!.delete(l)
+  }
+
+  /** Тикер ведущего графика группы (если лидер существует и это price chart с тикером). */
+  getLeaderTicker(group: SyncGroup): string | null {
+    const leaderId = this.leaders.get(group)
+    if (!leaderId) return null
+    const m = this.members.get(leaderId)
+    return m?.ticker ?? null
   }
 
   setTicker(id: string, ticker: string | null): void {

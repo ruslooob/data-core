@@ -4,6 +4,7 @@ import { getEvents, getPrices, getTickers } from '../api/client'
 import type { DividendEvent } from '../api/types'
 import { priceChartSyncBus, type SyncGroup } from './chartSync'
 import { groupRegistry, type ActiveEvent } from './groupRegistry'
+import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
 interface PriceChartWidgetProps {
@@ -59,6 +60,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
   const { chartRef, priceSeriesRef, volumeSeriesRef, markersRef } = useChartCore({
     containerRef,
     syncGroup,
+    memberId: widgetId,
     withVolume: true,
     onBarClick: handleBarClick,
   })
@@ -231,6 +233,7 @@ export function PriceChartWidget({ syncGroup }: PriceChartWidgetProps) {
             </option>
           ))}
         </select>
+        <SyncLeaderButton group={syncGroup} memberId={widgetId} />
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
     </div>
