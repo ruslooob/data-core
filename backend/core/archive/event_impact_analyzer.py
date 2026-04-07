@@ -15,7 +15,7 @@ from typing import Optional
 import pandas as pd
 
 from core.cpi_data_provider import load_normalized_ipc_data, IpcType
-from core.stock_data_provider import get_stock_data
+from core.stock_data_provider import get_candles
 
 
 @dataclass
@@ -220,7 +220,7 @@ def analyze_event_impact(
         EventImpactResult или None, если данных недостаточно для расчёта
     """
     event_date = pd.Timestamp(event_date)
-    stock = get_stock_data(ticker)
+    stock = get_candles(ticker)
     price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
 
     return _compute_event_metrics(
@@ -253,7 +253,7 @@ def analyze_events_impact(
         Список EventImpactResult (или None для событий с недостаточными данными),
         в том же порядке, что и строки events.
     """
-    stock = get_stock_data(ticker)
+    stock = get_candles(ticker)
     price, vol_series, t_days, baseline_daily = _prepare_stock_data(stock, params)
 
     neighbor_dates = pd.to_datetime(events[date_col]).tolist()

@@ -13,7 +13,7 @@ from core.market_data_provider import (
     load_risk_free_rate,
     load_risk_free_rate_annual,
 )
-from core.stock_data_provider import get_log_returns, get_stock_data, list_avail_tickers
+from core.stock_data_provider import get_candles, get_log_returns, list_tickers
 
 # Служебные файлы, которые не являются тикерами акций
 _NON_TICKER_FILES = {"DIVIDENDS", "IMOEX", "RUONIA", "SPLITS"}
@@ -37,7 +37,7 @@ def health() -> dict:
 @app.get("/api/tickers")
 def get_tickers() -> list[str]:
     """Возвращает список доступных тикеров акций (без служебных файлов)."""
-    return [t for t in list_avail_tickers() if t not in _NON_TICKER_FILES]
+    return [t for t in list_tickers() if t not in _NON_TICKER_FILES]
 
 
 class Candle(BaseModel):
@@ -56,7 +56,7 @@ def get_prices(
         end: str | None = None,
 ) -> list[Candle]:
     """Возвращает OHLCV-котировки для тикера."""
-    df = get_stock_data(ticker, normalized=True, start_date=start, end_date=end)
+    df = get_candles(ticker, normalized=True, start_date=start, end_date=end)
     return [
         Candle(
             date=row.DATE.strftime("%Y-%m-%d"),
