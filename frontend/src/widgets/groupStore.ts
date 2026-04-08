@@ -24,7 +24,7 @@ export interface ActiveEvent {
   daysAfter: number
 }
 
-interface Member {
+interface GroupedWidget {
   group: WidgetGroup
   ticker: string | null
 }
@@ -35,7 +35,7 @@ interface Member {
 
 interface GroupStoreState {
   /** Участники: id виджета → группа и тикер. */
-  members: Record<string, Member>
+  members: Record<string, GroupedWidget>
   /** Лидер каждой группы (или null). Группа `none` всегда null. */
   leaders: Record<WidgetGroup, string | null>
   /** Флаг «показывать события на ведущем» для каждой группы. */
