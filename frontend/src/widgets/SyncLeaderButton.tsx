@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { groupRegistry } from './groupRegistry'
+import { useGroupStore, selectLeader } from './groupStore'
 import type { WidgetGroup } from './chartSync'
 
 interface Props {
@@ -16,13 +15,8 @@ interface Props {
  *  - ведущий есть, но это не я → disabled, бледная (нужно сначала снять текущего)
  */
 export function SyncLeaderButton({ group, memberId }: Props) {
-  const [leaderId, setLeaderId] = useState<string | null>(() => groupRegistry.getLeader(group))
-
-  useEffect(() => {
-    setLeaderId(groupRegistry.getLeader(group))
-    if (group === 'none') return
-    return groupRegistry.subscribeLeader(group, setLeaderId)
-  }, [group])
+  const leaderId = useGroupStore(selectLeader(group))
+  const toggleLeader = useGroupStore((s) => s.toggleLeader)
 
   const isNone = group === 'none'
   const isLeader = !isNone && leaderId === memberId
@@ -47,7 +41,7 @@ export function SyncLeaderButton({ group, memberId }: Props) {
 
   const onClick = () => {
     if (disabled) return
-    groupRegistry.toggleLeader(group, memberId)
+    toggleLeader(group, memberId)
   }
 
   return (

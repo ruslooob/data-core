@@ -1,9 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { MouseEventParams, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getEvents, getPrices, getTickers } from '../api/client'
-import type { DividendEvent } from '../api/types'
 import { chartSyncBus, type WidgetGroup } from './chartSync'
-import { groupRegistry, type ActiveEvent } from './groupRegistry'
+import type { DividendEvent } from '../api/types'
+import {
+  groupEventBus,
+  selectActiveEvent,
+  selectIsLeader,
+  selectShowEvents,
+  useGroupStore,
+} from './groupStore'
 import { SyncLeaderButton } from './SyncLeaderButton'
 import { useChartCore } from './useChartCore'
 
@@ -22,14 +28,12 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
   const [tickers, setTickers] = useState<string[]>([])
   const [selectedTicker, setSelectedTicker] = useState<string>('')
   const [events, setEvents] = useState<DividendEvent[]>([])
-  const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
-  const [isLeader, setIsLeader] = useState<boolean>(
-    () => groupRegistry.getLeader(group) === widgetId,
-  )
-  const [showEvents, setShowEvents] = useState<boolean>(() =>
-    groupRegistry.getShowEvents(group),
-  )
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+
+  // Подписки на стор группы — авто-перерендер только на изменения нужных значений
+  const isLeader = useGroupStore(selectIsLeader(group, widgetId))
+  const showEvents = useGroupStore(selectShowEvents(group))
+  const activeEvent = useGroupStore(selectActiveEvent(group))
 
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
@@ -57,7 +61,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
       }
     }
     if (best && bestDiff <= 2 * 86400) {
-      groupRegistry.requestSelectEvent(currentGroup, {
+      groupEventBus.emit(currentGroup, 'selectEvent', {
         ticker: best.ticker,
         eventDate: best.eventDate,
       })
@@ -72,19 +76,19 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     onBarClick: handleBarClick,
   })
 
-  // ── Регистрация в groupRegistry как член группы ──
+  // ── Регистрация в groupStore как член группы ──
   useEffect(() => {
-    groupRegistry.register(widgetId, group, null)
-    return () => groupRegistry.unregister(widgetId)
+    useGroupStore.getState().registerMember(widgetId, group, null)
+    return () => useGroupStore.getState().unregisterMember(widgetId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    groupRegistry.setGroup(widgetId, group)
+    useGroupStore.getState().setMemberGroup(widgetId, group)
   }, [group, widgetId])
 
   useEffect(() => {
-    groupRegistry.setTicker(widgetId, selectedTicker || null)
+    useGroupStore.getState().setMemberTicker(widgetId, selectedTicker || null)
   }, [selectedTicker, widgetId])
 
   // ── Загрузка списка тикеров и котировок ──
@@ -112,28 +116,6 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     })
   }, [selectedTicker, chartRef, mainSeriesRef, volumeSeriesRef])
 
-  // ── Подписка на состояние лидера группы ──
-  useEffect(() => {
-    setIsLeader(groupRegistry.getLeader(group) === widgetId)
-    if (group === 'none') {
-      setIsLeader(false)
-      return
-    }
-    return groupRegistry.subscribeLeader(group, (leaderId) => {
-      setIsLeader(leaderId === widgetId)
-    })
-  }, [group, widgetId])
-
-  // ── Подписка на group-level «показывать события» ──
-  useEffect(() => {
-    setShowEvents(groupRegistry.getShowEvents(group))
-    if (group === 'none') {
-      setShowEvents(false)
-      return
-    }
-    return groupRegistry.subscribeShowEvents(group, setShowEvents)
-  }, [group])
-
   // ── Дивидендные события: только если этот график — ведущий И «глазик» включён ──
   useEffect(() => {
     if (!isLeader || !showEvents || !selectedTicker) {
@@ -143,19 +125,10 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     getEvents({ ticker: selectedTicker }).then(setEvents)
   }, [isLeader, showEvents, selectedTicker])
 
-  // ── Подписки на канал группы ──
-  useEffect(() => {
-    setActiveEvent(groupRegistry.getActiveEvent(group))
-    if (group === 'none') {
-      setActiveEvent(null)
-      return
-    }
-    return groupRegistry.subscribeActiveEvent(group, setActiveEvent)
-  }, [group])
-
+  // ── Hover-дата от CarChart → crosshair на этом графике ──
   useEffect(() => {
     if (group === 'none') return
-    return groupRegistry.subscribeHoverDate(group, (date) => {
+    return groupEventBus.subscribe(group, 'hoverDate', (date) => {
       const chart = chartRef.current
       const series = mainSeriesRef.current
       if (!chart || !series) return
@@ -182,7 +155,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
 
   useEffect(() => {
     if (group === 'none') return
-    return groupRegistry.subscribeZoom(group, (req) => {
+    return groupEventBus.subscribe(group, 'zoom', (req) => {
       const chart = chartRef.current
       if (!chart) return
       // Помечаем chart, чтобы chartSync не пропагировал получившееся range-change

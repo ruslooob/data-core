@@ -12,7 +12,7 @@ import {
 } from 'lightweight-charts'
 import type { EventStudyResult } from '../api/types'
 import type { WidgetGroup } from './chartSync'
-import { groupRegistry } from './groupRegistry'
+import { groupEventBus } from './groupStore'
 
 interface CarChartProps {
   result: EventStudyResult
@@ -131,14 +131,14 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
       const currentGroup = groupRef.current
       if (currentGroup === 'none') return
       if (param.time === undefined || nRef.current === 0) {
-        groupRegistry.broadcastHoverDate(currentGroup, null)
+        groupEventBus.emit(currentGroup, 'hoverDate', null)
         return
       }
       // ts (synthetic) → t (relative day from event), затем добавляем к event_date
       const ts = typeof param.time === 'number' ? param.time : 0
       const t = Math.round((ts - BASE_TS) / SECONDS_PER_DAY)
       const date = shiftDate(eventDateRef.current, t)
-      groupRegistry.broadcastHoverDate(currentGroup, date)
+      groupEventBus.emit(currentGroup, 'hoverDate', date)
     }
     chart.subscribeCrosshairMove(onCrosshair)
 
@@ -154,7 +154,7 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
       chart.unsubscribeCrosshairMove(onCrosshair)
       // Сбрасываем hover на price chart при размонтировании
       const currentGroup = groupRef.current
-      if (currentGroup !== 'none') groupRegistry.broadcastHoverDate(currentGroup, null)
+      if (currentGroup !== 'none') groupEventBus.emit(currentGroup, 'hoverDate', null)
       ro.disconnect()
       chart.remove()
       chartRef.current = null

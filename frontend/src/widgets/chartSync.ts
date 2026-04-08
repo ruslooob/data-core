@@ -5,7 +5,7 @@ import type {
   Range,
   Time,
 } from 'lightweight-charts'
-import { groupRegistry } from './groupRegistry'
+import { useGroupStore } from './groupStore'
 
 export type WidgetGroup = 'none' | 'red' | 'blue' | 'green' | 'yellow'
 
@@ -72,7 +72,7 @@ class ChartSyncBus {
       if (range === null) return
       if (entry.group === 'none') return
       // Только лидер группы транслирует range
-      if (groupRegistry.getLeader(entry.group) !== entry.memberId) return
+      if (useGroupStore.getState().leaders[entry.group] !== entry.memberId) return
       const lastApplied = this.lastAppliedAt.get(chart) ?? 0
       if (performance.now() - lastApplied < this.IGNORE_WINDOW_MS) return
 
@@ -90,7 +90,7 @@ class ChartSyncBus {
       if (this.syncingCrosshair) return
       if (entry.group === 'none') return
       // Только лидер группы транслирует crosshair
-      if (groupRegistry.getLeader(entry.group) !== entry.memberId) return
+      if (useGroupStore.getState().leaders[entry.group] !== entry.memberId) return
       this.syncingCrosshair = true
       try {
         for (const other of this.entries.values()) {

@@ -3,7 +3,12 @@ import { getEvents, getTickers, runEventStudy } from '../api/client'
 import type { DividendEvent, EventStudyResult, ExpectedReturnModel } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
-import { groupRegistry } from './groupRegistry'
+import {
+  groupEventBus,
+  selectLeaderTicker,
+  selectShowEvents,
+  useGroupStore,
+} from './groupStore'
 
 function shiftDate(iso: string, deltaDays: number): string {
   const d = new Date(iso)
@@ -26,9 +31,6 @@ interface EventStudyWidgetProps {
 
 export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [allTickers, setAllTickers] = useState<string[]>([])
-  const [leaderTicker, setLeaderTicker] = useState<string | null>(() =>
-    groupRegistry.getLeaderTicker(group),
-  )
   const [allEvents, setAllEvents] = useState<DividendEvent[]>([])
   const [ticker, setTicker] = useState<string>('')
   const [eventId, setEventId] = useState<string>('')
@@ -40,16 +42,12 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showEvents, setShowEvents] = useState<boolean>(() =>
-    groupRegistry.getShowEvents(group),
-  )
 
-  // Подписка на group-level показ событий (sync «глазика» между всеми ES группы)
-  useEffect(() => {
-    setShowEvents(groupRegistry.getShowEvents(group))
-    if (group === 'none') return
-    return groupRegistry.subscribeShowEvents(group, setShowEvents)
-  }, [group])
+  // Подписки на стор группы — авто-перерендер только на нужных изменениях
+  const leaderTicker = useGroupStore(selectLeaderTicker(group))
+  const showEvents = useGroupStore(selectShowEvents(group))
+  const setActiveEventInStore = useGroupStore((s) => s.setActiveEvent)
+  const toggleShowEventsInStore = useGroupStore((s) => s.toggleShowEvents)
 
   useEffect(() => {
     getTickers().then((ts) => {
@@ -61,20 +59,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     getEvents().then(setAllEvents)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Подписка на ведущего графика группы (его тикер используется в ES)
-  useEffect(() => {
-    const recompute = () => setLeaderTicker(groupRegistry.getLeaderTicker(group))
-    recompute()
-    if (group === 'none') return
-    const unsubLeader = groupRegistry.subscribeLeader(group, recompute)
-    // Тикер ведущего может смениться без смены лидера → слушаем и tickers группы
-    const unsubTickers = groupRegistry.subscribeTickers(group, recompute)
-    return () => {
-      unsubLeader()
-      unsubTickers()
-    }
-  }, [group])
 
   // Доступные тикеры:
   //  - none → все (автономный режим)
@@ -125,32 +109,32 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   useEffect(() => {
     if (group === 'none') return
     if (!currentEvent) {
-      groupRegistry.setActiveEvent(group, null)
+      setActiveEventInStore(group, null)
       return
     }
-    groupRegistry.setActiveEvent(group, {
+    setActiveEventInStore(group, {
       ticker: currentEvent.ticker,
       eventDate: currentEvent.eventDate,
       daysBefore,
       daysAfter,
     })
-  }, [group, currentEvent, daysBefore, daysAfter])
+  }, [group, currentEvent, daysBefore, daysAfter, setActiveEventInStore])
 
   // При размонтировании / смене группы — очистить старую
   useEffect(() => {
     return () => {
       if (group !== 'none') {
-        groupRegistry.setActiveEvent(group, null)
+        setActiveEventInStore(group, null)
       }
     }
-  }, [group])
+  }, [group, setActiveEventInStore])
 
   // Подписка на «выбрать событие» из price chart (клик по маркеру)
   // handleCalculateRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
   const handleCalculateRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (group === 'none') return
-    return groupRegistry.subscribeSelectEvent(group, (req) => {
+    return groupEventBus.subscribe(group, 'selectEvent', (req) => {
       // Если тикер другой — сначала переключаем тикер, затем событие
       if (req.ticker !== ticker) {
         setTicker(req.ticker)
@@ -173,7 +157,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     setEventId(ev.id)
     // Авто-зум на price chart этой группы
     if (group !== 'none') {
-      groupRegistry.requestZoom(group, {
+      groupEventBus.emit(group, 'zoom', {
         from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
         to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
@@ -193,7 +177,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     const ev = tickerEvents[currentIdx]
     if (!ev) return
     if (group !== 'none') {
-      groupRegistry.requestZoom(group, {
+      groupEventBus.emit(group, 'zoom', {
         from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
         to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
@@ -258,7 +242,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
           show={showEvents}
           disabled={isBlockedNoLeader || group === 'none'}
           group={group}
-          onToggle={() => groupRegistry.toggleShowEvents(group)}
+          onToggle={() => toggleShowEventsInStore(group)}
         />
 
         <label style={labelStyle}>
