@@ -87,11 +87,15 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
     if (group === 'none') return
     return groupEventBus.subscribe(group, 'zoom', (req) => {
       const chart = chartRef.current
-      if (!chart) return
-      chart.timeScale().setVisibleRange({
-        from: dateToTs(req.from),
-        to: dateToTs(req.to),
-      })
+      const series = mainSeriesRef.current
+      if (!chart || !series) return
+      if ((series.data()?.length ?? 0) === 0) return
+      try {
+        chart.timeScale().setVisibleRange({
+          from: dateToTs(req.from),
+          to: dateToTs(req.to),
+        })
+      } catch { /* range вне данных */ }
     })
   }, [group, chartRef])
 

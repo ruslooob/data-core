@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import type { WidgetGroup } from './chartSync'
+import { AnomalyWidget } from './AnomalyWidget'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { Widget } from './Widget'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'anomaly'
 
 interface WidgetInstance {
   id: string
@@ -24,6 +25,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'price-chart': 'Price chart',
   'event-study': 'Event study',
   'index-chart': 'Index chart',
+  'anomaly': 'Anomaly scanner',
 }
 
 const DEFAULT_WIDTH = 640
@@ -36,7 +38,6 @@ export function WidgetContainer() {
   const [topZ, setTopZ] = useState(1)
 
   const addWidget = (type: WidgetType) => {
-    // Появляемся в центре видимой области полотна (с учётом скролла)
     const scrollX = window.scrollX
     const scrollY = window.scrollY
     const centerX = scrollX + window.innerWidth / 2 - DEFAULT_WIDTH / 2
@@ -64,7 +65,6 @@ export function WidgetContainer() {
     setWidgets((prev) => {
       const w = prev.find((x) => x.id === id)
       if (!w) return prev
-      // Если уже самый верхний — ничего не делаем (избегаем лишних рендеров)
       const maxZ = prev.reduce((m, x) => (x.zIndex > m ? x.zIndex : m), 0)
       if (w.zIndex === maxZ) return prev
       const newZ = topZ + 1
@@ -137,6 +137,9 @@ export function WidgetContainer() {
             <button onClick={() => addWidget('event-study')} style={menuItemStyle}>
               Event study
             </button>
+            <button onClick={() => addWidget('anomaly')} style={menuItemStyle}>
+              Anomaly scanner
+            </button>
           </div>
         )}
       </div>
@@ -170,6 +173,8 @@ export function WidgetContainer() {
               <PriceChartWidget group={w.group} />
             ) : w.type === 'index-chart' ? (
               <IndexChartWidget group={w.group} />
+            ) : w.type === 'anomaly' ? (
+              <AnomalyWidget group={w.group} />
             ) : (
               <EventStudyWidget group={w.group} />
             )}

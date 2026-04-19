@@ -158,13 +158,13 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     return groupEventBus.subscribe(group, 'zoom', (req) => {
       const chart = chartRef.current
       if (!chart) return
-      // Помечаем chart, чтобы chartSync не пропагировал получившееся range-change
-      // событие соседним price chart'ам как эхо (и не «затёр» их свежий зум).
       chartSyncBus.markApplied(chart)
-      chart.timeScale().setVisibleRange({
-        from: dateToTs(req.from),
-        to: dateToTs(req.to),
-      })
+      try {
+        chart.timeScale().setVisibleRange({
+          from: dateToTs(req.from),
+          to: dateToTs(req.to),
+        })
+      } catch { /* серия пуста или range вне данных */ }
     })
   }, [group, chartRef])
 

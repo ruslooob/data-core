@@ -2,7 +2,7 @@ import type {
   IChartApi,
   ISeriesApi,
   MouseEventParams,
-  Range,
+  IRange,
   Time,
 } from 'lightweight-charts'
 import { useGroupStore } from './groupStore'
@@ -68,7 +68,7 @@ class ChartSyncBus {
     }
     this.entries.set(chart, entry)
 
-    const onRangeChange = (range: Range<Time> | null) => {
+    const onRangeChange = (range: IRange<Time> | null) => {
       if (range === null) return
       if (entry.group === 'none') return
       // Только лидер группы транслирует range
@@ -81,7 +81,9 @@ class ChartSyncBus {
         if (other.chart === chart) continue
         if (other.group !== entry.group) continue
         this.lastAppliedAt.set(other.chart, now)
-        other.chart.timeScale().setVisibleRange(range)
+        try {
+          other.chart.timeScale().setVisibleRange(range)
+        } catch { /* серия пуста или range вне данных */ }
       }
     }
     chart.timeScale().subscribeVisibleTimeRangeChange(onRangeChange)

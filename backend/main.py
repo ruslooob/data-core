@@ -16,8 +16,9 @@ class CamelModel(BaseModel):
     """
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+from core.anomaly_detector import detect_anomalies_batch, AnomalyResult as AnomalyResultCore
 from core.dividend_data_provider import load_dividends
-from core.event_study import EventStudy
+from core.event_study import EventStudy, AggregateStudyResult
 from core.market_data_provider import (
     load_market_index_log_returns,
     load_market_index_prices,
@@ -156,6 +157,7 @@ class EventStudyRequest(CamelModel):
     model: str  # 'mean_adjusted', 'market_model', 'capm'
     event_window: tuple[int, int]  # (-10, 10)
     estimation_window: int  # 200
+    outlier_threshold: float | None = None  # σ-порог фильтрации выбросов
 
 
 class EventStudyResponse(CamelModel):
@@ -164,6 +166,7 @@ class EventStudyResponse(CamelModel):
     car: float
     n_days: int
     estimation_std: float
+    outliers_removed: int
 
 
 @app.post("/api/event-study", response_model_by_alias=True)
@@ -181,6 +184,7 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         estimation_window=req.estimation_window,
         market=market,
         rf=rf,
+        outlier_threshold=req.outlier_threshold,
     )
 
     return EventStudyResponse(
@@ -189,4 +193,189 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         car=result.car,
         n_days=result.n_days,
         estimation_std=result.estimation_std,
+        outliers_removed=result.outliers_removed,
     )
+
+
+# ── Агрегированный event study ──────────────────────────────────────────────
+
+class AggregateStudyRequest(CamelModel):
+    ticker: str
+    model: str
+    event_window: tuple[int, int]
+    estimation_window: int
+    outlier_threshold: float | None = None
+
+
+class AggregateStudyResponse(CamelModel):
+    n_events: int
+    mean_car: list[float]
+    cumulative_mean_car: float
+    t_stat: float
+    p_value: float
+    individual_cars: list[float]
+    event_dates: list[str]
+
+
+@app.post("/api/event-study/aggregate", response_model_by_alias=True)
+def run_aggregate_study(req: AggregateStudyRequest) -> AggregateStudyResponse:
+    """Агрегированный event study: средний CAR по всем событиям тикера."""
+    stock_log_returns = get_log_returns(req.ticker)
+    market = load_market_index_log_returns()
+    rf = load_daily_risk_free_rate()
+
+    events = load_dividends()
+    event_dates = [e.event_date for e in events if e.ticker == req.ticker.upper()]
+
+    study = EventStudy(stock_log_returns=stock_log_returns)
+    result = study.analyze_aggregate(
+        event_dates=event_dates,
+        model=req.model,
+        event_window=req.event_window,
+        estimation_window=req.estimation_window,
+        market=market,
+        rf=rf,
+        outlier_threshold=req.outlier_threshold,
+    )
+
+    if result is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Не удалось проанализировать ни одно событие")
+
+    return AggregateStudyResponse(
+        n_events=result.n_events,
+        mean_car=result.mean_car,
+        cumulative_mean_car=result.cumulative_mean_car,
+        t_stat=result.t_stat,
+        p_value=result.p_value,
+        individual_cars=result.individual_cars,
+        event_dates=result.event_dates,
+    )
+
+
+# ── Поиск аномалий ─────────────────────────────────────────────────────────
+
+class AnomalyRequest(CamelModel):
+    ticker: str
+    model: str
+    event_window: tuple[int, int]
+    estimation_window: int
+    outlier_threshold: float | None = None
+
+
+class AnomalyFlagOut(CamelModel):
+    code: str
+    label: str
+    severity: float
+    detail: str
+
+
+class AnomalyResultOut(CamelModel):
+    event_date: str
+    ticker: str
+    flags: list[AnomalyFlagOut]
+    car_pct: float
+    vol_ratio: float
+    volume_ratio: float
+    anomaly_score: float
+
+
+@app.post("/api/anomalies", response_model_by_alias=True)
+def find_anomalies(req: AnomalyRequest) -> list[AnomalyResultOut]:
+    """Батч-проверка всех событий тикера на аномалии."""
+    stock_log_returns = get_log_returns(req.ticker)
+    market = load_market_index_log_returns()
+    rf = load_daily_risk_free_rate()
+    candles_df = get_candles(req.ticker, normalized=True)
+
+    events = load_dividends()
+    event_dates = [e.event_date for e in events if e.ticker == req.ticker.upper()]
+
+    study = EventStudy(stock_log_returns=stock_log_returns)
+    results = detect_anomalies_batch(
+        ticker=req.ticker,
+        event_dates=event_dates,
+        candles=candles_df,
+        study=study,
+        model=req.model,
+        event_window=req.event_window,
+        estimation_window=req.estimation_window,
+        market=market,
+        rf=rf,
+        outlier_threshold=req.outlier_threshold,
+    )
+
+    return [
+        AnomalyResultOut(
+            event_date=r.event_date,
+            ticker=r.ticker,
+            flags=[AnomalyFlagOut(code=f.code, label=f.label, severity=f.severity, detail=f.detail) for f in r.flags],
+            car_pct=r.car_pct,
+            vol_ratio=r.vol_ratio,
+            volume_ratio=r.volume_ratio,
+            anomaly_score=r.anomaly_score,
+        )
+        for r in results
+    ]
+
+
+# ── Глобальное сканирование аномалий (SSE-стриминг) ─────────────────────────
+
+class AnomalyScanAllRequest(CamelModel):
+    model: str
+    event_window: tuple[int, int]
+    estimation_window: int
+    outlier_threshold: float | None = None
+
+
+def _anomaly_result_to_dict(r) -> dict:
+    return AnomalyResultOut(
+        event_date=r.event_date,
+        ticker=r.ticker,
+        flags=[AnomalyFlagOut(code=f.code, label=f.label, severity=f.severity, detail=f.detail) for f in r.flags],
+        car_pct=r.car_pct,
+        vol_ratio=r.vol_ratio,
+        volume_ratio=r.volume_ratio,
+        anomaly_score=r.anomaly_score,
+    ).model_dump(by_alias=True)
+
+
+@app.post("/api/anomalies/scan-all")
+def scan_all_anomalies(req: AnomalyScanAllRequest):
+    """SSE-стриминг: сканирует все тикеры и отдаёт результаты по мере нахождения."""
+    import json
+    from fastapi.responses import StreamingResponse
+
+    stock_tickers = [t for t in list_tickers() if t not in _NON_TICKER_FILES]
+    all_events = load_dividends()
+    market = load_market_index_log_returns()
+    rf = load_daily_risk_free_rate()
+
+    def generate():
+        for ticker in stock_tickers:
+            event_dates = [e.event_date for e in all_events if e.ticker == ticker]
+            if not event_dates:
+                continue
+            try:
+                stock_lr = get_log_returns(ticker)
+                candles_df = get_candles(ticker, normalized=True)
+                study = EventStudy(stock_log_returns=stock_lr)
+                results = detect_anomalies_batch(
+                    ticker=ticker,
+                    event_dates=event_dates,
+                    candles=candles_df,
+                    study=study,
+                    model=req.model,
+                    event_window=req.event_window,
+                    estimation_window=req.estimation_window,
+                    market=market,
+                    rf=rf,
+                    outlier_threshold=req.outlier_threshold,
+                )
+                for r in results:
+                    yield f"data: {json.dumps(_anomaly_result_to_dict(r))}\n\n"
+            except Exception:
+                continue
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getEvents, getTickers, runEventStudy } from '../api/client'
-import type { DividendEvent, EventStudyResult, ExpectedReturnModel } from '../api/types'
+import { getEvents, getTickers, runEventStudy, runAggregateStudy } from '../api/client'
+import type {
+  DividendEvent,
+  EventStudyResult,
+  AggregateStudyResult,
+  ExpectedReturnModel,
+} from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
+import { AggregateCarChart } from './AggregateCarChart'
 import {
   groupEventBus,
   selectLeaderTicker,
@@ -38,10 +44,14 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [daysBefore, setDaysBefore] = useState(10)
   const [daysAfter, setDaysAfter] = useState(10)
   const [estimationWindow, setEstimationWindow] = useState(200)
+  const [outlierThreshold, setOutlierThreshold] = useState(0) // 0 = выкл, 2-5 = σ
   const [result, setResult] = useState<EventStudyResult | null>(null)
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showAggregate, setShowAggregate] = useState(false)
+  const [aggregateResult, setAggregateResult] = useState<AggregateStudyResult | null>(null)
+  const [aggregateLoading, setAggregateLoading] = useState(false)
 
   // Подписки на стор группы — авто-перерендер только на нужных изменениях
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
@@ -191,6 +201,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         model,
         eventWindow: [-daysBefore, daysAfter],
         estimationWindow: estimationWindow,
+        outlierThreshold: outlierThreshold > 0 ? outlierThreshold : null,
       })
       setResult(r)
       setResultWindow({ before: daysBefore, after: daysAfter })
@@ -199,6 +210,27 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
       setResult(null)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleAggregate = async () => {
+    if (!ticker) return
+    setAggregateLoading(true)
+    setError(null)
+    try {
+      const r = await runAggregateStudy({
+        ticker,
+        model,
+        eventWindow: [-daysBefore, daysAfter],
+        estimationWindow,
+        outlierThreshold: outlierThreshold > 0 ? outlierThreshold : null,
+      })
+      setAggregateResult(r)
+      setShowAggregate(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAggregateLoading(false)
     }
   }
 
@@ -245,6 +277,19 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
           onToggle={() => toggleShowEventsInStore(group)}
         />
 
+        <AggregateToggleButton
+          active={showAggregate}
+          loading={aggregateLoading}
+          disabled={!ticker || isBlockedNoLeader}
+          onToggle={() => {
+            if (showAggregate) {
+              setShowAggregate(false)
+            } else {
+              handleAggregate()
+            }
+          }}
+        />
+
         <label style={labelStyle}>
           Модель
           <select
@@ -283,9 +328,16 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
           value={estimationWindow}
           onChange={setEstimationWindow}
         />
+        <SliderField
+          label={`Фильтр выбросов: ${outlierThreshold === 0 ? 'выкл' : outlierThreshold + 'σ'}`}
+          min={0}
+          max={5}
+          value={outlierThreshold}
+          onChange={setOutlierThreshold}
+        />
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button
           onClick={handleCalculate}
           style={calcButtonStyle}
@@ -313,6 +365,12 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
       {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
 
+      {result && result.outliersRemoved > 0 && (
+        <div style={{ fontSize: 12, color: '#e65100', padding: '2px 0' }}>
+          Из оценочного окна убрано выбросов: {result.outliersRemoved}
+        </div>
+      )}
+
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {isBlockedNoLeader ? (
           <div
@@ -330,6 +388,12 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
             <br />
             (кнопка ⟳ на нужном графике)
           </div>
+        ) : showAggregate && aggregateResult ? (
+          <AggregateCarChart
+            result={aggregateResult}
+            daysBefore={daysBefore}
+            daysAfter={daysAfter}
+          />
         ) : result && resultWindow ? (
           <CarChart
             result={result}
@@ -403,6 +467,50 @@ function ShowEventsToggleButton({
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
         <circle cx="12" cy="12" r="3" />
       </svg>
+    </button>
+  )
+}
+
+function AggregateToggleButton({
+  active,
+  loading,
+  disabled,
+  onToggle,
+}: {
+  active: boolean
+  loading: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  const title = active
+    ? 'Вернуться к одиночному анализу'
+    : 'Средний CAR по всем событиям тикера'
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled || loading}
+      title={title}
+      aria-label={title}
+      style={{
+        alignSelf: 'flex-end',
+        marginBottom: 1,
+        width: 32,
+        height: 32,
+        padding: 0,
+        border: '1px solid #d0d0d0',
+        borderRadius: 4,
+        background: active ? '#1e88e5' : 'transparent',
+        color: active ? '#ffffff' : '#666',
+        cursor: disabled || loading ? 'not-allowed' : 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.45 : 1,
+        fontSize: 16,
+        fontWeight: 700,
+      }}
+    >
+      {loading ? '...' : '\u03A3'}
     </button>
   )
 }

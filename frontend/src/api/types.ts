@@ -30,6 +30,7 @@ export interface EventStudyRequest {
   model: ExpectedReturnModel
   eventWindow: [number, number]
   estimationWindow: number
+  outlierThreshold?: number | null
 }
 
 export interface EventStudyResult {
@@ -38,4 +39,59 @@ export interface EventStudyResult {
   car: number
   nDays: number
   estimationStd: number
+  outliersRemoved: number
+}
+
+// ── Агрегированный event study ──────────────────────────────────────────────
+
+export interface AggregateStudyRequest {
+  ticker: string
+  model: ExpectedReturnModel
+  eventWindow: [number, number]
+  estimationWindow: number
+  outlierThreshold?: number | null
+}
+
+export interface AggregateStudyResult {
+  nEvents: number
+  meanCar: number[]
+  cumulativeMeanCar: number
+  tStat: number
+  pValue: number
+  individualCars: number[]
+  eventDates: string[]
+}
+
+// ── Поиск аномалий ─────────────────────────────────────────────────────────
+
+export interface AnomalyRequest {
+  ticker: string
+  model: ExpectedReturnModel
+  eventWindow: [number, number]
+  estimationWindow: number
+  outlierThreshold?: number | null
+}
+
+export interface AnomalyScanAllRequest {
+  model: ExpectedReturnModel
+  eventWindow: [number, number]
+  estimationWindow: number
+  outlierThreshold?: number | null
+}
+
+export interface AnomalyFlag {
+  code: string
+  label: string
+  severity: number
+  detail: string
+}
+
+export interface AnomalyResult {
+  eventDate: string
+  ticker: string
+  flags: AnomalyFlag[]
+  carPct: number
+  volRatio: number
+  volumeRatio: number
+  anomalyScore: number
 }
