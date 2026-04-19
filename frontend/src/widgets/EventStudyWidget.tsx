@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getEvents, getTickers, runEventStudy, runAggregateStudy } from '../api/client'
+import { getEvents, getTickers, runEventStudy } from '../api/client'
 import type {
   DividendEvent,
   EventStudyResult,
-  AggregateStudyResult,
   ExpectedReturnModel,
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
-import { AggregateCarChart } from './AggregateCarChart'
 import {
   groupEventBus,
   selectLeaderTicker,
@@ -56,9 +54,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showAggregate, setShowAggregate] = useState(false)
-  const [aggregateResult, setAggregateResult] = useState<AggregateStudyResult | null>(null)
-  const [aggregateLoading, setAggregateLoading] = useState(false)
 
   // Подписки на стор группы — авто-перерендер только на нужных изменениях
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
@@ -220,27 +215,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     }
   }
 
-  const handleAggregate = async () => {
-    if (!ticker) return
-    setAggregateLoading(true)
-    setError(null)
-    try {
-      const r = await runAggregateStudy({
-        ticker,
-        model,
-        eventWindow: [-daysBefore, daysAfter],
-        estimationWindow,
-        outlierThreshold: outlierThreshold > 0 ? outlierThreshold : null,
-      })
-      setAggregateResult(r)
-      setShowAggregate(true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setAggregateLoading(false)
-    }
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
@@ -282,19 +256,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
           disabled={isBlockedNoLeader || group === 'none'}
           group={group}
           onToggle={() => toggleShowEventsInStore(group)}
-        />
-
-        <AggregateToggleButton
-          active={showAggregate}
-          loading={aggregateLoading}
-          disabled={!ticker || isBlockedNoLeader}
-          onToggle={() => {
-            if (showAggregate) {
-              setShowAggregate(false)
-            } else {
-              handleAggregate()
-            }
-          }}
         />
 
         <label style={labelStyle}>
@@ -392,12 +353,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
             <br />
             (кнопка ⟳ на нужном графике)
           </div>
-        ) : showAggregate && aggregateResult ? (
-          <AggregateCarChart
-            result={aggregateResult}
-            daysBefore={daysBefore}
-            daysAfter={daysAfter}
-          />
         ) : result && resultWindow ? (
           <CarChart
             result={result}
@@ -471,50 +426,6 @@ function ShowEventsToggleButton({
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
         <circle cx="12" cy="12" r="3" />
       </svg>
-    </button>
-  )
-}
-
-function AggregateToggleButton({
-  active,
-  loading,
-  disabled,
-  onToggle,
-}: {
-  active: boolean
-  loading: boolean
-  disabled: boolean
-  onToggle: () => void
-}) {
-  const title = active
-    ? 'Вернуться к одиночному анализу'
-    : 'Средний CAR по всем событиям тикера'
-  return (
-    <button
-      onClick={onToggle}
-      disabled={disabled || loading}
-      title={title}
-      aria-label={title}
-      style={{
-        alignSelf: 'flex-end',
-        marginBottom: 1,
-        width: 32,
-        height: 32,
-        padding: 0,
-        border: '1px solid #d0d0d0',
-        borderRadius: 4,
-        background: active ? '#1e88e5' : 'transparent',
-        color: active ? '#ffffff' : '#666',
-        cursor: disabled || loading ? 'not-allowed' : 'pointer',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.45 : 1,
-        fontSize: 16,
-        fontWeight: 700,
-      }}
-    >
-      {loading ? '...' : '\u03A3'}
     </button>
   )
 }
