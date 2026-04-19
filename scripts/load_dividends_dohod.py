@@ -22,6 +22,9 @@ def fetch_dividends(ticker: str) -> pd.DataFrame:
     """Загружает дивиденды одного тикера с dohod.ru."""
     url = f"{BASE_URL}/{ticker.lower()}"
     resp = requests.get(url, timeout=15)
+    if resp.status_code == 404:
+        print(f"  [!] {ticker}: страница не найдена на dohod.ru")
+        return pd.DataFrame()
     resp.raise_for_status()
     resp.encoding = "utf-8"
 
