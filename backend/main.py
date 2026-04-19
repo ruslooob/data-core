@@ -187,6 +187,13 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         outlier_threshold=req.outlier_threshold,
     )
 
+    if result is None:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Недостаточно данных для анализа (слишком ранняя дата или короткая история котировок)",
+        )
+
     return EventStudyResponse(
         event_date=result.event_date.isoformat(),
         ar=result.ar,

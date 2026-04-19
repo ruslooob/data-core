@@ -15,7 +15,12 @@ import type {
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`)
+    let detail = `${response.status} ${response.statusText}`
+    try {
+      const body = await response.json()
+      if (body.detail) detail = body.detail
+    } catch { /* не JSON */ }
+    throw new Error(detail)
   }
   return response.json() as Promise<T>
 }
