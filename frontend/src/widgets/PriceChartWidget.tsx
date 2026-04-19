@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { MouseEventParams, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts'
 import { getEvents, getPrices, getTickers } from '../api/client'
 import { chartSyncBus, type WidgetGroup } from './chartSync'
@@ -254,21 +254,105 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     markersApi.setMarkers(markers)
   }, [events, activeEvent, selectedTicker, markersRef, isLeader])
 
+  const [tickerSearch, setTickerSearch] = useState('')
+  const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false)
+  const tickerDropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (tickerDropdownRef.current && !tickerDropdownRef.current.contains(e.target as Node)) {
+        setTickerDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filteredTickers = useMemo(() => {
+    if (!tickerSearch) return tickers
+    const q = tickerSearch.toUpperCase()
+    return tickers.filter((t) => t.includes(q))
+  }, [tickers, tickerSearch])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <div style={{ marginBottom: 12, flexShrink: 0 }}>
-        <label style={{ marginRight: 8, fontSize: 14 }}>Тикер:</label>
-        <select
-          value={selectedTicker}
-          onChange={(e) => setSelectedTicker(e.target.value)}
-          style={{ padding: '4px 8px', fontSize: 14 }}
-        >
-          {tickers.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+      <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <label style={{ fontSize: 14 }}>Тикер:</label>
+        <div ref={tickerDropdownRef} style={{ position: 'relative' }}>
+          <div
+            onClick={() => setTickerDropdownOpen((v) => !v)}
+            style={{
+              padding: '4px 8px',
+              fontSize: 14,
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 4,
+              minWidth: 80,
+            }}
+          >
+            <span>{selectedTicker || '—'}</span>
+            <span style={{ fontSize: 10, color: '#999' }}>{tickerDropdownOpen ? '\u25B2' : '\u25BC'}</span>
+          </div>
+          {tickerDropdownOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 2,
+              background: 'white',
+              border: '1px solid #ccc',
+              borderRadius: 6,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+              zIndex: 50,
+              minWidth: 120,
+              padding: 4,
+            }}>
+              <input
+                type="text"
+                value={tickerSearch}
+                onChange={(e) => setTickerSearch(e.target.value)}
+                placeholder="Поиск..."
+                style={{
+                  width: '100%',
+                  padding: '4px 8px',
+                  fontSize: 13,
+                  border: '1px solid #e0e0e0',
+                  borderRadius: 4,
+                  marginBottom: 4,
+                  boxSizing: 'border-box',
+                }}
+                autoFocus
+              />
+              <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                {filteredTickers.map((t) => (
+                  <div
+                    key={t}
+                    onClick={() => {
+                      setSelectedTicker(t)
+                      setTickerDropdownOpen(false)
+                      setTickerSearch('')
+                    }}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      borderRadius: 3,
+                      background: t === selectedTicker ? '#e3f2fd' : 'transparent',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f5f5')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = t === selectedTicker ? '#e3f2fd' : 'transparent')}
+                  >
+                    {t}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <SyncLeaderButton group={group} memberId={widgetId} />
       </div>
       <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>

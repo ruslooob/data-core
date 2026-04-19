@@ -26,9 +26,9 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   const [tickerSearch, setTickerSearch] = useState('')
   const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false)
   const [model, setModel] = useState<ExpectedReturnModel>('market_model')
-  const [daysBefore, setDaysBefore] = useState(10)
-  const [daysAfter, setDaysAfter] = useState(10)
-  const [estimationWindow, setEstimationWindow] = useState(200)
+  const [daysBefore, setDaysBefore] = useState<number | null>(10)
+  const [daysAfter, setDaysAfter] = useState<number | null>(10)
+  const [estimationWindow, setEstimationWindow] = useState<number | null>(200)
   const [results, setResults] = useState<AnomalyResult[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -79,6 +79,8 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
     const q = tickerSearch.toUpperCase()
     return allTickers.filter((t) => t.includes(q))
   }, [allTickers, tickerSearch])
+
+  const paramsValid = daysBefore !== null && daysAfter !== null && estimationWindow !== null
 
   const tickerLabel = isAllSelected
     ? 'Все тикеры'
@@ -274,7 +276,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
           <button
             onClick={handleScan}
             style={scanButtonStyle}
-            disabled={effectiveTickers.length === 0 || loading}
+            disabled={effectiveTickers.length === 0 || loading || !paramsValid}
           >
             Сканировать
           </button>
@@ -283,25 +285,10 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
 
       {/* Settings panel (collapsible) */}
       {showSettings && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, padding: '4px 0' }}>
-          <SliderField
-            label={`Дней до: ${daysBefore}`}
-            min={1} max={60}
-            value={daysBefore}
-            onChange={setDaysBefore}
-          />
-          <SliderField
-            label={`Дней после: ${daysAfter}`}
-            min={1} max={60}
-            value={daysAfter}
-            onChange={setDaysAfter}
-          />
-          <SliderField
-            label={`Оценочное окно: ${estimationWindow}`}
-            min={30} max={500}
-            value={estimationWindow}
-            onChange={setEstimationWindow}
-          />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: '4px 0' }}>
+          <NumberField label="До" min={1} max={60} value={daysBefore} onChange={setDaysBefore} />
+          <NumberField label="После" min={1} max={60} value={daysAfter} onChange={setDaysAfter} />
+          <NumberField label="Оцен. окно" min={30} max={500} value={estimationWindow} onChange={setEstimationWindow} />
         </div>
       )}
 
@@ -389,7 +376,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   )
 }
 
-function SliderField({
+function NumberField({
   label,
   min,
   max,
@@ -399,18 +386,30 @@ function SliderField({
   label: string
   min: number
   max: number
-  value: number
-  onChange: (v: number) => void
+  value: number | null
+  onChange: (v: number | null) => void
 }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
-      <span style={{ fontSize: 12, color: '#555' }}>{label}</span>
+    <label style={labelStyle}>
+      {label}
       <input
-        type="range"
+        type="number"
         min={min}
         max={max}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={value ?? ''}
+        onChange={(e) => {
+          const raw = e.target.value
+          if (raw === '') {
+            onChange(null)
+            return
+          }
+          const n = Number(raw)
+          if (!isNaN(n)) onChange(n)
+        }}
+        onBlur={() => {
+          if (value !== null) onChange(Math.max(min, Math.min(max, value)))
+        }}
+        style={numberInputStyle}
       />
     </label>
   )
@@ -469,6 +468,14 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid #ccc',
   borderRadius: 4,
   minWidth: 120,
+}
+
+const numberInputStyle: React.CSSProperties = {
+  padding: '6px 8px',
+  fontSize: 13,
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  width: 70,
 }
 
 const scanButtonStyle: React.CSSProperties = {

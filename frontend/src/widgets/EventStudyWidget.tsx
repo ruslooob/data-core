@@ -46,9 +46,9 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [ticker, setTicker] = useState<string>('')
   const [eventId, setEventId] = useState<string>('')
   const [model, setModel] = useState<ExpectedReturnModel>('market_model')
-  const [daysBefore, setDaysBefore] = useState(10)
-  const [daysAfter, setDaysAfter] = useState(10)
-  const [estimationWindow, setEstimationWindow] = useState(200)
+  const [daysBefore, setDaysBefore] = useState<number | null>(10)
+  const [daysAfter, setDaysAfter] = useState<number | null>(10)
+  const [estimationWindow, setEstimationWindow] = useState<number | null>(200)
   const [outlierThreshold, setOutlierThreshold] = useState(0) // 0 = выкл, 2-5 = σ
   const [result, setResult] = useState<EventStudyResult | null>(null)
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
@@ -97,6 +97,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
       if (ticker !== '') setTicker('')
     }
   }, [group, leaderTicker, tickers, ticker])
+
+  const paramsValid = daysBefore !== null && daysAfter !== null && estimationWindow !== null
 
   const tickerEvents = useMemo(
     () =>
@@ -278,14 +280,14 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         <fieldset style={fieldsetStyle}>
           <legend style={legendStyle}>Окно события</legend>
           <div style={{ display: 'flex', gap: 12 }}>
-            <SliderField label={`Дней до: ${daysBefore}`} min={1} max={60} value={daysBefore} onChange={setDaysBefore} />
-            <SliderField label={`Дней после: ${daysAfter}`} min={1} max={60} value={daysAfter} onChange={setDaysAfter} />
+            <NumberField label="До" min={1} max={60} value={daysBefore} onChange={setDaysBefore} />
+            <NumberField label="После" min={1} max={60} value={daysAfter} onChange={setDaysAfter} />
           </div>
         </fieldset>
         <fieldset style={fieldsetStyle}>
           <legend style={legendStyle}>Оценочное окно</legend>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-            <SliderField label={`Длина: ${estimationWindow}`} min={30} max={500} value={estimationWindow} onChange={setEstimationWindow} />
+            <NumberField label="Длина" min={30} max={500} value={estimationWindow} onChange={setEstimationWindow} />
             <label style={labelStyle}>
               Фильтр выбросов
               <select
@@ -306,7 +308,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         <button
           onClick={handleCalculate}
           style={calcButtonStyle}
-          disabled={!eventId || loading || isBlockedNoLeader}
+          disabled={!eventId || loading || isBlockedNoLeader || !paramsValid}
         >
           {loading ? 'Считаем…' : 'Рассчитать'}
         </button>
@@ -430,7 +432,7 @@ function ShowEventsToggleButton({
   )
 }
 
-function SliderField({
+function NumberField({
   label,
   min,
   max,
@@ -440,18 +442,30 @@ function SliderField({
   label: string
   min: number
   max: number
-  value: number
-  onChange: (v: number) => void
+  value: number | null
+  onChange: (v: number | null) => void
 }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
-      <span style={{ fontSize: 12, color: '#555' }}>{label}</span>
+    <label style={labelStyle}>
+      {label}
       <input
-        type="range"
+        type="number"
         min={min}
         max={max}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={value ?? ''}
+        onChange={(e) => {
+          const raw = e.target.value
+          if (raw === '') {
+            onChange(null)
+            return
+          }
+          const n = Number(raw)
+          if (!isNaN(n)) onChange(n)
+        }}
+        onBlur={() => {
+          if (value !== null) onChange(Math.max(min, Math.min(max, value)))
+        }}
+        style={numberInputStyle}
       />
     </label>
   )
@@ -493,6 +507,14 @@ const legendStyle: React.CSSProperties = {
   fontSize: 11,
   color: '#888',
   padding: '0 4px',
+}
+
+const numberInputStyle: React.CSSProperties = {
+  padding: '6px 8px',
+  fontSize: 13,
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  width: 70,
 }
 
 const calcButtonStyle: React.CSSProperties = {
