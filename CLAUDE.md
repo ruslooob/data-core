@@ -1,6 +1,6 @@
 # data-core
 
-Система событийного анализа (event study) влияния событий на котировки акций. Магистерская дипломная работа.
+Ра��очее место финансового аналитика: событийный анализ, поиск аномалий, исследование влияния событий на котировки акций. Магистерская дипломная работа.
 
 ## Раскладка репозитория
 
@@ -43,7 +43,7 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m uvicorn mai
 - Windows: для Vite использовать `host: '127.0.0.1'` (localhost не биндится). Перед запуском убивать зомби-процессы на занятых портах через `Stop-Process -Force`
 - Windows: если `Get-NetTCPConnection -LocalPort N` показывает PID, а `Get-Process -Id <PID>` его не находит — сокет «застрял» в ядре после форсированного убийства процесса. `taskkill /F /PID` тоже не поможет. Единственный надёжный фикс — перезагрузка. Не закапывайся в попытки убить зомби — сразу проси перезагрузить
 - Не плодить новые порты — переиспользовать те, что в спецификации (backend 8080, frontend 5173)
-- Новые time-series виджеты (графики цен/индексов/etc) строить через хук `frontend/src/widgets/useChartCore.ts`, не дублируя инициализацию chart, ResizeObserver и регистрацию в `chartSync`. Виджет добавляет только свою data-loading логику и подписки на каналы `groupRegistry`
+- Новые time-series виджеты (графики цен/индексов/etc) строить через хук `frontend/src/widgets/useChartCore.ts`, не дублируя инициализацию chart, ResizeObserver и регистрацию в `chartSync`. Виджет добавляет только свою data-loading логику и подписки на каналы `groupStore`
 
 ## Процесс разработки
 
@@ -71,4 +71,4 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m uvicorn mai
 
 ## Области компетенций проекта
 
-Event study методология, Python/pandas/numpy, Plotly/Dash, spaCy/NLP, финансовые данные. Пользователь должен оставаться в контексте этих тем — при необходимости предлагать материалы для изучения.
+Event study методология, Python/pandas/numpy, Plotly/Dash, spaCy/NLP, финансовые данные, React/TypeScript/lightweight-charts. Пользователь должен оставаться в контексте этих тем — при необходимости предлагать материалы для изучения.

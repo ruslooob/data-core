@@ -25,7 +25,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'price-chart': 'Price chart',
   'event-study': 'Event study',
   'index-chart': 'Index chart',
-  'anomaly': 'Anomaly scanner',
+  'anomaly': 'Anomaly detector',
 }
 
 const DEFAULT_WIDTH = 640
@@ -138,7 +138,7 @@ export function WidgetContainer() {
               Event study
             </button>
             <button onClick={() => addWidget('anomaly')} style={menuItemStyle}>
-              Anomaly scanner
+              Anomaly detector
             </button>
           </div>
         )}

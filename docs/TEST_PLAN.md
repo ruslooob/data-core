@@ -12,14 +12,30 @@
 - get_log_returns: возвращает pd.Series с DatetimeIndex, значения — логдоходности
 - Корректировка сплитов: цена до сплита делится на ratio
 
+### event_study.py — outlier_threshold
+- С фильтрацией estimation_std <= чем без
+- outliers_removed > 0 при наличии выбросов
+- outliers_removed = 0 при outlier_threshold=None
+
 ## P1 — важно для надёжности
 
 ### dividend_data_provider.py
-- load_dividends: возвращает list[DividendEvent], 110 событий, даты парсятся корректно
+- load_dividends: возвращает list[DividendEvent], даты парсятся корректно
 
 ### market_data_provider.py
 - load_daily_risk_free_rate: возвращает pd.Series, значения > 0, индекс — даты
 - load_market_index_log_returns: возвращает pd.Series логдоходностей, индекс — даты
+
+### anomaly_detector.py
+- detect_anomalies: возвращает AnomalyResult для валидного события, None для невалидного
+- Каждый флаг (significant_car, volume_spike, vol_spike, pre_event_car) срабатывает при превышении порога и не срабатывает ниже
+- detect_anomalies_batch: возвращает список отсортированный по anomaly_score desc
+
+### event_study.py — analyze_aggregate
+- Возвращает результат при >= 2 событиях, None при 0
+- n_events совпадает с количеством успешных анализов
+- mean_car имеет длину = размер окна
+- p_value в диапазоне [0, 1]
 
 ## P2 — интеграционные
 
@@ -31,3 +47,4 @@
 - mean_adjusted работает без market/rf
 - market_model работает с market, без rf
 - capm работает с market и rf
+- Результат None при недостаточных данных (слишком ранняя дата)
