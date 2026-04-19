@@ -14,15 +14,17 @@ const MODELS: { value: ExpectedReturnModel; label: string }[] = [
   { value: 'capm', label: 'CAPM' },
 ]
 
-type ScanMode = 'ticker' | 'all'
-
 interface AnomalyWidgetProps {
   group: WidgetGroup
 }
 
+const ALL_TICKERS_KEY = '__ALL__'
+
 export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   const [allTickers, setAllTickers] = useState<string[]>([])
-  const [ticker, setTicker] = useState('')
+  const [selectedTickers, setSelectedTickers] = useState<string[]>([ALL_TICKERS_KEY])
+  const [tickerSearch, setTickerSearch] = useState('')
+  const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false)
   const [model, setModel] = useState<ExpectedReturnModel>('market_model')
   const [daysBefore, setDaysBefore] = useState(10)
   const [daysAfter, setDaysAfter] = useState(10)
@@ -30,64 +32,89 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   const [results, setResults] = useState<AnomalyResult[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scanMode, setScanMode] = useState<ScanMode>('ticker')
   const [scanProgress, setScanProgress] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
-  const isLockedToLeader = group !== 'none' && leaderTicker !== null
-  const isBlockedNoLeader = group !== 'none' && leaderTicker === null
 
   useEffect(() => {
-    getTickers().then((ts) => {
-      setAllTickers(ts)
-      if (ts.length > 0 && !ticker) {
-        setTicker(ts.includes('LKOH') ? 'LKOH' : ts[0])
-      }
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    getTickers().then(setAllTickers)
   }, [])
 
-  const tickers = useMemo(() => {
-    if (group === 'none') return allTickers
-    if (leaderTicker) return [leaderTicker]
-    return []
-  }, [group, leaderTicker, allTickers])
-
+  // Click outside → close dropdown
   useEffect(() => {
-    if (group === 'none') {
-      if (tickers.length > 0 && !tickers.includes(ticker)) setTicker(tickers[0])
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setTickerDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const isAllSelected = selectedTickers.includes(ALL_TICKERS_KEY)
+  const effectiveTickers = isAllSelected ? allTickers : selectedTickers
+
+  const toggleTicker = (t: string) => {
+    if (t === ALL_TICKERS_KEY) {
+      // Если уже ALL → снять всё, если нет → выбрать ALL
+      setSelectedTickers((prev) =>
+        prev.includes(ALL_TICKERS_KEY) ? [] : [ALL_TICKERS_KEY],
+      )
       return
     }
-    if (leaderTicker) {
-      if (ticker !== leaderTicker) setTicker(leaderTicker)
-    } else {
-      if (ticker !== '') setTicker('')
-    }
-  }, [group, leaderTicker, tickers, ticker])
+    setSelectedTickers((prev) => {
+      const without = prev.filter((x) => x !== ALL_TICKERS_KEY)
+      if (without.includes(t)) {
+        return without.filter((x) => x !== t)
+      }
+      return [...without, t]
+    })
+  }
 
-  const handleScanTicker = async () => {
-    if (!ticker) return
+  const filteredTickers = useMemo(() => {
+    if (!tickerSearch) return allTickers
+    const q = tickerSearch.toUpperCase()
+    return allTickers.filter((t) => t.includes(q))
+  }, [allTickers, tickerSearch])
+
+  const tickerLabel = isAllSelected
+    ? 'Все тикеры'
+    : selectedTickers.length <= 3
+      ? selectedTickers.join(', ')
+      : `${selectedTickers.length} тикеров`
+
+  const handleScanSelected = async () => {
+    if (effectiveTickers.length === 0) return
     setLoading(true)
     setError(null)
+    setResults([])
     try {
-      const r = await findAnomalies({
-        ticker,
-        model,
-        eventWindow: [-daysBefore, daysAfter],
-        estimationWindow,
-      })
-      setResults(r)
+      const all: AnomalyResult[] = []
+      for (const t of effectiveTickers) {
+        setScanProgress(t)
+        const r = await findAnomalies({
+          ticker: t,
+          model,
+          eventWindow: [-daysBefore, daysAfter],
+          estimationWindow,
+        })
+        all.push(...r)
+      }
+      all.sort((a, b) => b.anomalyScore - a.anomalyScore)
+      setResults(all)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setResults([])
     } finally {
       setLoading(false)
+      setScanProgress('')
     }
   }
 
-  const handleScanAll = useCallback(async () => {
+  const handleScanAllStreaming = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -151,37 +178,66 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
     })
   }
 
-  const handleScan = scanMode === 'all' ? handleScanAll : handleScanTicker
+  const handleScan = isAllSelected ? handleScanAllStreaming : handleScanSelected
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
-      {/* Top row: mode, ticker, model, scan button */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #ccc', alignSelf: 'flex-end' }}>
-          <ModeButton active={scanMode === 'ticker'} onClick={() => setScanMode('ticker')}>
-            Один тикер
-          </ModeButton>
-          <ModeButton active={scanMode === 'all'} onClick={() => setScanMode('all')}>
-            Все тикеры
-          </ModeButton>
-        </div>
-
-        {scanMode === 'ticker' && (
-          <label style={labelStyle}>
-            Тикер{isLockedToLeader && ' (вед.)'}
-            <select
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
-              style={selectStyle}
-              disabled={isLockedToLeader || isBlockedNoLeader}
+        {/* Ticker multiselect combobox */}
+        <label style={labelStyle}>
+          Тикеры
+          <div ref={dropdownRef} style={{ position: 'relative' }}>
+            <div
+              onClick={() => setTickerDropdownOpen((v) => !v)}
+              style={{
+                ...selectStyle,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 4,
+                minWidth: 150,
+              }}
             >
-              {tickers.length === 0 && <option value="">—</option>}
-              {tickers.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </label>
-        )}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {tickerLabel}
+              </span>
+              <span style={{ fontSize: 10, color: '#999' }}>{tickerDropdownOpen ? '\u25B2' : '\u25BC'}</span>
+            </div>
+            {tickerDropdownOpen && (
+              <div style={dropdownStyle}>
+                <input
+                  type="text"
+                  value={tickerSearch}
+                  onChange={(e) => setTickerSearch(e.target.value)}
+                  placeholder="Поиск..."
+                  style={searchInputStyle}
+                  autoFocus
+                />
+                <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                  <label style={checkboxRowStyle}>
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={() => toggleTicker(ALL_TICKERS_KEY)}
+                    />
+                    <b>Все тикеры</b>
+                  </label>
+                  {filteredTickers.map((t) => (
+                    <label key={t} style={checkboxRowStyle}>
+                      <input
+                        type="checkbox"
+                        checked={isAllSelected || selectedTickers.includes(t)}
+                        onChange={() => toggleTicker(t)}
+                      />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </label>
 
         <label style={labelStyle}>
           Модель
@@ -218,9 +274,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
           <button
             onClick={handleScan}
             style={scanButtonStyle}
-            disabled={
-              (scanMode === 'ticker' && (!ticker || isBlockedNoLeader)) || loading
-            }
+            disabled={effectiveTickers.length === 0 || loading}
           >
             Сканировать
           </button>
@@ -261,21 +315,15 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
 
       {/* Results table */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {isBlockedNoLeader && scanMode === 'ticker' ? (
+        {results.length === 0 && !loading ? (
           <div style={placeholderStyle}>
-            Выберите ведущий price chart в группе
-          </div>
-        ) : results.length === 0 && !loading ? (
-          <div style={placeholderStyle}>
-            {scanMode === 'all'
-              ? 'Нажмите «Сканировать» для проверки всех тикеров'
-              : 'Нажмите «Сканировать» для проверки всех событий'}
+            Нажмите «Сканировать» для проверки событий
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #ddd', textAlign: 'left' }}>
-                {scanMode === 'all' && <th style={thStyle}>Тикер</th>}
+                <th style={thStyle}>Тикер</th>
                 <th style={thStyle}>Дата</th>
                 <th style={thStyle}>CAR%</th>
                 <th style={thStyle}>Vol</th>
@@ -300,9 +348,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
                       : r.flags.map(f => f.detail).join('\n')
                   }
                 >
-                  {scanMode === 'all' && (
-                    <td style={{ ...tdStyle, fontWeight: 600 }}>{r.ticker}</td>
-                  )}
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.ticker}</td>
                   <td style={tdStyle}>{r.eventDate}</td>
                   <td style={{
                     ...tdStyle,
@@ -340,33 +386,6 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
         )}
       </div>
     </div>
-  )
-}
-
-function ModeButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '5px 12px',
-        fontSize: 12,
-        border: 'none',
-        background: active ? '#1e88e5' : '#f5f5f5',
-        color: active ? '#fff' : '#555',
-        cursor: 'pointer',
-        fontWeight: active ? 600 : 400,
-      }}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -497,6 +516,39 @@ const thStyle: React.CSSProperties = {
 
 const tdStyle: React.CSSProperties = {
   padding: '6px 8px',
+}
+
+const dropdownStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  marginTop: 2,
+  background: 'white',
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  zIndex: 50,
+  minWidth: 180,
+  padding: 4,
+}
+
+const searchInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '4px 8px',
+  fontSize: 13,
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  marginBottom: 4,
+  boxSizing: 'border-box',
+}
+
+const checkboxRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '3px 4px',
+  fontSize: 13,
+  cursor: 'pointer',
 }
 
 const placeholderStyle: React.CSSProperties = {

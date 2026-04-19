@@ -28,6 +28,13 @@ const MODELS: { value: ExpectedReturnModel; label: string }[] = [
   { value: 'capm', label: 'CAPM' },
 ]
 
+const OUTLIER_PRESETS = [
+  { value: 0, label: 'Выкл' },
+  { value: 3, label: 'Мягкий (3σ)' },
+  { value: 2.5, label: 'Средний (2.5σ)' },
+  { value: 2, label: 'Жёсткий (2σ)' },
+]
+
 /** При зуме на event window показываем в N раз больший контекст вокруг. */
 const ZOOM_CONTEXT_FACTOR = 3
 
@@ -306,35 +313,32 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         </label>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-        <SliderField
-          label={`Дней до: ${daysBefore}`}
-          min={1}
-          max={60}
-          value={daysBefore}
-          onChange={setDaysBefore}
-        />
-        <SliderField
-          label={`Дней после: ${daysAfter}`}
-          min={1}
-          max={60}
-          value={daysAfter}
-          onChange={setDaysAfter}
-        />
-        <SliderField
-          label={`Оценочное окно: ${estimationWindow}`}
-          min={30}
-          max={500}
-          value={estimationWindow}
-          onChange={setEstimationWindow}
-        />
-        <SliderField
-          label={`Фильтр выбросов: ${outlierThreshold === 0 ? 'выкл' : outlierThreshold + 'σ'}`}
-          min={0}
-          max={5}
-          value={outlierThreshold}
-          onChange={setOutlierThreshold}
-        />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+        <fieldset style={fieldsetStyle}>
+          <legend style={legendStyle}>Окно события</legend>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <SliderField label={`Дней до: ${daysBefore}`} min={1} max={60} value={daysBefore} onChange={setDaysBefore} />
+            <SliderField label={`Дней после: ${daysAfter}`} min={1} max={60} value={daysAfter} onChange={setDaysAfter} />
+          </div>
+        </fieldset>
+        <fieldset style={fieldsetStyle}>
+          <legend style={legendStyle}>Оценочное окно</legend>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+            <SliderField label={`Длина: ${estimationWindow}`} min={30} max={500} value={estimationWindow} onChange={setEstimationWindow} />
+            <label style={labelStyle}>
+              Фильтр выбросов
+              <select
+                value={outlierThreshold}
+                onChange={(e) => setOutlierThreshold(Number(e.target.value))}
+                style={selectStyle}
+              >
+                {OUTLIER_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </fieldset>
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -565,6 +569,19 @@ const navButtonStyle: React.CSSProperties = {
   borderRadius: 6,
   background: 'white',
   cursor: 'pointer',
+}
+
+const fieldsetStyle: React.CSSProperties = {
+  border: '1px solid #e0e0e0',
+  borderRadius: 6,
+  padding: '8px 12px',
+  margin: 0,
+}
+
+const legendStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: '#888',
+  padding: '0 4px',
 }
 
 const calcButtonStyle: React.CSSProperties = {
