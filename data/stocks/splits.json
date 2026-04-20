@@ -24,15 +24,13 @@
     { "split_date": "2015-10-07", "ratio": 1000 }
   ],
   "IRAO": [
-    { "split_date": "2015-01-20", "ratio": 0.01 },
-    { "split_date": "2014-12-26", "ratio": 0.01 }
+    { "split_date": "2014-12-25", "ratio": 0.01 }
   ],
   "ABRD": [
     { "split_date": "2012-10-02", "ratio": 100 }
   ],
   "PHOR": [
-    { "split_date": "2012-02-15", "ratio": 10 },
-    { "split_date": "2011-10-28", "ratio": 10 }
+    { "split_date": "2012-03-26", "ratio": 10 }
   ],
   "ALRS": [
     { "split_date": "2011-10-14", "ratio": 10 },
@@ -57,7 +55,7 @@
     { "split_date": "2007-07-20", "ratio": 1000 },
     { "split_date": "2007-03-30", "ratio": 1.006 }
   ],
-  "SBER_p": [
+  "SBERP": [
     { "split_date": "2007-07-20", "ratio": 1000 },
     { "split_date": "2007-07-18", "ratio": 20 },
     { "split_date": "2007-03-30", "ratio": 1.006 }
@@ -65,7 +63,7 @@
   "GAZA": [
     { "split_date": "2007-03-23", "ratio": 1.081 }
   ],
-  "GAZA_p": [
+  "GAZAP": [
     { "split_date": "2007-03-23", "ratio": 1.081 }
   ],
   "NVTK": [
