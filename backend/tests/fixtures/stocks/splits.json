@@ -1,0 +1,5 @@
+{
+  "TEST_SPLIT": [
+    {"split_date": "2020-01-08", "ratio": 2.0}
+  ]
+}

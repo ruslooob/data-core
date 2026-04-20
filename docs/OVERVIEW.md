@@ -98,6 +98,7 @@ data/db/event_tags.csv  — тэгирование
 - [GLOSSARY.md](GLOSSARY.md) — глоссарий терминов
 - [TAGS.md](TAGS.md) — система тегов событий
 - [METRICS.md](METRICS.md) — интерпретация метрик
+- [EXPECTED_RETURN_MODELS.md](EXPECTED_RETURN_MODELS.md) — модели ожидаемой доходности
 - [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md) — поиск аномалий
 - [ANOMALY_DSL.md](ANOMALY_DSL.md) — язык запросов
 - [ROBUSTNESS_CHECK.md](ROBUSTNESS_CHECK.md) — проверка устойчивости

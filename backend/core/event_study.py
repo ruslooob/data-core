@@ -184,8 +184,8 @@ class EventStudy:
         # Фильтрация выбросов: fit → вычислить residuals → отсеять → refit
         if outlier_threshold is not None and outlier_threshold > 0:
             mdl_pre = _make_model(model)
-            mdl_pre.fit(stock_log_returns=stock_est, market_returns=mkt_est, rf_returns=rf_est)
-            expected_pre = mdl_pre.predict(dates=common_est, market_returns=mkt_est, rf_returns=rf_est)
+            mdl_pre.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+            expected_pre = mdl_pre.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
             residuals_pre = stock_est.values - expected_pre.values
             sigma_pre = float(np.std(residuals_pre, ddof=1)) if len(residuals_pre) > 1 else 0.0
 
@@ -203,11 +203,11 @@ class EventStudy:
         rf_ev = rf.reindex(ev_idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=ev_idx)
 
         mdl = _make_model(model)
-        mdl.fit(stock_log_returns=stock_est, market_returns=mkt_est, rf_returns=rf_est)
-        expected_ev = mdl.predict(dates=ev_idx, market_returns=mkt_ev, rf_returns=rf_ev)
+        mdl.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+        expected_ev = mdl.predict(dates=ev_idx, market_log_returns=mkt_ev, rf_log_returns=rf_ev)
 
         # σ аномальных доходностей в оценочном окне (после фильтрации)
-        expected_est = mdl.predict(dates=common_est, market_returns=mkt_est, rf_returns=rf_est)
+        expected_est = mdl.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
         residuals_est = stock_est.values - expected_est.values
         estimation_std = float(np.std(residuals_est, ddof=1)) if len(residuals_est) > 1 else 0.0
 

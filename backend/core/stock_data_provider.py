@@ -49,18 +49,18 @@ def _load_candles(csv_path: str) -> pd.DataFrame:
 _SPLITS_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks', 'splits.json')
 
 
-def get_ticker_splits(ticker: str, splits_path: str = _SPLITS_PATH) -> list[dict]:
+def get_ticker_splits(ticker: str) -> list[dict]:
     """Возвращает список сплитов по тикеру из splits.json."""
-    with open(splits_path, "r", encoding="utf-8") as f:
+    with open(_SPLITS_PATH, "r", encoding="utf-8") as f:
         splits = json.load(f)
     return splits.get(ticker, [])
 
 
-def _load_normalized_candles(ticker: str, csv_path: str, splits_path: str = _SPLITS_PATH) -> pd.DataFrame:
+def _load_normalized_candles(ticker: str, csv_path: str) -> pd.DataFrame:
     """Возвращает нормализованные данные котировок акции. Учитывает сплиты и обратные сплиты."""
     df = _load_candles(csv_path)
 
-    splits = get_ticker_splits(ticker, splits_path)
+    splits = get_ticker_splits(ticker)
 
     df["ADJ_FACTOR"] = 1.0
 
@@ -104,18 +104,38 @@ def get_candles(
         normalized: учитывать сплиты и обратные сплиты
         start_date: фильтр с даты включительно (например, '2020-01-01')
         end_date:   фильтр по дату включительно (например, '2022-12-31')
+
+    Исключения:
+        ValueError: если тикер не найден, даты невалидны или start_date > end_date.
     """
+    start_ts = _parse_date(start_date, "start_date")
+    end_ts = _parse_date(end_date, "end_date")
+
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise ValueError(
+            f"start_date ({start_date}) позже end_date ({end_date})"
+        )
+
     ticker = ticker.upper()
     file_path = _find_candles_file(ticker)
 
     df = _load_normalized_candles(ticker, file_path) if normalized else _load_candles(file_path)
 
-    if start_date is not None:
-        df = df[df['DATE'] >= pd.Timestamp(start_date)]
-    if end_date is not None:
-        df = df[df['DATE'] <= pd.Timestamp(end_date)]
+    if start_ts is not None:
+        df = df[df['DATE'] >= start_ts]
+    if end_ts is not None:
+        df = df[df['DATE'] <= end_ts]
 
     return df.reset_index(drop=True)
+
+
+def _parse_date(value: str | None, field_name: str) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    try:
+        return pd.Timestamp(value)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Невалидное значение {field_name}='{value}': {e}") from e
 
 
 def get_log_returns(
