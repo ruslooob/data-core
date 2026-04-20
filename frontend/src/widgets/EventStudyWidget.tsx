@@ -7,6 +7,7 @@ import type {
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
+import { NumberField } from './NumberField'
 import {
   groupEventBus,
   selectLeaderTicker,
@@ -126,6 +127,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
       setActiveEventInStore(group, null)
       return
     }
+    if (daysBefore === null || daysAfter === null) return
     setActiveEventInStore(group, {
       ticker: currentEvent.ticker,
       eventDate: currentEvent.eventDate,
@@ -166,6 +168,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
   const stepEvent = (delta: number) => {
     if (tickerEvents.length === 0) return
+    if (daysBefore === null || daysAfter === null) return
     const next = Math.max(0, Math.min(tickerEvents.length - 1, currentIdx + delta))
     const ev = tickerEvents[next]
     setEventId(ev.id)
@@ -190,6 +193,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const handleCalculate = async () => {
     const ev = tickerEvents[currentIdx]
     if (!ev) return
+    if (daysBefore === null || daysAfter === null || estimationWindow === null) return
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
         from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
@@ -432,45 +436,6 @@ function ShowEventsToggleButton({
   )
 }
 
-function NumberField({
-  label,
-  min,
-  max,
-  value,
-  onChange,
-}: {
-  label: string
-  min: number
-  max: number
-  value: number | null
-  onChange: (v: number | null) => void
-}) {
-  return (
-    <label style={labelStyle}>
-      {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={value ?? ''}
-        onChange={(e) => {
-          const raw = e.target.value
-          if (raw === '') {
-            onChange(null)
-            return
-          }
-          const n = Number(raw)
-          if (!isNaN(n)) onChange(n)
-        }}
-        onBlur={() => {
-          if (value !== null) onChange(Math.max(min, Math.min(max, value)))
-        }}
-        style={numberInputStyle}
-      />
-    </label>
-  )
-}
-
 const labelStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -507,14 +472,6 @@ const legendStyle: React.CSSProperties = {
   fontSize: 11,
   color: '#888',
   padding: '0 4px',
-}
-
-const numberInputStyle: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: 13,
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  width: 70,
 }
 
 const calcButtonStyle: React.CSSProperties = {

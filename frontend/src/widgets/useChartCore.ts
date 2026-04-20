@@ -9,8 +9,15 @@ import {
   type ISeriesMarkersPluginApi,
   type MouseEventParams,
   type Time,
+  type UTCTimestamp,
 } from 'lightweight-charts'
 import { chartSyncBus, type WidgetGroup } from './chartSync'
+import { groupEventBus, useGroupStore } from './groupStore'
+
+/** Секунды Unix-эпохи для переданной даты (ISO-строка или YYYY-MM-DD). */
+export function dateToTs(d: string): UTCTimestamp {
+  return (new Date(d).getTime() / 1000) as UTCTimestamp
+}
 
 /**
  * Базовый хук для time-series виджета (price chart, index chart и т.п.).
@@ -22,8 +29,14 @@ import { chartSyncBus, type WidgetGroup } from './chartSync'
 export interface ChartCoreOptions {
   containerRef: RefObject<HTMLDivElement | null>
   group: WidgetGroup
-  /** Идентификатор виджета (для leader-aware chartSync). */
+  /** Идентификатор виджета (для leader-aware chartSync и регистрации в groupStore). */
   memberId: string
+  /**
+   * Тикер, публикуемый виджетом в groupStore. undefined/null значат
+   * «виджет не про акцию» (например, IndexChartWidget). PriceChartWidget
+   * передаёт выбранный тикер и меняет его при переключении.
+   */
+  ticker?: string | null
   withVolume?: boolean
   /** Кастомный priceFormat для серии цены (например, для процентов). */
   priceFormat?: Parameters<IChartApi['addSeries']>[1] extends infer O
@@ -47,6 +60,7 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
     containerRef,
     group,
     memberId,
+    ticker = null,
     withVolume = false,
     onBarClick,
   } = opts
@@ -161,6 +175,50 @@ export function useChartCore(opts: ChartCoreOptions): ChartCoreRefs {
   // Обновление группы при смене prop'а
   useEffect(() => {
     setGroupRef.current?.(group)
+  }, [group])
+
+  // Регистрация в groupStore (жизненный цикл участника группы)
+  useEffect(() => {
+    useGroupStore.getState().registerMember(memberId, group, ticker)
+    return () => useGroupStore.getState().unregisterMember(memberId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    useGroupStore.getState().setMemberGroup(memberId, group)
+  }, [group, memberId])
+
+  useEffect(() => {
+    useGroupStore.getState().setMemberTicker(memberId, ticker)
+  }, [ticker, memberId])
+
+  // Hover sync: внешний виджет (CarChart) публикует наведённую дату —
+  // ставим crosshair на ближайшую точку своей серии.
+  useEffect(() => {
+    if (group === 'none') return
+    return groupEventBus.subscribe(group, 'hoverDate', (date) => {
+      const chart = chartRef.current
+      const series = mainSeriesRef.current
+      if (!chart || !series) return
+      if (date === null) {
+        chart.clearCrosshairPosition()
+        return
+      }
+      const targetTs = dateToTs(date)
+      const data = series.data() as ReadonlyArray<{ time: Time; value: number }>
+      if (data.length === 0) return
+      let best = data[0]
+      let bestDiff = Math.abs((typeof best.time === 'number' ? best.time : 0) - targetTs)
+      for (let i = 1; i < data.length; i++) {
+        const t = typeof data[i].time === 'number' ? (data[i].time as number) : 0
+        const diff = Math.abs(t - targetTs)
+        if (diff < bestDiff) {
+          best = data[i]
+          bestDiff = diff
+        }
+      }
+      chart.setCrosshairPosition(best.value, best.time, series)
+    })
   }, [group])
 
   return { chartRef, mainSeriesRef, volumeSeriesRef, markersRef }

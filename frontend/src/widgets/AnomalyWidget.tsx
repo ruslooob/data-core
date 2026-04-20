@@ -2,11 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { findAnomalies, getTickers, scanAllAnomalies } from '../api/client'
 import type { AnomalyResult, ExpectedReturnModel } from '../api/types'
 import type { WidgetGroup } from './chartSync'
-import {
-  groupEventBus,
-  selectLeaderTicker,
-  useGroupStore,
-} from './groupStore'
+import { groupEventBus } from './groupStore'
+import { NumberField } from './NumberField'
 
 const MODELS: { value: ExpectedReturnModel; label: string }[] = [
   { value: 'mean_adjusted', label: 'Mean adjusted' },
@@ -36,8 +33,6 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   const [showSettings, setShowSettings] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
-
-  const leaderTicker = useGroupStore(selectLeaderTicker(group))
 
   useEffect(() => {
     getTickers().then(setAllTickers)
@@ -90,6 +85,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
 
   const handleScanSelected = async () => {
     if (effectiveTickers.length === 0) return
+    if (daysBefore === null || daysAfter === null || estimationWindow === null) return
     setLoading(true)
     setError(null)
     setResults([])
@@ -117,6 +113,7 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   }
 
   const handleScanAllStreaming = useCallback(async () => {
+    if (daysBefore === null || daysAfter === null || estimationWindow === null) return
     if (abortRef.current) abortRef.current.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -376,45 +373,6 @@ export function AnomalyWidget({ group }: AnomalyWidgetProps) {
   )
 }
 
-function NumberField({
-  label,
-  min,
-  max,
-  value,
-  onChange,
-}: {
-  label: string
-  min: number
-  max: number
-  value: number | null
-  onChange: (v: number | null) => void
-}) {
-  return (
-    <label style={labelStyle}>
-      {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={value ?? ''}
-        onChange={(e) => {
-          const raw = e.target.value
-          if (raw === '') {
-            onChange(null)
-            return
-          }
-          const n = Number(raw)
-          if (!isNaN(n)) onChange(n)
-        }}
-        onBlur={() => {
-          if (value !== null) onChange(Math.max(min, Math.min(max, value)))
-        }}
-        style={numberInputStyle}
-      />
-    </label>
-  )
-}
-
 function ScoreBar({ score }: { score: number }) {
   const pct = Math.round(score * 100)
   const color = score > 0.6 ? '#c62828' : score > 0.3 ? '#e65100' : score > 0 ? '#f9a825' : '#ccc'
@@ -468,14 +426,6 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid #ccc',
   borderRadius: 4,
   minWidth: 120,
-}
-
-const numberInputStyle: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: 13,
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  width: 70,
 }
 
 const scanButtonStyle: React.CSSProperties = {

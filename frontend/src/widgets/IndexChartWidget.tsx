@@ -5,7 +5,7 @@ import type { SeriesName } from '../api/types'
 import { type WidgetGroup } from './chartSync'
 import { groupEventBus, selectActiveEvent, useGroupStore } from './groupStore'
 import { SyncLeaderButton } from './SyncLeaderButton'
-import { useChartCore } from './useChartCore'
+import { dateToTs, useChartCore } from './useChartCore'
 
 interface IndexChartWidgetProps {
   group: WidgetGroup
@@ -15,10 +15,6 @@ const SERIES: { value: SeriesName; label: string }[] = [
   { value: 'IMOEX', label: 'IMOEX' },
   { value: 'RUONIA', label: 'RUONIA (% годовых)' },
 ]
-
-function dateToTs(d: string): UTCTimestamp {
-  return (new Date(d).getTime() / 1000) as UTCTimestamp
-}
 
 export function IndexChartWidget({ group }: IndexChartWidgetProps) {
   const widgetId = useId()
@@ -33,17 +29,6 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
     withVolume: false,
   })
 
-  // Регистрация в groupStore (без тикера — индекс не публикует тикер)
-  useEffect(() => {
-    useGroupStore.getState().registerMember(widgetId, group, null)
-    return () => useGroupStore.getState().unregisterMember(widgetId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    useGroupStore.getState().setMemberGroup(widgetId, group)
-  }, [group, widgetId])
-
   // Загрузка ряда
   useEffect(() => {
     const ps = mainSeriesRef.current
@@ -53,34 +38,6 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
       chartRef.current?.timeScale().fitContent()
     })
   }, [series, chartRef, mainSeriesRef])
-
-  // Hover sync (CarChart → crosshair на индексе)
-  useEffect(() => {
-    if (group === 'none') return
-    return groupEventBus.subscribe(group, 'hoverDate', (date) => {
-      const chart = chartRef.current
-      const ps = mainSeriesRef.current
-      if (!chart || !ps) return
-      if (date === null) {
-        chart.clearCrosshairPosition()
-        return
-      }
-      const targetTs = dateToTs(date)
-      const data = ps.data() as ReadonlyArray<{ time: Time; value: number }>
-      if (data.length === 0) return
-      let best = data[0]
-      let bestDiff = Math.abs((typeof best.time === 'number' ? best.time : 0) - targetTs)
-      for (let i = 1; i < data.length; i++) {
-        const t = typeof data[i].time === 'number' ? (data[i].time as number) : 0
-        const diff = Math.abs(t - targetTs)
-        if (diff < bestDiff) {
-          best = data[i]
-          bestDiff = diff
-        }
-      }
-      chart.setCrosshairPosition(best.value, best.time, ps)
-    })
-  }, [group, chartRef, mainSeriesRef])
 
   // Зум по команде ES
   useEffect(() => {
