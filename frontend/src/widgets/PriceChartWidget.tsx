@@ -38,17 +38,27 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
   const groupRef = useRef<WidgetGroup>(group)
+  const showEventsRef = useRef<boolean>(showEvents)
+  const isLeaderRef = useRef<boolean>(isLeader)
   useEffect(() => {
     eventsRef.current = events
   }, [events])
   useEffect(() => {
     groupRef.current = group
   }, [group])
+  useEffect(() => {
+    showEventsRef.current = showEvents
+  }, [showEvents])
+  useEffect(() => {
+    isLeaderRef.current = isLeader
+  }, [isLeader])
 
-  // Клик по бару → ищем ближайшее событие в ±2 дня → publish select
+  // Клик по бару → ищем ближайшее событие в ±2 дня → publish select.
+  // Срабатывает только когда маркеры отображаются (showEvents && isLeader).
   const handleBarClick = (clickedTs: number) => {
     const currentGroup = groupRef.current
     if (currentGroup === 'none') return
+    if (!showEventsRef.current || !isLeaderRef.current) return
     const evs = eventsRef.current
     if (evs.length === 0) return
     let best: DividendEvent | null = null
@@ -116,14 +126,15 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     })
   }, [selectedTicker, chartRef, mainSeriesRef, volumeSeriesRef])
 
-  // ── Дивидендные события: только если этот график — ведущий И «глазик» включён ──
+  // ── Дивидендные события: грузим всегда при смене тикера ──
+  // Видимость маркеров и срабатывание клика контролируются отдельно.
   useEffect(() => {
-    if (!isLeader || !showEvents || !selectedTicker) {
+    if (!selectedTicker) {
       setEvents([])
       return
     }
     getEvents({ ticker: selectedTicker }).then(setEvents)
-  }, [isLeader, showEvents, selectedTicker])
+  }, [selectedTicker])
 
   // ── Hover-дата от CarChart → crosshair на этом графике ──
   useEffect(() => {
@@ -208,13 +219,15 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     if (!markersApi) return
 
     const markers: SeriesMarker<Time>[] = []
-    for (const ev of events) {
-      markers.push({
-        time: dateToTs(ev.eventDate),
-        position: 'belowBar',
-        color: '#9e9e9e',
-        shape: 'arrowUp',
-      })
+    if (showEvents && isLeader) {
+      for (const ev of events) {
+        markers.push({
+          time: dateToTs(ev.eventDate),
+          position: 'belowBar',
+          color: '#9e9e9e',
+          shape: 'arrowUp',
+        })
+      }
     }
 
     if (activeEvent && isLeader && activeEvent.ticker === selectedTicker) {
@@ -252,7 +265,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
     })
 
     markersApi.setMarkers(markers)
-  }, [events, activeEvent, selectedTicker, markersRef, isLeader])
+  }, [events, activeEvent, selectedTicker, markersRef, isLeader, showEvents])
 
   const [tickerSearch, setTickerSearch] = useState('')
   const [tickerDropdownOpen, setTickerDropdownOpen] = useState(false)
@@ -275,59 +288,25 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
   }, [tickers, tickerSearch])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <label style={{ fontSize: 14 }}>Тикер:</label>
-        <div ref={tickerDropdownRef} style={{ position: 'relative' }}>
-          <div
-            onClick={() => setTickerDropdownOpen((v) => !v)}
-            style={{
-              padding: '4px 8px',
-              fontSize: 14,
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 4,
-              minWidth: 80,
-            }}
-          >
+    <div style={rootStyle}>
+      <div style={toolbarStyle}>
+        <label style={labelStyle}>Тикер:</label>
+        <div ref={tickerDropdownRef} style={tickerDropdownContainerStyle}>
+          <div onClick={() => setTickerDropdownOpen((v) => !v)} style={tickerTriggerStyle}>
             <span>{selectedTicker || '—'}</span>
-            <span style={{ fontSize: 10, color: '#999' }}>{tickerDropdownOpen ? '\u25B2' : '\u25BC'}</span>
+            <span style={arrowStyle}>{tickerDropdownOpen ? '\u25B2' : '\u25BC'}</span>
           </div>
           {tickerDropdownOpen && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              marginTop: 2,
-              background: 'white',
-              border: '1px solid #ccc',
-              borderRadius: 6,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-              zIndex: 50,
-              minWidth: 120,
-              padding: 4,
-            }}>
+            <div style={tickerDropdownPanelStyle}>
               <input
                 type="text"
                 value={tickerSearch}
                 onChange={(e) => setTickerSearch(e.target.value)}
                 placeholder="Поиск..."
-                style={{
-                  width: '100%',
-                  padding: '4px 8px',
-                  fontSize: 13,
-                  border: '1px solid #e0e0e0',
-                  borderRadius: 4,
-                  marginBottom: 4,
-                  boxSizing: 'border-box',
-                }}
+                style={searchInputStyle}
                 autoFocus
               />
-              <div style={{ maxHeight: 200, overflow: 'auto' }}>
+              <div style={optionsListStyle}>
                 {filteredTickers.map((t) => (
                   <div
                     key={t}
@@ -337,14 +316,14 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
                       setTickerSearch('')
                     }}
                     style={{
-                      padding: '4px 8px',
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      borderRadius: 3,
-                      background: t === selectedTicker ? '#e3f2fd' : 'transparent',
+                      ...optionItemBaseStyle,
+                      background: t === selectedTicker ? OPTION_BG_SELECTED : OPTION_BG_DEFAULT,
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = '#f5f5f5')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = t === selectedTicker ? '#e3f2fd' : 'transparent')}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = OPTION_BG_HOVER)}
+                    onMouseLeave={(e) => (
+                      e.currentTarget.style.background =
+                        t === selectedTicker ? OPTION_BG_SELECTED : OPTION_BG_DEFAULT
+                    )}
                   >
                     {t}
                   </div>
@@ -355,30 +334,20 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
         </div>
         <SyncLeaderButton group={group} memberId={widgetId} />
       </div>
-      <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
+      <div style={chartOuterStyle}>
         <div
           ref={containerRef}
           style={{
-            width: '100%',
-            height: '100%',
+            ...chartInnerBaseStyle,
             cursor: tooltip ? 'pointer' : 'crosshair',
           }}
         />
         {tooltip && (
           <div
             style={{
-              position: 'absolute',
+              ...tooltipBaseStyle,
               left: tooltip.x + 14,
               top: tooltip.y + 14,
-              padding: '4px 8px',
-              background: 'rgba(33, 33, 33, 0.92)',
-              color: '#fff',
-              fontSize: 12,
-              borderRadius: 4,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              zIndex: 5,
-              boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
             }}
           >
             {tooltip.text}
@@ -387,4 +356,110 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
       </div>
     </div>
   )
+}
+
+const OPTION_BG_SELECTED = '#e3f2fd'
+const OPTION_BG_HOVER = '#f5f5f5'
+const OPTION_BG_DEFAULT = 'transparent'
+
+const rootStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  flex: 1,
+  minHeight: 0,
+}
+
+const toolbarStyle: React.CSSProperties = {
+  marginBottom: 12,
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+}
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 14,
+}
+
+const tickerDropdownContainerStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
+const tickerTriggerStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  fontSize: 14,
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 4,
+  minWidth: 80,
+}
+
+const arrowStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: '#999',
+}
+
+const tickerDropdownPanelStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  marginTop: 2,
+  background: 'white',
+  border: '1px solid #ccc',
+  borderRadius: 6,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  zIndex: 50,
+  minWidth: 120,
+  padding: 4,
+}
+
+const searchInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '4px 8px',
+  fontSize: 13,
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  marginBottom: 4,
+  boxSizing: 'border-box',
+}
+
+const optionsListStyle: React.CSSProperties = {
+  maxHeight: 200,
+  overflow: 'auto',
+}
+
+const optionItemBaseStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  fontSize: 13,
+  cursor: 'pointer',
+  borderRadius: 3,
+}
+
+const chartOuterStyle: React.CSSProperties = {
+  position: 'relative',
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+}
+
+const chartInnerBaseStyle: React.CSSProperties = {
+  width: '100%',
+  height: '100%',
+}
+
+const tooltipBaseStyle: React.CSSProperties = {
+  position: 'absolute',
+  padding: '4px 8px',
+  background: 'rgba(33, 33, 33, 0.92)',
+  color: '#fff',
+  fontSize: 12,
+  borderRadius: 4,
+  pointerEvents: 'none',
+  whiteSpace: 'nowrap',
+  zIndex: 5,
+  boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
 }

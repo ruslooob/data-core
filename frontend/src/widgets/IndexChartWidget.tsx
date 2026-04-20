@@ -141,13 +141,13 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
   }, [activeEvent, markersRef])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <div style={{ marginBottom: 12, flexShrink: 0 }}>
-        <label style={{ marginRight: 8, fontSize: 14 }}>Ряд:</label>
+    <div style={rootStyle}>
+      <div style={toolbarStyle}>
+        <label style={labelStyle}>Ряд:</label>
         <select
           value={series}
           onChange={(e) => setSeries(e.target.value as SeriesName)}
-          style={{ padding: '4px 8px', fontSize: 14 }}
+          style={seriesSelectStyle}
         >
           {SERIES.map((s) => (
             <option key={s.value} value={s.value}>
@@ -157,7 +157,35 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
         </select>
         <SyncLeaderButton group={group} memberId={widgetId} />
       </div>
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+      <div ref={containerRef} style={chartContainerStyle} />
     </div>
   )
+}
+
+const rootStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  flex: 1,
+  minHeight: 0,
+}
+
+const toolbarStyle: React.CSSProperties = {
+  marginBottom: 12,
+  flexShrink: 0,
+}
+
+const labelStyle: React.CSSProperties = {
+  marginRight: 8,
+  fontSize: 14,
+}
+
+const seriesSelectStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  fontSize: 14,
+}
+
+const chartContainerStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
 }

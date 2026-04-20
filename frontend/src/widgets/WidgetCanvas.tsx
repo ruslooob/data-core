@@ -5,7 +5,7 @@ import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
-import { Widget } from './Widget'
+import { WidgetWindow } from './WidgetWindow'
 
 type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'anomaly'
 
@@ -32,7 +32,7 @@ const DEFAULT_WIDTH = 640
 const DEFAULT_HEIGHT = 480
 const TOOLBAR_OFFSET_Y = 80
 
-export function WidgetContainer() {
+export function WidgetCanvas() {
   const [widgets, setWidgets] = useState<WidgetInstance[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [topZ, setTopZ] = useState(1)
@@ -85,49 +85,12 @@ export function WidgetContainer() {
 
   return (
     <>
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          padding: '12px 20px',
-          borderBottom: '1px solid #eee',
-          position: 'sticky',
-          top: 0,
-          left: 0,
-          backgroundColor: 'white',
-          zIndex: 1000000,
-          width: '100vw',
-        }}
-      >
-        <button
-          onClick={() => setMenuOpen(!menuOpen)}
-          style={{
-            padding: '8px 16px',
-            fontSize: 14,
-            backgroundColor: '#4CAF50',
-            color: 'white',
-            border: 'none',
-            borderRadius: 6,
-            cursor: 'pointer',
-          }}
-        >
+      <div style={toolbarStyle}>
+        <button onClick={() => setMenuOpen(!menuOpen)} style={addWidgetButtonStyle}>
           + Добавить виджет
         </button>
         {menuOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 20,
-              marginTop: 4,
-              backgroundColor: 'white',
-              border: '1px solid #ddd',
-              borderRadius: 6,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-              minWidth: 200,
-              zIndex: 110,
-            }}
-          >
+          <div style={dropdownMenuStyle}>
             <button onClick={() => addWidget('price-chart')} style={menuItemStyle}>
               Price chart
             </button>
@@ -144,15 +107,9 @@ export function WidgetContainer() {
         )}
       </div>
 
-      <div
-        style={{
-          position: 'relative',
-          width: CANVAS_WIDTH,
-          height: CANVAS_HEIGHT,
-        }}
-      >
+      <div style={canvasStyle}>
         {widgets.map((w) => (
-          <Widget
+          <WidgetWindow
             key={w.id}
             title={WIDGET_TITLES[w.type]}
             initialX={w.x}
@@ -178,11 +135,47 @@ export function WidgetContainer() {
             ) : (
               <EventStudyWidget group={w.group} />
             )}
-          </Widget>
+          </WidgetWindow>
         ))}
       </div>
     </>
   )
+}
+
+const toolbarStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  padding: '12px 20px',
+  borderBottom: '1px solid #eee',
+  position: 'sticky',
+  top: 0,
+  left: 0,
+  backgroundColor: 'white',
+  zIndex: 1000000,
+  width: '100vw',
+}
+
+const addWidgetButtonStyle: React.CSSProperties = {
+  padding: '8px 16px',
+  fontSize: 14,
+  backgroundColor: '#4CAF50',
+  color: 'white',
+  border: 'none',
+  borderRadius: 6,
+  cursor: 'pointer',
+}
+
+const dropdownMenuStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 20,
+  marginTop: 4,
+  backgroundColor: 'white',
+  border: '1px solid #ddd',
+  borderRadius: 6,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  minWidth: 200,
+  zIndex: 110,
 }
 
 const menuItemStyle: React.CSSProperties = {
@@ -194,4 +187,10 @@ const menuItemStyle: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   fontSize: 14,
+}
+
+const canvasStyle: React.CSSProperties = {
+  position: 'relative',
+  width: CANVAS_WIDTH,
+  height: CANVAS_HEIGHT,
 }

@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 
-interface WidgetProps {
+interface WidgetWindowProps {
   title: string
   initialX: number
   initialY: number
@@ -13,7 +13,7 @@ interface WidgetProps {
   children: ReactNode
 }
 
-export function Widget({
+export function WidgetWindow({
   title,
   initialX,
   initialY,
@@ -24,7 +24,7 @@ export function Widget({
   onFocus,
   headerLeft,
   children,
-}: WidgetProps) {
+}: WidgetWindowProps) {
   const [position, setPosition] = useState({ x: initialX, y: initialY })
   const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null)
 

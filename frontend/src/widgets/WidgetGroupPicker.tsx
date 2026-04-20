@@ -22,7 +22,7 @@ export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
   }, [open])
 
   return (
-    <div ref={rootRef} style={{ position: 'relative' }}>
+    <div ref={rootRef} style={rootStyle}>
       <button
         onClick={(e) => {
           e.stopPropagation()
@@ -31,33 +31,13 @@ export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
         onMouseDown={(e) => e.stopPropagation()}
         title="Логическая группа"
         style={{
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
+          ...triggerButtonBaseStyle,
           backgroundColor: WIDGET_GROUP_COLORS[group],
-          border: group === 'none' ? '1px solid #999' : '1px solid rgba(0,0,0,0.2)',
-          cursor: 'pointer',
-          padding: 0,
+          border: getGroupBorder(group, false),
         }}
       />
       {open && (
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            backgroundColor: 'white',
-            border: '1px solid #ddd',
-            borderRadius: 6,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            padding: 6,
-            display: 'flex',
-            gap: 4,
-            zIndex: 200,
-          }}
-        >
+        <div onMouseDown={(e) => e.stopPropagation()} style={dropdownStyle}>
           {WIDGET_GROUPS.map((g) => (
             <button
               key={g}
@@ -68,18 +48,9 @@ export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
               }}
               title={g}
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
+                ...optionButtonBaseStyle,
                 backgroundColor: WIDGET_GROUP_COLORS[g],
-                border:
-                  g === group
-                    ? '2px solid #333'
-                    : g === 'none'
-                      ? '1px solid #999'
-                      : '1px solid rgba(0,0,0,0.2)',
-                cursor: 'pointer',
-                padding: 0,
+                border: getGroupBorder(g, g === group),
               }}
             />
           ))}
@@ -87,4 +58,45 @@ export function WidgetGroupPicker({ group, onChange }: WidgetGroupPickerProps) {
       )}
     </div>
   )
+}
+
+function getGroupBorder(g: WidgetGroup, selected: boolean): string {
+  if (selected) return '2px solid #333'
+  if (g === 'none') return '1px solid #999'
+  return '1px solid rgba(0,0,0,0.2)'
+}
+
+const rootStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
+const triggerButtonBaseStyle: React.CSSProperties = {
+  width: 16,
+  height: 16,
+  borderRadius: '50%',
+  cursor: 'pointer',
+  padding: 0,
+}
+
+const dropdownStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  marginTop: 4,
+  backgroundColor: 'white',
+  border: '1px solid #ddd',
+  borderRadius: 6,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+  padding: 6,
+  display: 'flex',
+  gap: 4,
+  zIndex: 200,
+}
+
+const optionButtonBaseStyle: React.CSSProperties = {
+  width: 18,
+  height: 18,
+  borderRadius: '50%',
+  cursor: 'pointer',
+  padding: 0,
 }

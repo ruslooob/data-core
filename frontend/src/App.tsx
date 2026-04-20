@@ -1,10 +1,10 @@
-import { WidgetContainer } from './widgets/WidgetContainer'
+import { WidgetCanvas } from './widgets/WidgetCanvas'
 import './App.css'
 
 function App() {
   return (
     <div style={{ fontFamily: 'sans-serif' }}>
-      <WidgetContainer />
+      <WidgetCanvas />
     </div>
   )
 }
