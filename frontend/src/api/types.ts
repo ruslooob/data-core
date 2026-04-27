@@ -24,6 +24,36 @@ export interface DividendEvent {
 
 export type ExpectedReturnModel = 'mean_adjusted' | 'market_model' | 'capm'
 
+// ── Precedent Query Language (PQL) ──────────────────────────────────────────
+
+export interface PrecedentSearchRequest {
+  source: string
+}
+
+export interface PrecedentColumn {
+  name: string
+  type: string
+}
+
+export interface PrecedentSearchStats {
+  truncated: boolean
+  durationMs: number
+}
+
+export type PrecedentValue = string | number | boolean | null
+
+export interface PrecedentSearchResult {
+  columns: PrecedentColumn[]
+  rows: PrecedentValue[][]
+  stats: PrecedentSearchStats
+}
+
+export interface PrecedentApiErrorDetail {
+  message: string
+  line: number | null
+  column: number | null
+}
+
 export interface EventStudyRequest {
   ticker: string
   eventDate: string

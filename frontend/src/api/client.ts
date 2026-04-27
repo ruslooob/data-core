@@ -8,9 +8,22 @@ import type {
   DividendEvent,
   EventStudyRequest,
   EventStudyResult,
+  PrecedentSearchRequest,
+  PrecedentSearchResult,
   SeriesName,
   SeriesPoint,
 } from './types'
+
+export class PrecedentApiError extends Error {
+  line: number | null
+  column: number | null
+  constructor(message: string, line: number | null, column: number | null) {
+    super(message)
+    this.name = 'PrecedentApiError'
+    this.line = line
+    this.column = column
+  }
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
@@ -125,4 +138,33 @@ export async function scanAllAnomalies(
       }
     }
   }
+}
+
+export async function searchPrecedents(
+  request: PrecedentSearchRequest,
+  signal?: AbortSignal,
+): Promise<PrecedentSearchResult> {
+  const response = await fetch('/api/precedents/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`
+    let line: number | null = null
+    let column: number | null = null
+    try {
+      const body = await response.json()
+      if (body.detail && typeof body.detail === 'object') {
+        message = body.detail.message ?? message
+        line = body.detail.line ?? null
+        column = body.detail.column ?? null
+      } else if (typeof body.detail === 'string') {
+        message = body.detail
+      }
+    } catch { /* not JSON */ }
+    throw new PrecedentApiError(message, line, column)
+  }
+  return response.json() as Promise<PrecedentSearchResult>
 }

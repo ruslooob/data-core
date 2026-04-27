@@ -3,11 +3,12 @@ import type { WidgetGroup } from './chartSync'
 import { AnomalyWidget } from './AnomalyWidget'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
+import { PrecedentEditorWidget } from './PrecedentEditorWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'anomaly'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'anomaly' | 'precedent-editor'
 
 interface WidgetInstance {
   id: string
@@ -26,6 +27,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'event-study': 'Event study',
   'index-chart': 'Index chart',
   'anomaly': 'Anomaly detector',
+  'precedent-editor': 'Precedent editor',
 }
 
 const DEFAULT_WIDTH = 640
@@ -103,6 +105,9 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('anomaly')} style={menuItemStyle}>
               Anomaly detector
             </button>
+            <button onClick={() => addWidget('precedent-editor')} style={menuItemStyle}>
+              Precedent editor
+            </button>
           </div>
         )}
       </div>
@@ -132,6 +137,8 @@ export function WidgetCanvas() {
               <IndexChartWidget group={w.group} />
             ) : w.type === 'anomaly' ? (
               <AnomalyWidget group={w.group} />
+            ) : w.type === 'precedent-editor' ? (
+              <PrecedentEditorWidget group={w.group} />
             ) : (
               <EventStudyWidget group={w.group} />
             )}
