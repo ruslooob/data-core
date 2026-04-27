@@ -25,6 +25,7 @@ from core.market_data_provider import (
     load_daily_risk_free_rate,
     load_annual_risk_free_rate,
 )
+from core.precedent_engine import create_engine as _create_precedent_engine
 from core.stock_data_provider import get_candles, get_log_returns, list_tickers
 
 # Служебные файлы, которые не являются тикерами акций
@@ -386,3 +387,88 @@ def scan_all_anomalies(req: AnomalyScanAllRequest):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ── Поиск прецедентов (PQL) ─────────────────────────────────────────────────
+
+PRECEDENT_MAX_ROWS = 1000
+
+_precedent_engine = None
+
+
+def _get_precedent_engine():
+    """Ленивая инициализация DuckDB-движка с видимой схемой PQL."""
+    global _precedent_engine
+    if _precedent_engine is None:
+        _precedent_engine = _create_precedent_engine()
+    return _precedent_engine
+
+
+def _to_json_safe(value):
+    """Конвертирует значение из DuckDB в JSON-сериализуемое."""
+    from datetime import date as _date, datetime as _dt
+    from decimal import Decimal
+    if value is None:
+        return None
+    if isinstance(value, _dt):
+        return value.isoformat()
+    if isinstance(value, _date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+class PrecedentSearchRequest(CamelModel):
+    source: str
+
+
+class PrecedentColumn(CamelModel):
+    name: str
+    type: str
+
+
+class PrecedentSearchStats(CamelModel):
+    truncated: bool
+    duration_ms: int
+
+
+class PrecedentSearchResponse(CamelModel):
+    columns: list[PrecedentColumn]
+    rows: list[list]
+    stats: PrecedentSearchStats
+
+
+@app.post("/api/precedents/search", response_model_by_alias=True)
+def search_precedents(req: PrecedentSearchRequest) -> PrecedentSearchResponse:
+    """Исполняет PQL-запрос. Жёсткий потолок MAX_ROWS=1000."""
+    import time
+    import duckdb as duckdb_module
+    from fastapi import HTTPException
+
+    con = _get_precedent_engine()
+    started_at = time.monotonic()
+
+    try:
+        cur = con.execute(req.source)
+        description = cur.description or []
+        rows = cur.fetchmany(PRECEDENT_MAX_ROWS + 1)
+    except duckdb_module.Error as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(e), "line": None, "column": None},
+        )
+
+    truncated = len(rows) > PRECEDENT_MAX_ROWS
+    if truncated:
+        rows = rows[:PRECEDENT_MAX_ROWS]
+
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    columns = [PrecedentColumn(name=col[0], type=str(col[1])) for col in description]
+    rows_safe = [[_to_json_safe(v) for v in row] for row in rows]
+
+    return PrecedentSearchResponse(
+        columns=columns,
+        rows=rows_safe,
+        stats=PrecedentSearchStats(truncated=truncated, duration_ms=duration_ms),
+    )
