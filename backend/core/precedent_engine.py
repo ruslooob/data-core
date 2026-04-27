@@ -112,7 +112,15 @@ def create_engine(
     con.register('_tags_src', tags_df)
     con.register('_event_tags_src', event_tags_df)
 
-    con.execute("CREATE TABLE events     AS SELECT * FROM _events_src")
+    # Приводим даты к DATE — иначе UDF, ожидающие DATE, не свяжутся.
+    con.execute("""
+        CREATE TABLE events AS
+        SELECT id,
+               CAST(date_start AS DATE) AS date_start,
+               CAST(date_end   AS DATE) AS date_end,
+               event
+        FROM _events_src
+    """)
     con.execute("CREATE TABLE tags       AS SELECT * FROM _tags_src")
     con.execute("CREATE TABLE event_tags AS SELECT * FROM _event_tags_src")
 
