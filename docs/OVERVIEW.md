@@ -7,6 +7,7 @@
 Основные инструменты:
 - **Событийный анализ (event study)** — точечная оценка влияния одного события на цену актива
 - **Поиск аномалий (anomaly detector)** — автоматическое обнаружение аномального поведения по набору событий и тикеров
+- **Редактор прецедентных запросов (PQL editor)** — SQL-эдитор для поиска событий по тегам и метрикам с подсветкой синтаксиса и сохранением запросов
 - **Проверка устойчивости (robustness check)** — проверка, сохраняется ли эффект при вариациях параметров *(запланирован)*
 - **Бэктест** — прогон торговых стратегий на исторических данных *(запланирован)*
 
@@ -49,6 +50,9 @@
 | `events.csv` | Все события: `id`, `date_start`, `date_end`, `event` |
 | `tags.csv` | Справочник тегов: `code`, `name`, `type` |
 | `event_tags.csv` | Связь событий и тегов: `event_id`, `tag_code` |
+| `precedent_queries.csv` | Сохранённые прецедентные запросы PQL: `id`, `name`, `source`, `created_at` |
+
+Дивидендные события импортируются из `data/stocks/dividends_all.csv` в `events.csv` через `scripts/import_dividends_to_db.py` (идемпотентен): на каждую запись создаются два события — объявление и выплата — с тегами тикера компании (type=company) и топиком (`DIVIDEND_ANNOUNCEMENT` / `DIVIDEND_PAYMENT`).
 
 ### Котировки (`data/stocks/`)
 
@@ -82,6 +86,7 @@ data/db/event_tags.csv  — тэгирование
 |--------|-----------|
 | `event_study.py` | Событийный анализ: AR, CAR, агрегированный анализ, фильтрация выбросов |
 | `anomaly_detector.py` | Поиск аномалий: significant CAR, volume spike, vol spike, pre-event movement |
+| `precedent_engine.py` | Движок PQL: in-memory DuckDB, видимая схема (events/tags/event_tags/tagged_events/precedent_queries) и UDF `car()` |
 | `expected_return_models.py` | Модели ожидаемой доходности: mean adjusted, market model, CAPM |
 | `stock_data_provider.py` | Загрузка котировок, корректировка сплитов |
 | `market_data_provider.py` | Индекс рынка (IMOEX), безрисковая ставка (RUONIA) |
