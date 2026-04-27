@@ -29,6 +29,13 @@ _DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
 EVENTS_PATH = os.path.join(_DB_DIR, 'events.csv')
 TAGS_PATH = os.path.join(_DB_DIR, 'tags.csv')
 EVENT_TAGS_PATH = os.path.join(_DB_DIR, 'event_tags.csv')
+PRECEDENT_QUERIES_PATH = os.path.join(_DB_DIR, 'precedent_queries.csv')
+
+
+def _ensure_queries_csv() -> None:
+    if not os.path.exists(PRECEDENT_QUERIES_PATH):
+        with open(PRECEDENT_QUERIES_PATH, 'w', encoding='utf-8') as f:
+            f.write('id,name,source,created_at\n')
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +107,7 @@ def create_engine(
         events_path: str = EVENTS_PATH,
         tags_path: str = TAGS_PATH,
         event_tags_path: str = EVENT_TAGS_PATH,
+        queries_path: str | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Создаёт DuckDB-соединение с зарегистрированной схемой PQL."""
     con = duckdb.connect(':memory:')
@@ -107,10 +115,15 @@ def create_engine(
     events_df = pd.read_csv(events_path, parse_dates=['date_start', 'date_end'])
     tags_df = pd.read_csv(tags_path)
     event_tags_df = pd.read_csv(event_tags_path)
+    queries_path = queries_path or PRECEDENT_QUERIES_PATH
+    if queries_path == PRECEDENT_QUERIES_PATH:
+        _ensure_queries_csv()
+    queries_df = pd.read_csv(queries_path, dtype=str, keep_default_na=False)
 
     con.register('_events_src', events_df)
     con.register('_tags_src', tags_df)
     con.register('_event_tags_src', event_tags_df)
+    con.register('_queries_src', queries_df)
 
     # Приводим даты к DATE — иначе UDF, ожидающие DATE, не свяжутся.
     con.execute("""
@@ -123,6 +136,19 @@ def create_engine(
     """)
     con.execute("CREATE TABLE tags       AS SELECT * FROM _tags_src")
     con.execute("CREATE TABLE event_tags AS SELECT * FROM _event_tags_src")
+
+    # precedent_queries — явная схема, чтобы поддерживать INSERT строковых UUID
+    # даже когда CSV пуст (иначе DuckDB вывел бы типы из пустого DataFrame).
+    con.execute("""
+        CREATE TABLE precedent_queries (
+            id         VARCHAR,
+            name       VARCHAR,
+            source     VARCHAR,
+            created_at VARCHAR
+        )
+    """)
+    if len(queries_df) > 0:
+        con.execute("INSERT INTO precedent_queries SELECT * FROM _queries_src")
 
     con.execute("""
         CREATE VIEW tagged_events AS

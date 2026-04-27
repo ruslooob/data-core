@@ -25,7 +25,10 @@ from core.market_data_provider import (
     load_daily_risk_free_rate,
     load_annual_risk_free_rate,
 )
-from core.precedent_engine import create_engine as _create_precedent_engine
+from core.precedent_engine import (
+    PRECEDENT_QUERIES_PATH,
+    create_engine as _create_precedent_engine,
+)
 from core.stock_data_provider import get_candles, get_log_returns, list_tickers
 
 # Служебные файлы, которые не являются тикерами акций
@@ -472,3 +475,67 @@ def search_precedents(req: PrecedentSearchRequest) -> PrecedentSearchResponse:
         rows=rows_safe,
         stats=PrecedentSearchStats(truncated=truncated, duration_ms=duration_ms),
     )
+
+
+# ── Сохранённые прецедентные запросы ────────────────────────────────────────
+
+class PrecedentQueryRecord(CamelModel):
+    id: str
+    name: str
+    source: str
+    created_at: str
+
+
+class PrecedentQuerySaveRequest(CamelModel):
+    name: str
+    source: str
+
+
+@app.get("/api/precedents/queries", response_model_by_alias=True)
+def list_precedent_queries() -> list[PrecedentQueryRecord]:
+    """Список сохранённых прецедентных запросов, отсортированный по дате создания (новые первыми)."""
+    con = _get_precedent_engine()
+    rows = con.execute("""
+        SELECT id, name, source, created_at FROM precedent_queries
+        ORDER BY created_at DESC
+    """).fetchall()
+    return [
+        PrecedentQueryRecord(id=r[0], name=r[1], source=r[2], created_at=r[3])
+        for r in rows
+    ]
+
+
+@app.post("/api/precedents/queries", response_model_by_alias=True, status_code=201)
+def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord:
+    """Сохраняет прецедентный запрос. Имя должно быть уникальным."""
+    import csv
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from fastapi import HTTPException
+
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Имя не может быть пустым")
+    source = req.source
+    if not source.strip():
+        raise HTTPException(status_code=400, detail="Текст запроса не может быть пустым")
+
+    con = _get_precedent_engine()
+    existing = con.execute(
+        "SELECT 1 FROM precedent_queries WHERE name = ? LIMIT 1",
+        [name],
+    ).fetchone()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Запрос с таким именем уже существует")
+
+    new_id = str(_uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    con.execute(
+        "INSERT INTO precedent_queries VALUES (?, ?, ?, ?)",
+        [new_id, name, source, created_at],
+    )
+    with open(PRECEDENT_QUERIES_PATH, 'a', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([new_id, name, source, created_at])
+
+    return PrecedentQueryRecord(id=new_id, name=name, source=source, created_at=created_at)

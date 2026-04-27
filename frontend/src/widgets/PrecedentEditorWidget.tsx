@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { PrecedentApiError, searchPrecedents } from '../api/client'
-import type { PrecedentSearchResult, PrecedentValue } from '../api/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import CodeMirror from '@uiw/react-codemirror'
+import { sql, PostgreSQL } from '@codemirror/lang-sql'
+import { Prec } from '@codemirror/state'
+import { keymap } from '@codemirror/view'
+import {
+  PrecedentApiError,
+  listPrecedentQueries,
+  savePrecedentQuery,
+  searchPrecedents,
+} from '../api/client'
+import type {
+  PrecedentQueryRecord,
+  PrecedentSearchResult,
+  PrecedentValue,
+} from '../api/types'
 import type { WidgetGroup } from './chartSync'
 
 interface PrecedentEditorWidgetProps {
@@ -26,7 +39,18 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
   const [status, setStatus] = useState<Status>('idle')
   const [result, setResult] = useState<PrecedentSearchResult | null>(null)
   const [error, setError] = useState<ErrorState | null>(null)
+  const [savedQueries, setSavedQueries] = useState<PrecedentQueryRecord[]>([])
+  const [loadOpen, setLoadOpen] = useState(false)
+  const [loadSearch, setLoadSearch] = useState('')
+  const [savePromptOpen, setSavePromptOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const [saveError, setSaveError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const sourceRef = useRef(source)
+  const loadDropdownRef = useRef<HTMLDivElement>(null)
+  const savePromptRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { sourceRef.current = source }, [source])
 
   const run = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort()
@@ -37,7 +61,7 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
     setError(null)
 
     try {
-      const r = await searchPrecedents({ source }, ctrl.signal)
+      const r = await searchPrecedents({ source: sourceRef.current }, ctrl.signal)
       if (ctrl.signal.aborted) return
       setResult(r)
       setStatus('success')
@@ -52,7 +76,7 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
       }
       setStatus('error')
     }
-  }, [source])
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -60,23 +84,116 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
     }
   }, [])
 
-  const onTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault()
-      void run()
+  // CodeMirror extensions: SQL диалект (Postgres-совместимый, как мы и решили)
+  // плюс высоко-приоритетный keymap, чтобы Ctrl+Enter не съедал стандартный insertNewline.
+  const extensions = useMemo(
+    () => [
+      sql({ dialect: PostgreSQL, upperCaseKeywords: false }),
+      Prec.highest(
+        keymap.of([
+          {
+            key: 'Mod-Enter',
+            run: () => {
+              void run()
+              return true
+            },
+          },
+        ]),
+      ),
+    ],
+    [run],
+  )
+
+  // ── Сохранённые запросы ──
+
+  const refreshSavedQueries = useCallback(async () => {
+    try {
+      const list = await listPrecedentQueries()
+      setSavedQueries(list)
+    } catch {
+      // молча — кнопки просто покажут пустой список
+    }
+  }, [])
+
+  const openLoadDropdown = () => {
+    setLoadOpen(true)
+    setLoadSearch('')
+    void refreshSavedQueries()
+  }
+
+  const onPickSavedQuery = (q: PrecedentQueryRecord) => {
+    setSource(q.source)
+    setLoadOpen(false)
+  }
+
+  const filteredSavedQueries = useMemo(() => {
+    const q = loadSearch.trim().toLowerCase()
+    if (!q) return savedQueries
+    return savedQueries.filter((x) => x.name.toLowerCase().includes(q))
+  }, [loadSearch, savedQueries])
+
+  // Click-outside для дропдауна загрузки
+  useEffect(() => {
+    if (!loadOpen) return
+    const handler = (e: MouseEvent) => {
+      if (loadDropdownRef.current && !loadDropdownRef.current.contains(e.target as Node)) {
+        setLoadOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [loadOpen])
+
+  // Click-outside для save-промпта
+  useEffect(() => {
+    if (!savePromptOpen) return
+    const handler = (e: MouseEvent) => {
+      if (savePromptRef.current && !savePromptRef.current.contains(e.target as Node)) {
+        setSavePromptOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [savePromptOpen])
+
+  const openSavePrompt = () => {
+    setSaveName('')
+    setSaveError(null)
+    setSavePromptOpen(true)
+  }
+
+  const submitSave = async () => {
+    const name = saveName.trim()
+    if (!name) {
+      setSaveError('Введите имя')
+      return
+    }
+    try {
+      const saved = await savePrecedentQuery({ name, source })
+      setSavedQueries((prev) => [saved, ...prev])
+      setSavePromptOpen(false)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
     }
   }
 
   return (
     <div style={rootStyle}>
-      <textarea
-        style={textareaStyle}
-        value={source}
-        onChange={(e) => setSource(e.target.value)}
-        onKeyDown={onTextareaKeyDown}
-        spellCheck={false}
-        placeholder="SELECT ... FROM tagged_events WHERE tag = 'LKOH' LIMIT 20"
-      />
+      <div style={editorWrapperStyle}>
+        <CodeMirror
+          value={source}
+          onChange={setSource}
+          extensions={extensions}
+          basicSetup={{
+            lineNumbers: false,
+            highlightActiveLine: false,
+            foldGutter: false,
+            bracketMatching: true,
+            autocompletion: false,
+          }}
+          style={editorStyle}
+        />
+      </div>
 
       <div style={toolbarStyle}>
         <button
@@ -87,7 +204,77 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
           {status === 'loading' ? 'Выполнение…' : 'Выполнить'}
         </button>
         <span style={hintStyle}>Ctrl+Enter</span>
-        <span style={statusStyle}>{renderStatusLine(status, result, error)}</span>
+
+        <div ref={savePromptRef} style={iconButtonContainerStyle}>
+          <button
+            style={iconButtonStyle}
+            title="Сохранить запрос"
+            onClick={openSavePrompt}
+            aria-label="Сохранить запрос"
+          >
+            <FloppyIcon />
+          </button>
+          {savePromptOpen && (
+            <div style={savePromptStyle}>
+              <input
+                type="text"
+                placeholder="Имя запроса"
+                value={saveName}
+                onChange={(e) => { setSaveName(e.target.value); setSaveError(null) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitSave()
+                  if (e.key === 'Escape') setSavePromptOpen(false)
+                }}
+                autoFocus
+                style={savePromptInputStyle}
+              />
+              <button style={savePromptButtonStyle} onClick={() => void submitSave()}>Сохранить</button>
+              {saveError && <div style={savePromptErrorStyle}>{saveError}</div>}
+            </div>
+          )}
+        </div>
+
+        <div ref={loadDropdownRef} style={iconButtonContainerStyle}>
+          <button
+            style={iconButtonStyle}
+            title="Загрузить запрос"
+            onClick={openLoadDropdown}
+            aria-label="Загрузить запрос"
+          >
+            <SearchIcon />
+          </button>
+          {loadOpen && (
+            <div style={loadDropdownStyle}>
+              <input
+                type="text"
+                placeholder="Поиск по имени"
+                value={loadSearch}
+                onChange={(e) => setLoadSearch(e.target.value)}
+                autoFocus
+                style={loadDropdownSearchStyle}
+              />
+              <div style={loadDropdownListStyle}>
+                {filteredSavedQueries.length === 0 ? (
+                  <div style={loadDropdownEmptyStyle}>
+                    {savedQueries.length === 0 ? 'Пока нет сохранённых запросов' : 'Нет совпадений'}
+                  </div>
+                ) : (
+                  filteredSavedQueries.map((q) => (
+                    <div
+                      key={q.id}
+                      onClick={() => onPickSavedQuery(q)}
+                      style={loadDropdownItemStyle}
+                    >
+                      {q.name}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <span style={statusStyle}>{renderStatusLine(status, result)}</span>
       </div>
 
       {error && (
@@ -139,17 +326,10 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
   )
 }
 
-function renderStatusLine(
-  status: Status,
-  result: PrecedentSearchResult | null,
-  error: ErrorState | null,
-): string {
-  if (status === 'loading') return ''
-  if (status === 'error' && error) return ''
+function renderStatusLine(status: Status, result: PrecedentSearchResult | null): string {
   if (status === 'success' && result) {
-    const { rows, stats } = result
-    const truncatedSuffix = stats.truncated ? ' (усечено)' : ''
-    return `Строк: ${rows.length}${truncatedSuffix} · ${stats.durationMs} мс`
+    const truncated = result.stats.truncated ? ' (усечено)' : ''
+    return `Строк: ${result.rows.length}${truncated} · ${result.stats.durationMs} мс`
   }
   return ''
 }
@@ -164,6 +344,25 @@ function formatValue(v: PrecedentValue): string {
   return String(v)
 }
 
+function FloppyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  )
+}
+
+function SearchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
+}
+
 const rootStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -173,21 +372,22 @@ const rootStyle: React.CSSProperties = {
   padding: 8,
 }
 
-const textareaStyle: React.CSSProperties = {
-  fontFamily: 'Consolas, Menlo, monospace',
-  fontSize: 13,
-  padding: 8,
+const editorWrapperStyle: React.CSSProperties = {
   border: '1px solid #ccc',
   borderRadius: 4,
-  resize: 'vertical',
-  minHeight: 120,
-  outline: 'none',
+  overflow: 'hidden',
+  flexShrink: 0,
+}
+
+const editorStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontFamily: 'Consolas, Menlo, monospace',
 }
 
 const toolbarStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 12,
+  gap: 8,
   flexShrink: 0,
 }
 
@@ -204,6 +404,108 @@ const runButtonStyle: React.CSSProperties = {
 const hintStyle: React.CSSProperties = {
   fontSize: 11,
   color: '#999',
+  marginRight: 8,
+}
+
+const iconButtonContainerStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
+const iconButtonStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  padding: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'transparent',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  color: '#555',
+  cursor: 'pointer',
+}
+
+const savePromptStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: 0,
+  background: '#fff',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  padding: 8,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  minWidth: 220,
+  zIndex: 100,
+}
+
+const savePromptInputStyle: React.CSSProperties = {
+  fontSize: 13,
+  padding: '6px 8px',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  outline: 'none',
+}
+
+const savePromptButtonStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  fontSize: 13,
+  background: '#2962FF',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 4,
+  cursor: 'pointer',
+}
+
+const savePromptErrorStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#a01919',
+}
+
+const loadDropdownStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: 0,
+  background: '#fff',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  display: 'flex',
+  flexDirection: 'column',
+  width: 280,
+  maxHeight: 280,
+  zIndex: 100,
+  overflow: 'hidden',
+}
+
+const loadDropdownSearchStyle: React.CSSProperties = {
+  fontSize: 13,
+  padding: '8px 10px',
+  border: 'none',
+  borderBottom: '1px solid #eee',
+  outline: 'none',
+}
+
+const loadDropdownListStyle: React.CSSProperties = {
+  overflowY: 'auto',
+  maxHeight: 220,
+}
+
+const loadDropdownItemStyle: React.CSSProperties = {
+  padding: '6px 12px',
+  fontSize: 13,
+  cursor: 'pointer',
+  borderBottom: '1px solid #f5f5f5',
+}
+
+const loadDropdownEmptyStyle: React.CSSProperties = {
+  padding: 12,
+  fontSize: 12,
+  color: '#999',
+  fontStyle: 'italic',
+  textAlign: 'center',
 }
 
 const statusStyle: React.CSSProperties = {
@@ -260,11 +562,9 @@ const tdStyle: React.CSSProperties = {
 }
 
 const nullCellStyle: React.CSSProperties = {
-  ...{
-    padding: '4px 10px',
-    borderBottom: '1px solid #f0f0f0',
-    whiteSpace: 'nowrap',
-  },
+  padding: '4px 10px',
+  borderBottom: '1px solid #f0f0f0',
+  whiteSpace: 'nowrap',
   color: '#bbb',
   fontStyle: 'italic',
 }

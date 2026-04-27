@@ -54,6 +54,18 @@ export interface PrecedentApiErrorDetail {
   column: number | null
 }
 
+export interface PrecedentQueryRecord {
+  id: string
+  name: string
+  source: string
+  createdAt: string
+}
+
+export interface PrecedentQuerySaveRequest {
+  name: string
+  source: string
+}
+
 export interface EventStudyRequest {
   ticker: string
   eventDate: string

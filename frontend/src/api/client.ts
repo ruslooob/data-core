@@ -8,6 +8,8 @@ import type {
   DividendEvent,
   EventStudyRequest,
   EventStudyResult,
+  PrecedentQueryRecord,
+  PrecedentQuerySaveRequest,
   PrecedentSearchRequest,
   PrecedentSearchResult,
   SeriesName,
@@ -173,4 +175,18 @@ export async function searchPrecedents(
     throw new PrecedentApiError(message, line, column)
   }
   return response.json() as Promise<PrecedentSearchResult>
+}
+
+export function listPrecedentQueries(): Promise<PrecedentQueryRecord[]> {
+  return fetchJson<PrecedentQueryRecord[]>('/api/precedents/queries')
+}
+
+export function savePrecedentQuery(
+  request: PrecedentQuerySaveRequest,
+): Promise<PrecedentQueryRecord> {
+  return fetchJson<PrecedentQueryRecord>('/api/precedents/queries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
 }
