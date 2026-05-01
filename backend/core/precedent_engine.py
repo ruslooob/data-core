@@ -121,21 +121,26 @@ class PrecedentEngine:
         return float(result.car)
 
     def _register_car(self) -> None:
-        """Регистрирует UDF _car_impl и макрос car() с дефолтными параметрами.
+        """Регистрирует UDF и макросы для PQL: car, vol_ratio, volume_ratio.
 
         DuckDB шарит каталог функций между одновременно открытыми соединениями
         к одному файлу. Если функция уже зарегистрирована — это не ошибка.
         """
-        try:
-            self.con.create_function(
-                '_car_impl',
-                self._car_impl,
-                ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
-                'DOUBLE',
-                null_handling='special',
-            )
-        except duckdb.CatalogException:
-            pass
+        self._safe_create_function(
+            '_car_impl',
+            self._car_impl,
+            ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
+        )
+        self._safe_create_function(
+            '_vol_ratio_impl',
+            self._stocks.vol_ratio,
+            ['VARCHAR', 'DATE', 'INTEGER', 'INTEGER'],
+        )
+        self._safe_create_function(
+            '_volume_ratio_impl',
+            self._stocks.volume_ratio,
+            ['VARCHAR', 'DATE', 'INTEGER', 'INTEGER'],
+        )
 
         self.con.execute("""
             CREATE OR REPLACE TEMP MACRO car(
@@ -150,3 +155,26 @@ class PrecedentEngine:
                 model, window_before, window_after, estimation, outlier_threshold
             )
         """)
+        self.con.execute("""
+            CREATE OR REPLACE TEMP MACRO vol_ratio(
+                ticker, event_date,
+                window_before := 5,
+                window_after := 5
+            ) AS _vol_ratio_impl(ticker, event_date, window_before, window_after)
+        """)
+        self.con.execute("""
+            CREATE OR REPLACE TEMP MACRO volume_ratio(
+                ticker, event_date,
+                window_before := 5,
+                window_after := 5
+            ) AS _volume_ratio_impl(ticker, event_date, window_before, window_after)
+        """)
+
+    def _safe_create_function(self, name: str, fn, argtypes: list[str]) -> None:
+        """create_function с проглатыванием CatalogException (функция уже есть в каталоге)."""
+        try:
+            self.con.create_function(
+                name, fn, argtypes, 'DOUBLE', null_handling='special',
+            )
+        except duckdb.CatalogException:
+            pass
