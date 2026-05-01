@@ -1,9 +1,6 @@
 import type {
   AggregateStudyRequest,
   AggregateStudyResult,
-  AnomalyRequest,
-  AnomalyResult,
-  AnomalyScanAllRequest,
   Candle,
   DividendEvent,
   EventStudyRequest,
@@ -91,55 +88,6 @@ export function runAggregateStudy(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })
-}
-
-export function findAnomalies(
-  request: AnomalyRequest,
-): Promise<AnomalyResult[]> {
-  return fetchJson<AnomalyResult[]>('/api/anomalies', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  })
-}
-
-export async function scanAllAnomalies(
-  request: AnomalyScanAllRequest,
-  onResult: (result: AnomalyResult) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch('/api/anomalies/scan-all', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-    signal,
-  })
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`)
-  }
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const payload = line.slice(6).trim()
-      if (payload === '[DONE]') return
-      try {
-        onResult(JSON.parse(payload) as AnomalyResult)
-      } catch {
-        // skip malformed
-      }
-    }
-  }
 }
 
 export async function searchPrecedents(

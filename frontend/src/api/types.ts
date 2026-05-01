@@ -104,36 +104,3 @@ export interface AggregateStudyResult {
   eventDates: string[]
 }
 
-// ── Поиск аномалий ─────────────────────────────────────────────────────────
-
-export interface AnomalyRequest {
-  ticker: string
-  model: ExpectedReturnModel
-  eventWindow: [number, number]
-  estimationWindow: number
-  outlierThreshold?: number | null
-}
-
-export interface AnomalyScanAllRequest {
-  model: ExpectedReturnModel
-  eventWindow: [number, number]
-  estimationWindow: number
-  outlierThreshold?: number | null
-}
-
-export interface AnomalyFlag {
-  code: string
-  label: string
-  severity: number
-  detail: string
-}
-
-export interface AnomalyResult {
-  eventDate: string
-  ticker: string
-  flags: AnomalyFlag[]
-  carPct: number
-  volRatio: number
-  volumeRatio: number
-  anomalyScore: number
-}
