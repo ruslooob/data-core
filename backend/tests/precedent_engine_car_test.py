@@ -7,12 +7,9 @@ from datetime import date
 import pytest
 
 from core.event_study import EventStudy
-from core.market_data_provider import (
-    load_daily_risk_free_rate,
-    load_market_index_log_returns,
-)
+from core.market_data_provider import MarketDataProvider
 from core.precedent_engine import create_engine
-from core.stock_data_provider import get_log_returns
+from core.stock_data_provider import StockDataProvider
 
 TICKER = 'LKOH'
 EVENT_DATE = date(2022, 12, 16)
@@ -26,17 +23,17 @@ def con():
 
 @pytest.fixture(scope='module')
 def stock_returns():
-    return get_log_returns(TICKER)
+    return StockDataProvider().get_log_returns(TICKER)
 
 
 @pytest.fixture(scope='module')
 def market_returns():
-    return load_market_index_log_returns()
+    return MarketDataProvider().load_market_index_log_returns()
 
 
 @pytest.fixture(scope='module')
 def rf_returns():
-    return load_daily_risk_free_rate()
+    return MarketDataProvider().load_daily_risk_free_rate()
 
 
 def _direct_car(

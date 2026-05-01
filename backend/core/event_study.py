@@ -75,7 +75,7 @@ class EventStudy:
 
     Пример::
 
-        study = EventStudy(stock_log_returns=get_log_returns('LKOH', start_date='2013-01-01'))
+        study = EventStudy(stock_log_returns=StockDataProvider().get_log_returns('LKOH', start_date='2013-01-01'))
         result = study.analyze(
             event_date=date(2018, 5, 14),
             model='market_model',

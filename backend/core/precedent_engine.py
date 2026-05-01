@@ -18,11 +18,8 @@ import duckdb
 import pandas as pd
 
 from core.event_study import EventStudy
-from core.market_data_provider import (
-    load_daily_risk_free_rate,
-    load_market_index_log_returns,
-)
-from core.stock_data_provider import get_log_returns
+from core.market_data_provider import MarketDataProvider
+from core.stock_data_provider import StockDataProvider
 
 _DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
 APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
@@ -30,21 +27,26 @@ APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
 
 # ---------------------------------------------------------------------------
 # Кеши данных для UDF car(): один раз загружаем ряды доходностей за процесс.
+# В редакторе PQL контекст пост-факт-анализа — поставщики без max_date.
 # ---------------------------------------------------------------------------
+
+_stocks = StockDataProvider()
+_market = MarketDataProvider()
+
 
 @lru_cache(maxsize=128)
 def _stock_log_returns(ticker: str) -> pd.Series:
-    return get_log_returns(ticker)
+    return _stocks.get_log_returns(ticker)
 
 
 @lru_cache(maxsize=1)
 def _market_log_returns() -> pd.Series:
-    return load_market_index_log_returns()
+    return _market.load_market_index_log_returns()
 
 
 @lru_cache(maxsize=1)
 def _rf_log_returns() -> pd.Series:
-    return load_daily_risk_free_rate()
+    return _market.load_daily_risk_free_rate()
 
 
 # ---------------------------------------------------------------------------

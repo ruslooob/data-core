@@ -17,18 +17,19 @@ class CamelModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 from core.anomaly_detector import detect_anomalies_batch, AnomalyResult as AnomalyResultCore
-from core.dividend_data_provider import load_dividends
+from core.dividend_data_provider import DividendDataProvider
 from core.event_study import EventStudy, AggregateStudyResult
-from core.market_data_provider import (
-    load_market_index_log_returns,
-    load_market_index_prices,
-    load_daily_risk_free_rate,
-    load_annual_risk_free_rate,
-)
+from core.market_data_provider import MarketDataProvider
 from core.precedent_engine import (
     create_engine as _create_precedent_engine,
 )
-from core.stock_data_provider import get_candles, get_log_returns, list_tickers
+from core.stock_data_provider import StockDataProvider
+
+# Дефолтные провайдеры без max_date — для эндпоинтов API, где режим
+# отсутствия подглядывания в будущее не требуется.
+_stocks = StockDataProvider()
+_market = MarketDataProvider()
+_dividends = DividendDataProvider()
 
 # Служебные файлы, которые не являются тикерами акций
 _NON_TICKER_FILES = {"DIVIDENDS", "IMOEX", "RUONIA", "SPLITS"}
@@ -52,7 +53,7 @@ def health() -> dict:
 @app.get("/api/tickers")
 def get_tickers() -> list[str]:
     """Возвращает список доступных тикеров акций (без служебных файлов)."""
-    return [t for t in list_tickers() if t not in _NON_TICKER_FILES]
+    return [t for t in _stocks.list_tickers() if t not in _NON_TICKER_FILES]
 
 
 # Все DTO-эндпоинты сериализуют JSON через by_alias=True (camelCase)
@@ -74,7 +75,7 @@ def get_prices(
         end_date: str | None = Query(None, alias="endDate"),
 ) -> list[Candle]:
     """Возвращает OHLCV-котировки для тикера."""
-    df = get_candles(ticker, normalized=True, start_date=start_date, end_date=end_date)
+    df = _stocks.get_candles(ticker, normalized=True, start_date=start_date, end_date=end_date)
     return [
         Candle(
             date=row.DATE.strftime("%Y-%m-%d"),
@@ -94,8 +95,8 @@ class SeriesPoint(CamelModel):
 
 
 _SERIES_LOADERS = {
-    "IMOEX": load_market_index_prices,
-    "RUONIA": load_annual_risk_free_rate,
+    "IMOEX": _market.load_market_index_prices,
+    "RUONIA": _market.load_annual_risk_free_rate,
 }
 
 
@@ -131,7 +132,7 @@ def get_events(
     """Возвращает список дивидендных событий с опциональной фильтрацией."""
     import pandas as pd
 
-    events = load_dividends()
+    events = _dividends.load_dividends()
     start_ts = pd.Timestamp(start_date) if start_date else None
     end_ts = pd.Timestamp(end_date) if end_date else None
 
@@ -175,9 +176,9 @@ class EventStudyResponse(CamelModel):
 @app.post("/api/event-study", response_model_by_alias=True)
 def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
     """Рассчитывает AR и CAR для одного события."""
-    stock_log_returns = get_log_returns(req.ticker)
-    market = load_market_index_log_returns()
-    rf = load_daily_risk_free_rate()
+    stock_log_returns = _stocks.get_log_returns(req.ticker)
+    market = _market.load_market_index_log_returns()
+    rf = _market.load_daily_risk_free_rate()
 
     study = EventStudy(stock_log_returns=stock_log_returns)
     result = study.analyze(
@@ -230,11 +231,11 @@ class AggregateStudyResponse(CamelModel):
 @app.post("/api/event-study/aggregate", response_model_by_alias=True)
 def run_aggregate_study(req: AggregateStudyRequest) -> AggregateStudyResponse:
     """Агрегированный event study: средний CAR по всем событиям тикера."""
-    stock_log_returns = get_log_returns(req.ticker)
-    market = load_market_index_log_returns()
-    rf = load_daily_risk_free_rate()
+    stock_log_returns = _stocks.get_log_returns(req.ticker)
+    market = _market.load_market_index_log_returns()
+    rf = _market.load_daily_risk_free_rate()
 
-    events = load_dividends()
+    events = _dividends.load_dividends()
     event_dates = [e.event_date for e in events if e.ticker == req.ticker.upper()]
 
     study = EventStudy(stock_log_returns=stock_log_returns)
@@ -293,12 +294,12 @@ class AnomalyResultOut(CamelModel):
 @app.post("/api/anomalies", response_model_by_alias=True)
 def find_anomalies(req: AnomalyRequest) -> list[AnomalyResultOut]:
     """Батч-проверка всех событий тикера на аномалии."""
-    stock_log_returns = get_log_returns(req.ticker)
-    market = load_market_index_log_returns()
-    rf = load_daily_risk_free_rate()
-    candles_df = get_candles(req.ticker, normalized=True)
+    stock_log_returns = _stocks.get_log_returns(req.ticker)
+    market = _market.load_market_index_log_returns()
+    rf = _market.load_daily_risk_free_rate()
+    candles_df = _stocks.get_candles(req.ticker, normalized=True)
 
-    events = load_dividends()
+    events = _dividends.load_dividends()
     event_dates = [e.event_date for e in events if e.ticker == req.ticker.upper()]
 
     study = EventStudy(stock_log_returns=stock_log_returns)
@@ -356,10 +357,10 @@ def scan_all_anomalies(req: AnomalyScanAllRequest):
     import json
     from fastapi.responses import StreamingResponse
 
-    stock_tickers = [t for t in list_tickers() if t not in _NON_TICKER_FILES]
-    all_events = load_dividends()
-    market = load_market_index_log_returns()
-    rf = load_daily_risk_free_rate()
+    stock_tickers = [t for t in _stocks.list_tickers() if t not in _NON_TICKER_FILES]
+    all_events = _dividends.load_dividends()
+    market = _market.load_market_index_log_returns()
+    rf = _market.load_daily_risk_free_rate()
 
     def generate():
         for ticker in stock_tickers:
@@ -367,8 +368,8 @@ def scan_all_anomalies(req: AnomalyScanAllRequest):
             if not event_dates:
                 continue
             try:
-                stock_lr = get_log_returns(ticker)
-                candles_df = get_candles(ticker, normalized=True)
+                stock_lr = _stocks.get_log_returns(ticker)
+                candles_df = _stocks.get_candles(ticker, normalized=True)
                 study = EventStudy(stock_log_returns=stock_lr)
                 results = detect_anomalies_batch(
                     ticker=ticker,
