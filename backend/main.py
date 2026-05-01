@@ -26,7 +26,6 @@ from core.market_data_provider import (
     load_annual_risk_free_rate,
 )
 from core.precedent_engine import (
-    PRECEDENT_QUERIES_PATH,
     create_engine as _create_precedent_engine,
 )
 from core.stock_data_provider import get_candles, get_log_returns, list_tickers
@@ -508,7 +507,6 @@ def list_precedent_queries() -> list[PrecedentQueryRecord]:
 @app.post("/api/precedents/queries", response_model_by_alias=True, status_code=201)
 def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord:
     """Сохраняет прецедентный запрос. Имя должно быть уникальным."""
-    import csv
     import uuid as _uuid
     from datetime import datetime, timezone
     from fastapi import HTTPException
@@ -534,8 +532,5 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
         "INSERT INTO precedent_queries VALUES (?, ?, ?, ?)",
         [new_id, name, source, created_at],
     )
-    with open(PRECEDENT_QUERIES_PATH, 'a', encoding='utf-8', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([new_id, name, source, created_at])
 
     return PrecedentQueryRecord(id=new_id, name=name, source=source, created_at=created_at)

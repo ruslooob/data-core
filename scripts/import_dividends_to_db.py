@@ -1,4 +1,4 @@
-"""Импорт дивидендов из data/stocks/dividends_all.csv в data/db/.
+"""Импорт дивидендов из data/stocks/dividends_all.csv в data/db/data-core.duckdb.
 
 На каждую запись создаётся ДВА события:
     - объявление (на announcement_date) с тегом DIVIDEND_ANNOUNCEMENT
@@ -8,28 +8,35 @@
 type='company' и name из имени файла котировок (TICKER_Name_1day_*.txt).
 Тег топика (DIVIDEND_ANNOUNCEMENT / DIVIDEND_PAYMENT) имеет type='topic'.
 
-Идемпотентен: повторный запуск не плодит дубликатов. Стабильность достигается
-через uuid5 от строки '<kind>_<ticker>_<iso_date>' и проверку существования
-тегов по паре (code, type) + связей по паре (event_id, tag_code).
+Идемпотентен: повторный запуск не плодит дубликатов. Стабильность через
+uuid5(NAMESPACE, '<kind>_<ticker>_<iso_date>') и ON CONFLICT DO NOTHING.
 
 Запуск: python scripts/import_dividends_to_db.py
 """
 from __future__ import annotations
 
+import io
 import os
+import sys
 import uuid
 from glob import glob
 from pathlib import Path
 
+import duckdb
 import pandas as pd
+
+# Windows-консоль может быть в cp1251 — заворачиваем stdout/stderr в utf-8.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 ROOT = Path(__file__).resolve().parents[1]
 DIVIDENDS_FILE = ROOT / 'data' / 'stocks' / 'dividends_all.csv'
 STOCKS_DIR = ROOT / 'data' / 'stocks'
-DB_DIR = ROOT / 'data' / 'db'
-EVENTS_FILE = DB_DIR / 'events.csv'
-TAGS_FILE = DB_DIR / 'tags.csv'
-EVENT_TAGS_FILE = DB_DIR / 'event_tags.csv'
+DB_FILE = ROOT / 'data' / 'db' / 'data-core.duckdb'
 
 NAMESPACE = uuid.UUID('00dc6acf-fc00-4000-8000-000000000000')
 
@@ -54,6 +61,10 @@ def find_company_name(ticker: str) -> str:
 
 
 def main() -> None:
+    if not DB_FILE.exists():
+        print(f'Ошибка: {DB_FILE} не существует. Сначала запустите migrate_csv_to_duckdb.py.')
+        sys.exit(1)
+
     div = pd.read_csv(
         DIVIDENDS_FILE,
         dtype={'ticker': str, 'announcement_date': str,
@@ -66,22 +77,23 @@ def main() -> None:
         div['payment_date'], dayfirst=True, errors='coerce',
     )
 
-    events = pd.read_csv(EVENTS_FILE, dtype=str, keep_default_na=False)
-    tags = pd.read_csv(TAGS_FILE, dtype=str, keep_default_na=False)
-    event_tags = pd.read_csv(EVENT_TAGS_FILE, dtype=str, keep_default_na=False)
+    con = duckdb.connect(str(DB_FILE))
 
-    existing_event_ids = set(events['id'])
-    existing_tag_keys = set(zip(tags['code'], tags['type']))
-    existing_pairs = set(zip(event_tags['event_id'], event_tags['tag_code']))
+    existing_event_ids = {r[0] for r in con.execute("SELECT id FROM events").fetchall()}
+    existing_tag_keys = {(r[0], r[1]) for r in con.execute("SELECT code, type FROM tags").fetchall()}
+    existing_pairs = {
+        (r[0], r[1])
+        for r in con.execute("SELECT event_id, tag_code FROM event_tags").fetchall()
+    }
 
-    new_events: list[dict] = []
-    new_tags: list[dict] = []
-    new_pairs: list[dict] = []
+    new_events: list[tuple] = []
+    new_tags: list[tuple] = []
+    new_pairs: list[tuple] = []
 
     # Топик-теги
     for code in (TAG_DIVIDEND_ANNOUNCEMENT, TAG_DIVIDEND_PAYMENT):
         if (code, 'topic') not in existing_tag_keys:
-            new_tags.append({'code': code, 'name': '', 'type': 'topic'})
+            new_tags.append((code, '', 'topic'))
             existing_tag_keys.add((code, 'topic'))
 
     for _, row in div.iterrows():
@@ -91,11 +103,7 @@ def main() -> None:
         ticker = str(ticker_raw).upper()
 
         if (ticker, 'company') not in existing_tag_keys:
-            new_tags.append({
-                'code': ticker,
-                'name': find_company_name(ticker),
-                'type': 'company',
-            })
+            new_tags.append((ticker, find_company_name(ticker), 'company'))
             existing_tag_keys.add((ticker, 'company'))
 
         try:
@@ -117,28 +125,42 @@ def main() -> None:
                 amount_str = f"{amount:.2f}" if amount is not None else '?'
                 action = 'Объявление' if kind == 'DIVIDEND_ANNOUNCEMENT' else 'Выплата'
                 year_part = f' за {year} год' if year else ''
-                new_events.append({
-                    'id': event_id,
-                    'date_start': iso,
-                    'date_end': '',
-                    'event': f"{action} дивидендов {ticker}: {amount_str} ₽{year_part}",
-                })
+                new_events.append((
+                    event_id,
+                    iso,
+                    None,
+                    f"{action} дивидендов {ticker}: {amount_str} ₽{year_part}",
+                ))
                 existing_event_ids.add(event_id)
 
             for tag_code in (ticker, topic_tag):
                 if (event_id, tag_code) not in existing_pairs:
-                    new_pairs.append({'event_id': event_id, 'tag_code': tag_code})
+                    new_pairs.append((event_id, tag_code))
                     existing_pairs.add((event_id, tag_code))
 
-    if new_tags:
-        tags = pd.concat([tags, pd.DataFrame(new_tags)], ignore_index=True)
-        tags.to_csv(TAGS_FILE, index=False)
-    if new_events:
-        events = pd.concat([events, pd.DataFrame(new_events)], ignore_index=True)
-        events.to_csv(EVENTS_FILE, index=False)
-    if new_pairs:
-        event_tags = pd.concat([event_tags, pd.DataFrame(new_pairs)], ignore_index=True)
-        event_tags.to_csv(EVENT_TAGS_FILE, index=False)
+    try:
+        con.execute("BEGIN")
+        if new_tags:
+            con.executemany(
+                "INSERT INTO tags (code, name, type) VALUES (?, ?, ?)",
+                new_tags,
+            )
+        if new_events:
+            con.executemany(
+                "INSERT INTO events (id, date_start, date_end, event) VALUES (?, ?, ?, ?)",
+                new_events,
+            )
+        if new_pairs:
+            con.executemany(
+                "INSERT INTO event_tags (event_id, tag_code) VALUES (?, ?)",
+                new_pairs,
+            )
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    finally:
+        con.close()
 
     print(f"Тегов добавлено:    {len(new_tags)}")
     print(f"Событий добавлено:  {len(new_events)}")

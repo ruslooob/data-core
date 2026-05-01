@@ -1,28 +1,40 @@
 """Тесты HTTP-эндпоинтов для сохранения и чтения прецедентных запросов.
 
-Используется фикстура с временным CSV — основная БД не затрагивается.
+Используется временная DuckDB-база с такой же схемой, что и продакшен — основная
+data-core.duckdb не затрагивается.
 """
 from __future__ import annotations
 
-import importlib
-
+import duckdb
 import pytest
+
+
+def _create_test_db(path: str) -> None:
+    """Создаёт временный DuckDB-файл с минимальной схемой для тестов API сохранения."""
+    con = duckdb.connect(path)
+    con.execute("""
+        CREATE TABLE precedent_queries (
+            id         VARCHAR PRIMARY KEY,
+            name       VARCHAR NOT NULL UNIQUE,
+            source     TEXT    NOT NULL,
+            created_at VARCHAR NOT NULL
+        )
+    """)
+    con.close()
 
 
 @pytest.fixture(autouse=True)
 def reset_precedent_engine(monkeypatch, tmp_path):
-    """Подменяет PRECEDENT_QUERIES_PATH на временный файл и сбрасывает singleton движка."""
-    from core import precedent_engine
-    from main import _get_precedent_engine  # noqa: F401
+    """Подменяет APP_DB_PATH на временный файл и сбрасывает singleton движка."""
+    tmp_db = tmp_path / 'data-core.duckdb'
+    _create_test_db(str(tmp_db))
 
-    tmp_csv = tmp_path / 'precedent_queries.csv'
-    monkeypatch.setattr(precedent_engine, 'PRECEDENT_QUERIES_PATH', str(tmp_csv))
+    from core import precedent_engine
+    monkeypatch.setattr(precedent_engine, 'APP_DB_PATH', str(tmp_db))
 
     import main
-    monkeypatch.setattr(main, 'PRECEDENT_QUERIES_PATH', str(tmp_csv))
     monkeypatch.setattr(main, '_precedent_engine', None)
     yield
-    # cleanup singleton после теста
     monkeypatch.setattr(main, '_precedent_engine', None)
 
 
@@ -30,7 +42,6 @@ def reset_precedent_engine(monkeypatch, tmp_path):
 def client():
     from fastapi.testclient import TestClient
     import main
-    importlib.reload(main)  # перезагрузка чтобы взять monkeypatched пути — не строго нужно, но безопасно
     return TestClient(main.app)
 
 

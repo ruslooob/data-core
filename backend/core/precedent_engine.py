@@ -1,13 +1,12 @@
 """Движок языка поиска прецедентов (Precedent Query Language, PQL).
 
-Создаёт DuckDB-соединение и регистрирует видимую схему PQL:
-    - таблицы events / tags / event_tags (загружаются из CSV);
-    - представление tagged_events (events JOIN event_tags JOIN tags);
-    - SQL-функцию car() — обёртка над EventStudy.analyze.
+Открывает соединение с единой DuckDB-базой проекта (data/db/data-core.duckdb),
+в которой персистентно лежат таблицы events / tags / event_tags / precedent_queries
+и представление tagged_events.
 
-Промежуточный движок — DuckDB (in-memory). Никаких DuckDB-only расширений
-не используем: всё, что в схеме и в SQL — стандартный SQL, переносимый
-в Postgres при будущей миграции.
+Дополнительно регистрирует SQL-функцию car() — обёртку над EventStudy.analyze.
+UDF и макросы DuckDB существуют только в рамках сессии, поэтому регистрируются
+при каждом открытии соединения.
 """
 from __future__ import annotations
 
@@ -26,16 +25,7 @@ from core.market_data_provider import (
 from core.stock_data_provider import get_log_returns
 
 _DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
-EVENTS_PATH = os.path.join(_DB_DIR, 'events.csv')
-TAGS_PATH = os.path.join(_DB_DIR, 'tags.csv')
-EVENT_TAGS_PATH = os.path.join(_DB_DIR, 'event_tags.csv')
-PRECEDENT_QUERIES_PATH = os.path.join(_DB_DIR, 'precedent_queries.csv')
-
-
-def _ensure_queries_csv() -> None:
-    if not os.path.exists(PRECEDENT_QUERIES_PATH):
-        with open(PRECEDENT_QUERIES_PATH, 'w', encoding='utf-8') as f:
-            f.write('id,name,source,created_at\n')
+APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
 
 
 # ---------------------------------------------------------------------------
@@ -100,83 +90,28 @@ def _car_impl(
 
 
 # ---------------------------------------------------------------------------
-# Создание движка и регистрация схемы
+# Регистрация UDF и макроса
 # ---------------------------------------------------------------------------
 
-def create_engine(
-        events_path: str = EVENTS_PATH,
-        tags_path: str = TAGS_PATH,
-        event_tags_path: str = EVENT_TAGS_PATH,
-        queries_path: str | None = None,
-) -> duckdb.DuckDBPyConnection:
-    """Создаёт DuckDB-соединение с зарегистрированной схемой PQL."""
-    con = duckdb.connect(':memory:')
+def _register_car(con: duckdb.DuckDBPyConnection) -> None:
+    """Регистрирует UDF _car_impl и удобный макрос car() с дефолтными параметрами.
 
-    events_df = pd.read_csv(events_path, parse_dates=['date_start', 'date_end'])
-    tags_df = pd.read_csv(tags_path)
-    event_tags_df = pd.read_csv(event_tags_path)
-    queries_path = queries_path or PRECEDENT_QUERIES_PATH
-    if queries_path == PRECEDENT_QUERIES_PATH:
-        _ensure_queries_csv()
-    queries_df = pd.read_csv(queries_path, dtype=str, keep_default_na=False)
-
-    con.register('_events_src', events_df)
-    con.register('_tags_src', tags_df)
-    con.register('_event_tags_src', event_tags_df)
-    con.register('_queries_src', queries_df)
-
-    # Приводим даты к DATE — иначе UDF, ожидающие DATE, не свяжутся.
-    con.execute("""
-        CREATE TABLE events AS
-        SELECT id,
-               CAST(date_start AS DATE) AS date_start,
-               CAST(date_end   AS DATE) AS date_end,
-               event
-        FROM _events_src
-    """)
-    con.execute("CREATE TABLE tags       AS SELECT * FROM _tags_src")
-    con.execute("CREATE TABLE event_tags AS SELECT * FROM _event_tags_src")
-
-    # precedent_queries — явная схема, чтобы поддерживать INSERT строковых UUID
-    # даже когда CSV пуст (иначе DuckDB вывел бы типы из пустого DataFrame).
-    con.execute("""
-        CREATE TABLE precedent_queries (
-            id         VARCHAR,
-            name       VARCHAR,
-            source     VARCHAR,
-            created_at VARCHAR
+    Несколько одновременно открытых соединений к одному файлу разделяют каталог
+    функций. Если функция уже зарегистрирована другим соединением — это не
+    ошибка, продолжаем.
+    """
+    try:
+        con.create_function(
+            '_car_impl',
+            _car_impl,
+            ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
+            'DOUBLE',
+            null_handling='special',
         )
-    """)
-    if len(queries_df) > 0:
-        con.execute("INSERT INTO precedent_queries SELECT * FROM _queries_src")
-
+    except duckdb.CatalogException:
+        pass
     con.execute("""
-        CREATE VIEW tagged_events AS
-        SELECT
-            e.id         AS event_id,
-            e.date_start,
-            e.date_end,
-            e.event,
-            t.code       AS tag,
-            t.name       AS tag_name,
-            t.type       AS tag_type
-        FROM events     e
-        JOIN event_tags et ON et.event_id = e.id
-        JOIN tags       t  ON t.code      = et.tag_code
-    """)
-
-    # Регистрируем UDF под внутренним именем; пользовательский car() — макрос
-    # с дефолтными значениями параметров (стандартный SQL-синтаксис).
-    con.create_function(
-        '_car_impl',
-        _car_impl,
-        ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
-        'DOUBLE',
-        null_handling='special',
-    )
-
-    con.execute("""
-        CREATE MACRO car(
+        CREATE OR REPLACE TEMP MACRO car(
             ticker, event_date,
             model := 'market_model',
             window_before := 5,
@@ -189,4 +124,22 @@ def create_engine(
         )
     """)
 
+
+# ---------------------------------------------------------------------------
+# Открытие соединения
+# ---------------------------------------------------------------------------
+
+def create_engine(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
+    """Открывает соединение с DuckDB-файлом проекта и регистрирует UDF + макрос car().
+
+    Если файл не существует — кидает FileNotFoundError с подсказкой о миграции.
+    """
+    path = db_path or APP_DB_PATH
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f'DuckDB-файл не найден: {path}. '
+            'Запустите scripts/migrate_csv_to_duckdb.py для первичной миграции.'
+        )
+    con = duckdb.connect(path)
+    _register_car(con)
     return con
