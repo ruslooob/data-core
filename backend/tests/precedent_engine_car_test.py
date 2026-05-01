@@ -8,7 +8,7 @@ import pytest
 
 from core.event_study import EventStudy
 from core.market_data_provider import MarketDataProvider
-from core.precedent_engine import create_engine
+from core.precedent_engine import PrecedentEngine
 from core.stock_data_provider import StockDataProvider
 
 TICKER = 'LKOH'
@@ -18,7 +18,7 @@ EVENT_DATE_SQL = "DATE '2022-12-16'"
 
 @pytest.fixture(scope='module')
 def con():
-    return create_engine()
+    return PrecedentEngine(StockDataProvider(), MarketDataProvider()).con
 
 
 @pytest.fixture(scope='module')

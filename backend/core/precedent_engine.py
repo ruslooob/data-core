@@ -1,18 +1,17 @@
 """Движок языка поиска прецедентов (Precedent Query Language, PQL).
 
 Открывает соединение с единой DuckDB-базой проекта (data/db/data-core.duckdb),
-в которой персистентно лежат таблицы events / tags / event_tags / precedent_queries
-и представление tagged_events.
+регистрирует SQL-функцию car() — обёртку над EventStudy.analyze.
 
-Дополнительно регистрирует SQL-функцию car() — обёртку над EventStudy.analyze.
-UDF и макросы DuckDB существуют только в рамках сессии, поэтому регистрируются
-при каждом открытии соединения.
+Поставщики данных (StockDataProvider, MarketDataProvider) передаются
+в конструктор: редактор PQL создаёт их без max_date, бэктест — с max_date,
+равным предыдущему торговому дню. Это автоматически распространяется на
+car(), потому что метод car_impl читает данные через self._stocks / self._market.
 """
 from __future__ import annotations
 
 import os
 from datetime import date
-from functools import lru_cache
 
 import duckdb
 import pandas as pd
@@ -25,123 +24,129 @@ _DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
 APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
 
 
-# ---------------------------------------------------------------------------
-# Кеши данных для UDF car(): один раз загружаем ряды доходностей за процесс.
-# В редакторе PQL контекст пост-факт-анализа — поставщики без max_date.
-# ---------------------------------------------------------------------------
+class PrecedentEngine:
+    """Соединение с DuckDB-базой проекта + UDF и макрос car().
 
-_stocks = StockDataProvider()
-_market = MarketDataProvider()
+    Поставщики данных принимаются в конструкторе. Это делает движок
+    одинаково пригодным для редактора PQL (поставщики без max_date,
+    весь исторический интервал виден) и для бэктеста (поставщики с
+    max_date текущего тика, будущие данные физически не доступны).
 
-
-@lru_cache(maxsize=128)
-def _stock_log_returns(ticker: str) -> pd.Series:
-    return _stocks.get_log_returns(ticker)
-
-
-@lru_cache(maxsize=1)
-def _market_log_returns() -> pd.Series:
-    return _market.load_market_index_log_returns()
-
-
-@lru_cache(maxsize=1)
-def _rf_log_returns() -> pd.Series:
-    return _market.load_daily_risk_free_rate()
-
-
-# ---------------------------------------------------------------------------
-# Реализация SQL-функции car()
-# ---------------------------------------------------------------------------
-
-def _car_impl(
-        ticker: str,
-        event_date: date,
-        model: str,
-        window_before: int,
-        window_after: int,
-        estimation: int,
-        outlier_threshold: float | None,
-) -> float | None:
+    Параметры:
+        stocks:   поставщик котировок и log-доходностей по тикерам.
+        market:   поставщик индекса рынка и безрисковой ставки.
+        db_path:  путь к DuckDB-файлу. По умолчанию APP_DB_PATH.
+                  Если файл не существует — FileNotFoundError с подсказкой.
     """
-    Вычисляет CAR для пары (ticker, event_date) через EventStudy.analyze.
-    Возвращает None при отсутствии данных по тикеру или нехватке истории.
-    """
-    if ticker is None or event_date is None:
-        return None
-    try:
-        stock = _stock_log_returns(ticker.upper())
-    except (ValueError, FileNotFoundError, OSError):
-        return None
 
-    market = _market_log_returns() if model in ('market_model', 'capm') else None
-    rf = _rf_log_returns() if model == 'capm' else None
+    def __init__(
+            self,
+            stocks: StockDataProvider,
+            market: MarketDataProvider,
+            db_path: str | None = None,
+    ):
+        path = db_path or APP_DB_PATH
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f'DuckDB-файл не найден: {path}. '
+                'Запустите scripts/migrate_csv_to_duckdb.py для первичной миграции.'
+            )
+        self._stocks = stocks
+        self._market = market
+        self.con: duckdb.DuckDBPyConnection = duckdb.connect(path)
+        self._stock_log_returns_cache: dict[str, pd.Series] = {}
+        self._market_log_returns: pd.Series | None = None
+        self._rf_log_returns: pd.Series | None = None
+        self._register_car()
 
-    es = EventStudy(stock_log_returns=stock)
-    result = es.analyze(
-        event_date=event_date,
-        model=model,
-        event_window=(-int(window_before), int(window_after)),
-        estimation_window=int(estimation),
-        market=market,
-        rf=rf,
-        outlier_threshold=outlier_threshold,
-    )
-    if result is None:
-        return None
-    return float(result.car)
+    # ---- публичные методы --------------------------------------------------
 
+    def close(self) -> None:
+        """Закрыть DuckDB-соединение."""
+        self.con.close()
 
-# ---------------------------------------------------------------------------
-# Регистрация UDF и макроса
-# ---------------------------------------------------------------------------
+    # ---- кэшированные ряды (per-instance, чтобы уважать max_date) ----------
 
-def _register_car(con: duckdb.DuckDBPyConnection) -> None:
-    """Регистрирует UDF _car_impl и удобный макрос car() с дефолтными параметрами.
+    def _get_stock_log_returns(self, ticker: str) -> pd.Series:
+        ticker = ticker.upper()
+        if ticker not in self._stock_log_returns_cache:
+            self._stock_log_returns_cache[ticker] = self._stocks.get_log_returns(ticker)
+        return self._stock_log_returns_cache[ticker]
 
-    Несколько одновременно открытых соединений к одному файлу разделяют каталог
-    функций. Если функция уже зарегистрирована другим соединением — это не
-    ошибка, продолжаем.
-    """
-    try:
-        con.create_function(
-            '_car_impl',
-            _car_impl,
-            ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
-            'DOUBLE',
-            null_handling='special',
+    def _get_market_log_returns(self) -> pd.Series:
+        if self._market_log_returns is None:
+            self._market_log_returns = self._market.load_market_index_log_returns()
+        return self._market_log_returns
+
+    def _get_rf_log_returns(self) -> pd.Series:
+        if self._rf_log_returns is None:
+            self._rf_log_returns = self._market.load_daily_risk_free_rate()
+        return self._rf_log_returns
+
+    # ---- car() реализация и регистрация ------------------------------------
+
+    def _car_impl(
+            self,
+            ticker: str,
+            event_date: date,
+            model: str,
+            window_before: int,
+            window_after: int,
+            estimation: int,
+            outlier_threshold: float | None,
+    ) -> float | None:
+        """Вычисляет CAR через EventStudy.analyze. Возвращает None, если данных не хватает."""
+        if ticker is None or event_date is None:
+            return None
+        try:
+            stock = self._get_stock_log_returns(ticker)
+        except (ValueError, FileNotFoundError, OSError):
+            return None
+
+        market = self._get_market_log_returns() if model in ('market_model', 'capm') else None
+        rf = self._get_rf_log_returns() if model == 'capm' else None
+
+        es = EventStudy(stock_log_returns=stock)
+        result = es.analyze(
+            event_date=event_date,
+            model=model,
+            event_window=(-int(window_before), int(window_after)),
+            estimation_window=int(estimation),
+            market=market,
+            rf=rf,
+            outlier_threshold=outlier_threshold,
         )
-    except duckdb.CatalogException:
-        pass
-    con.execute("""
-        CREATE OR REPLACE TEMP MACRO car(
-            ticker, event_date,
-            model := 'market_model',
-            window_before := 5,
-            window_after := 5,
-            estimation := 200,
-            outlier_threshold := NULL
-        ) AS _car_impl(
-            ticker, event_date,
-            model, window_before, window_after, estimation, outlier_threshold
-        )
-    """)
+        if result is None:
+            return None
+        return float(result.car)
 
+    def _register_car(self) -> None:
+        """Регистрирует UDF _car_impl и макрос car() с дефолтными параметрами.
 
-# ---------------------------------------------------------------------------
-# Открытие соединения
-# ---------------------------------------------------------------------------
+        DuckDB шарит каталог функций между одновременно открытыми соединениями
+        к одному файлу. Если функция уже зарегистрирована — это не ошибка.
+        """
+        try:
+            self.con.create_function(
+                '_car_impl',
+                self._car_impl,
+                ['VARCHAR', 'DATE', 'VARCHAR', 'INTEGER', 'INTEGER', 'INTEGER', 'DOUBLE'],
+                'DOUBLE',
+                null_handling='special',
+            )
+        except duckdb.CatalogException:
+            pass
 
-def create_engine(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
-    """Открывает соединение с DuckDB-файлом проекта и регистрирует UDF + макрос car().
-
-    Если файл не существует — кидает FileNotFoundError с подсказкой о миграции.
-    """
-    path = db_path or APP_DB_PATH
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f'DuckDB-файл не найден: {path}. '
-            'Запустите scripts/migrate_csv_to_duckdb.py для первичной миграции.'
-        )
-    con = duckdb.connect(path)
-    _register_car(con)
-    return con
+        self.con.execute("""
+            CREATE OR REPLACE TEMP MACRO car(
+                ticker, event_date,
+                model := 'market_model',
+                window_before := 5,
+                window_after := 5,
+                estimation := 200,
+                outlier_threshold := NULL
+            ) AS _car_impl(
+                ticker, event_date,
+                model, window_before, window_after, estimation, outlier_threshold
+            )
+        """)

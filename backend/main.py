@@ -20,9 +20,7 @@ from core.anomaly_detector import detect_anomalies_batch, AnomalyResult as Anoma
 from core.dividend_data_provider import DividendDataProvider
 from core.event_study import EventStudy, AggregateStudyResult
 from core.market_data_provider import MarketDataProvider
-from core.precedent_engine import (
-    create_engine as _create_precedent_engine,
-)
+from core.precedent_engine import PrecedentEngine
 from core.stock_data_provider import StockDataProvider
 
 # Дефолтные провайдеры без max_date — для эндпоинтов API, где режим
@@ -396,15 +394,15 @@ def scan_all_anomalies(req: AnomalyScanAllRequest):
 
 PRECEDENT_MAX_ROWS = 1000
 
-_precedent_engine = None
+_precedent_engine: PrecedentEngine | None = None
 
 
 def _get_precedent_engine():
-    """Ленивая инициализация DuckDB-движка с видимой схемой PQL."""
+    """Ленивая инициализация DuckDB-соединения с видимой схемой PQL."""
     global _precedent_engine
     if _precedent_engine is None:
-        _precedent_engine = _create_precedent_engine()
-    return _precedent_engine
+        _precedent_engine = PrecedentEngine(stocks=_stocks, market=_market)
+    return _precedent_engine.con
 
 
 def _to_json_safe(value):

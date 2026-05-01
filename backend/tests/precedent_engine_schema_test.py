@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import pytest
 
-from core.precedent_engine import create_engine
+from core.market_data_provider import MarketDataProvider
+from core.precedent_engine import PrecedentEngine
+from core.stock_data_provider import StockDataProvider
 
 
 @pytest.fixture(scope='module')
 def con():
-    return create_engine()
+    return PrecedentEngine(StockDataProvider(), MarketDataProvider()).con
 
 
 def _list_relations(con) -> set[str]:
