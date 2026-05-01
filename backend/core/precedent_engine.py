@@ -11,7 +11,8 @@ car(), потому что метод car_impl читает данные чер�
 from __future__ import annotations
 
 import os
-from datetime import date
+import uuid
+from datetime import date, datetime, timezone
 
 import duckdb
 import pandas as pd
@@ -22,6 +23,74 @@ from core.stock_data_provider import StockDataProvider
 
 _DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
 APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
+
+# Стабильный namespace для UUID5-идентификаторов системных рецептов.
+_SYSTEM_RECIPES_NAMESPACE = uuid.UUID('a1b2c3d4-e5f6-4789-9abc-1234567890ab')
+
+# Системные рецепты-шаблоны, засеиваются при первом старте PrecedentEngine.
+# Имена начинаются с ★ — это маркер защиты от перезаписи (UNIQUE на имя плюс
+# проверка префикса в эндпоинте сохранения). Идемпотентность достигается
+# проверкой на наличие записи с таким же именем перед INSERT.
+_SYSTEM_RECIPES: list[tuple[str, str]] = [
+    (
+        '★ Объём: всплеск > 1.5×',
+        """SELECT te.date_start, te.event, te.tag AS ticker,
+       volume_ratio(te.tag, te.date_start) AS vol_x
+FROM tagged_events te
+JOIN tags t ON t.code = te.tag AND t.type = 'company'
+WHERE volume_ratio(te.tag, te.date_start) > 1.5
+ORDER BY vol_x DESC
+LIMIT 30;""",
+    ),
+    (
+        '★ Волатильность: рост > 2×',
+        """SELECT te.date_start, te.event, te.tag AS ticker,
+       vol_ratio(te.tag, te.date_start) AS vola_x
+FROM tagged_events te
+JOIN tags t ON t.code = te.tag AND t.type = 'company'
+WHERE vol_ratio(te.tag, te.date_start) > 2.0
+ORDER BY vola_x DESC
+LIMIT 30;""",
+    ),
+    (
+        '★ Возможный инсайд (CAR до t=0)',
+        """SELECT te.date_start, te.event, te.tag AS ticker,
+       car(te.tag, te.date_start, window_after => -1) AS car_pre
+FROM tagged_events te
+JOIN tags t ON t.code = te.tag AND t.type = 'company'
+WHERE ABS(car(te.tag, te.date_start, window_after => -1)) > 0.03
+ORDER BY ABS(car_pre) DESC
+LIMIT 30;""",
+    ),
+    (
+        '★ Дивиденды LKOH: реакция цены',
+        """SELECT te.date_start, te.event,
+       car('LKOH', te.date_start) AS car
+FROM tagged_events te
+JOIN tagged_events te2 ON te2.event_id = te.event_id
+WHERE te.tag = 'LKOH'
+  AND te2.tag = 'DIVIDEND_ANNOUNCEMENT'
+ORDER BY te.date_start DESC
+LIMIT 30;""",
+    ),
+    (
+        '★ Многофакторная оценка аномальности',
+        """WITH scored AS (
+  SELECT te.date_start, te.event, te.tag AS ticker,
+         CASE WHEN ABS(car(te.tag, te.date_start)) > 0.05 THEN 1 ELSE 0 END
+       + CASE WHEN volume_ratio(te.tag, te.date_start) > 2.0 THEN 1 ELSE 0 END
+       + CASE WHEN vol_ratio(te.tag, te.date_start) > 2.0 THEN 1 ELSE 0 END
+         AS score
+  FROM tagged_events te
+  JOIN tags t ON t.code = te.tag AND t.type = 'company'
+)
+SELECT date_start, event, ticker, score
+FROM scored
+WHERE score >= 2
+ORDER BY score DESC, date_start DESC
+LIMIT 20;""",
+    ),
+]
 
 
 class PrecedentEngine:
@@ -58,6 +127,7 @@ class PrecedentEngine:
         self._market_log_returns: pd.Series | None = None
         self._rf_log_returns: pd.Series | None = None
         self._register_car()
+        self._seed_system_recipes()
 
     # ---- публичные методы --------------------------------------------------
 
@@ -178,3 +248,36 @@ class PrecedentEngine:
             )
         except duckdb.CatalogException:
             pass
+
+    # ---- системные рецепты-шаблоны -----------------------------------------
+
+    def _seed_system_recipes(self) -> None:
+        """Идемпотентная вставка системных рецептов в таблицу precedent_queries.
+
+        Выполняется при создании движка. Каждый рецепт получает стабильный
+        UUID5-идентификатор от своего имени, поэтому повторный запуск не
+        плодит дубликатов даже если строка случайно потерялась. Если запись
+        с таким именем уже есть — INSERT пропускается.
+
+        Если в БД нет таблицы precedent_queries (например, fresh DB без
+        прошедшей миграции) — метод тихо завершается без ошибок: системные
+        рецепты неактуальны до инициализации остальной схемы.
+        """
+        try:
+            self.con.execute("SELECT 1 FROM precedent_queries LIMIT 1")
+        except duckdb.CatalogException:
+            return
+
+        for name, source in _SYSTEM_RECIPES:
+            recipe_id = str(uuid.uuid5(_SYSTEM_RECIPES_NAMESPACE, name))
+            created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            self.con.execute(
+                """
+                INSERT INTO precedent_queries (id, name, source, created_at)
+                SELECT ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM precedent_queries WHERE name = ?
+                )
+                """,
+                [recipe_id, name, source, created_at, name],
+            )

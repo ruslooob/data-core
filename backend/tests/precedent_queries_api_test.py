@@ -1,7 +1,9 @@
 """Тесты HTTP-эндпоинтов для сохранения и чтения прецедентных запросов.
 
 Используется временная DuckDB-база с такой же схемой, что и продакшен — основная
-data-core.duckdb не затрагивается.
+data-core.duckdb не затрагивается. PrecedentEngine при инициализации засевает
+системные рецепты (имена с префиксом ★), поэтому тесты учитывают их в выдаче
+эндпоинта `/api/precedents/queries`.
 """
 from __future__ import annotations
 
@@ -45,10 +47,19 @@ def client():
     return TestClient(main.app)
 
 
-def test_list_initially_empty(client):
+def _user_items(items: list[dict]) -> list[dict]:
+    """Отфильтровывает пользовательские записи (без префикса ★)."""
+    return [i for i in items if not i['name'].startswith('★')]
+
+
+def test_list_initially_only_system_recipes(client):
+    """Свежая БД: пользовательских записей нет, есть только системные ★-рецепты."""
     r = client.get("/api/precedents/queries")
     assert r.status_code == 200
-    assert r.json() == []
+    items = r.json()
+    assert _user_items(items) == []
+    assert len(items) >= 1  # хотя бы один системный засеялся
+    assert all(i['name'].startswith('★') for i in items)
 
 
 def test_save_and_list(client):
@@ -63,10 +74,10 @@ def test_save_and_list(client):
     assert "id" in saved
     assert "createdAt" in saved
 
-    r2 = client.get("/api/precedents/queries")
-    items = r2.json()
-    assert len(items) == 1
-    assert items[0]["name"] == "LKOH dividends"
+    items = client.get("/api/precedents/queries").json()
+    user = _user_items(items)
+    assert len(user) == 1
+    assert user[0]["name"] == "LKOH dividends"
 
 
 def test_save_rejects_duplicate_name(client):
@@ -87,6 +98,15 @@ def test_save_rejects_empty_source(client):
     assert r.status_code == 400
 
 
+def test_save_rejects_system_name(client):
+    """Имена с префиксом ★ зарезервированы — пользователь не может их создать."""
+    r = client.post("/api/precedents/queries", json={
+        "name": "★ My fake recipe",
+        "source": "SELECT 1",
+    })
+    assert r.status_code == 400
+
+
 def test_list_sorted_newest_first(client):
     import time
     client.post("/api/precedents/queries", json={"name": "A", "source": "SELECT 1"})
@@ -94,7 +114,8 @@ def test_list_sorted_newest_first(client):
     client.post("/api/precedents/queries", json={"name": "B", "source": "SELECT 2"})
 
     items = client.get("/api/precedents/queries").json()
-    assert [i["name"] for i in items] == ["B", "A"]
+    user_names = [i["name"] for i in _user_items(items)]
+    assert user_names == ["B", "A"]
 
 
 def test_saved_query_visible_via_pql(client):

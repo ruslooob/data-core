@@ -384,6 +384,8 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Имя не может быть пустым")
+    if name.startswith('★'):
+        raise HTTPException(status_code=400, detail="Имена с префиксом ★ зарезервированы за системными рецептами")
     source = req.source
     if not source.strip():
         raise HTTPException(status_code=400, detail="Текст запроса не может быть пустым")
