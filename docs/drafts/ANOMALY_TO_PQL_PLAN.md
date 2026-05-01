@@ -19,7 +19,7 @@
 
 ## Этап A1 — Новые UDF в precedent_engine + расширение `car()`
 
-Две новых UDF — по аналогии с `car()`: Python-функция + макрос с именованными аргументами + `deterministic=True`. Обёртки над `stock_data_provider.get_candles`.
+Две новых UDF добавляются как **методы класса `StockDataProvider`** (см. `docs/SPEC_DATA_PROVIDERS.md`). Редактор PQL регистрирует их в DuckDB через bound-method дефолтного экземпляра поставщика, аналогично `car()`. Каждый метод реализуется через `self.get_candles(ticker, ...)`.
 
 | UDF | Параметры | Возвращает |
 |---|---|---|
@@ -55,7 +55,7 @@
 
 ## Этап A3 — Стартовые рецепты в precedent_queries
 
-При старте `precedent_engine` выполнять идемпотентный `INSERT` нескольких системных рецептов в `precedent_queries` (если записи с такими именами нет). Они сразу видны в дропдауне «Загрузить».
+При старте `precedent_engine` выполнять идемпотентный `INSERT` нескольких системных рецептов в таблицу `precedent_queries` БД `data/db/data-core.duckdb`. Идемпотентность через `INSERT INTO ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM precedent_queries WHERE name = ?)` либо через стабильные `id` (UUID5 от имени) и `INSERT OR IGNORE`.
 
 Минимальный набор (3–5 рецептов, имена начинаются с `★` чтобы отличать от пользовательских):
 
@@ -65,7 +65,7 @@
 4. **★ Дивиденды LKOH: реакция цены** — JOIN c `DIVIDEND_ANNOUNCEMENT` + CAR
 5. **★ Многофакторная оценка аномальности** — `CASE WHEN ... + CASE WHEN ... HAVING score >= 2`
 
-Хранятся в `data/db/precedent_queries.csv`, привязаны к стабильным `id` (UUID5 от имени), чтобы повторный старт не плодил дубли. Системные имена защищены от перезаписи пользователем (POST не даст создать ещё один рецепт с тем же именем).
+Системные имена (с префиксом `★`) защищены от перезаписи пользователем: `POST /api/precedents/queries` отклоняет создание рецепта с таким именем (409).
 
 Коммит: `feat(precedent): стартовые рецепты для типовых сценариев`
 
@@ -74,7 +74,7 @@
 ## Этап A4 — Документация
 
 `docs/SPEC_PRECEDENT_LANGUAGE.md`:
-- Видимая схема: добавить функции `vol_ratio`, `volume_ratio` с сигнатурами
+- Видимая схема: добавить функции `vol_ratio`, `volume_ratio` с сигнатурами; сослаться на `SPEC_DATA_PROVIDERS.md` как источник правды о контракте поставщика и семантику `max_date`
 - Раздел про `car()`: уточнить, что `window_before` / `window_after` могут быть любыми целыми при непустом интервале, привести пример «только до события» (`window_after => -1`)
 - Раздел «Что не входит в MVP» → добавить пункт **«Пользовательские функции (`CREATE FUNCTION ... LANGUAGE SQL`)» как основу будущего расширения**: позволит аналитику задавать свои композиции метрик и порогов и сохранять их между сессиями (требует единого процесса работы аналитика, начиная с бэктеста)
 - Раздел «Стартовые рецепты» — описание системных шаблонов
@@ -92,10 +92,10 @@
 ## Критические файлы
 
 **Создавать/расширять:**
-- `backend/core/precedent_engine.py` — две новых UDF + две `CREATE MACRO`; обновлённая регистрация `car()` с расширенным контрактом окон
+- `backend/core/stock_data_provider.py` — методы `vol_ratio` и `volume_ratio` в классе `StockDataProvider`
+- `backend/core/precedent_engine.py` — регистрация двух новых UDF через bound-method поставщика + две `CREATE MACRO`; обновлённая регистрация `car()` с расширенным контрактом окон; идемпотентная вставка системных рецептов в `precedent_queries` при старте
 - `backend/core/event_study.py` — поддержка отрицательных значений `window_before` / `window_after` в `analyze`
 - `backend/tests/precedent_engine_udf_test.py` — новые тесты + кейс `car()` с `window_after = -1`
-- `data/db/precedent_queries.csv` — стартовые рецепты при старте
 
 **Удалять:**
 - `backend/core/anomaly_detector.py`
@@ -106,9 +106,6 @@
 - `frontend/src/widgets/WidgetCanvas.tsx` — убрать регистрацию виджета
 - `frontend/src/api/types.ts`, `frontend/src/api/client.ts` — убрать типы и методы по аномалиям
 - `docs/SPEC_PRECEDENT_LANGUAGE.md`, `docs/OVERVIEW.md`, `docs/GLOSSARY.md`, `todo.md`
-
-**Использовать без изменений:**
-- `backend/core/stock_data_provider.py` (для `volume_ratio` / `vol_ratio` через `get_candles`)
 
 ---
 

@@ -107,7 +107,6 @@ data/db/event_tags.csv  — тэгирование
 - [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md) — поиск аномалий
 - [SPEC_PRECEDENT_LANGUAGE.md](SPEC_PRECEDENT_LANGUAGE.md) — язык поиска прецедентов (PQL)
 - [SPEC_DATA_PROVIDERS.md](SPEC_DATA_PROVIDERS.md) — поставщики рыночных данных, отсутствие подглядывания в будущее
-- [ANOMALY_DSL.md](ANOMALY_DSL.md) — устаревший черновик DSL (заменён на PQL)
 - [ROBUSTNESS_CHECK.md](ROBUSTNESS_CHECK.md) — проверка устойчивости
 - [SPEC_FRONTEND.md](SPEC_FRONTEND.md) — спецификация фронтенда
 - [SPEC_EVENT_FILTER.md](SPEC_EVENT_FILTER.md) — виджет фильтра событий
