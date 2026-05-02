@@ -66,6 +66,56 @@ export interface PrecedentQuerySaveRequest {
   source: string
 }
 
+// ── Бэктест: стратегии, правила, окружения ──────────────────────────────────
+
+export type ActionType = 'buy' | 'sell'
+
+export interface Rule {
+  id: string
+  name: string
+  triggerSql: string
+  actionType: ActionType
+  actionQuantitySql: string
+  priority: number
+  createdAt: string
+}
+
+export interface RuleCreate {
+  name: string
+  triggerSql: string
+  actionType: ActionType
+  actionQuantitySql: string
+  priority: number
+}
+
+export interface Strategy {
+  id: string
+  name: string
+  ruleIds: string[]
+  createdAt: string
+}
+
+export interface StrategyCreate {
+  name: string
+  ruleIds: string[]
+}
+
+export interface Environment {
+  id: string
+  name: string
+  dateStart: string
+  dateEnd: string
+  startingCapital: number
+  createdAt: string
+}
+
+export interface EnvironmentCreate {
+  name: string
+  dateStart: string
+  dateEnd: string
+  startingCapital: number
+}
+
 export interface EventStudyRequest {
   ticker: string
   eventDate: string

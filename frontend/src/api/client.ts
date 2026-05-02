@@ -3,14 +3,20 @@ import type {
   AggregateStudyResult,
   Candle,
   DividendEvent,
+  Environment,
+  EnvironmentCreate,
   EventStudyRequest,
   EventStudyResult,
   PrecedentQueryRecord,
   PrecedentQuerySaveRequest,
   PrecedentSearchRequest,
   PrecedentSearchResult,
+  Rule,
+  RuleCreate,
   SeriesName,
   SeriesPoint,
+  Strategy,
+  StrategyCreate,
 } from './types'
 
 export class PrecedentApiError extends Error {
@@ -137,4 +143,90 @@ export function savePrecedentQuery(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })
+}
+
+// ── Бэктест: стратегии, правила, окружения ──────────────────────────────────
+
+async function deleteJson(url: string): Promise<void> {
+  const response = await fetch(url, { method: 'DELETE' })
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`
+    try {
+      const body = await response.json()
+      if (body.detail) detail = body.detail
+    } catch { /* not JSON */ }
+    throw new Error(detail)
+  }
+}
+
+export function listStrategies(): Promise<Strategy[]> {
+  return fetchJson<Strategy[]>('/api/strategies')
+}
+
+export function createStrategy(request: StrategyCreate): Promise<Strategy> {
+  return fetchJson<Strategy>('/api/strategies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export function renameStrategy(id: string, name: string): Promise<Strategy> {
+  return fetchJson<Strategy>(`/api/strategies/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function deleteStrategy(id: string): Promise<void> {
+  return deleteJson(`/api/strategies/${id}`)
+}
+
+export function listRules(): Promise<Rule[]> {
+  return fetchJson<Rule[]>('/api/rules')
+}
+
+export function createRule(request: RuleCreate): Promise<Rule> {
+  return fetchJson<Rule>('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export function renameRule(id: string, name: string): Promise<Rule> {
+  return fetchJson<Rule>(`/api/rules/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function deleteRule(id: string): Promise<void> {
+  return deleteJson(`/api/rules/${id}`)
+}
+
+export function listEnvironments(): Promise<Environment[]> {
+  return fetchJson<Environment[]>('/api/environments')
+}
+
+export function createEnvironment(request: EnvironmentCreate): Promise<Environment> {
+  return fetchJson<Environment>('/api/environments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export function renameEnvironment(id: string, name: string): Promise<Environment> {
+  return fetchJson<Environment>(`/api/environments/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function deleteEnvironment(id: string): Promise<void> {
+  return deleteJson(`/api/environments/${id}`)
 }

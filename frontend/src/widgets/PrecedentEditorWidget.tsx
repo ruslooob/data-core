@@ -15,6 +15,7 @@ import type {
   PrecedentValue,
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
+import { SearchablePicker } from './SearchablePicker'
 
 interface PrecedentEditorWidgetProps {
   group: WidgetGroup
@@ -40,14 +41,11 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
   const [result, setResult] = useState<PrecedentSearchResult | null>(null)
   const [error, setError] = useState<ErrorState | null>(null)
   const [savedQueries, setSavedQueries] = useState<PrecedentQueryRecord[]>([])
-  const [loadOpen, setLoadOpen] = useState(false)
-  const [loadSearch, setLoadSearch] = useState('')
   const [savePromptOpen, setSavePromptOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [saveError, setSaveError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const sourceRef = useRef(source)
-  const loadDropdownRef = useRef<HTMLDivElement>(null)
   const savePromptRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { sourceRef.current = source }, [source])
@@ -115,34 +113,11 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
     }
   }, [])
 
-  const openLoadDropdown = () => {
-    setLoadOpen(true)
-    setLoadSearch('')
-    void refreshSavedQueries()
-  }
+  useEffect(() => { void refreshSavedQueries() }, [refreshSavedQueries])
 
   const onPickSavedQuery = (q: PrecedentQueryRecord) => {
     setSource(q.source)
-    setLoadOpen(false)
   }
-
-  const filteredSavedQueries = useMemo(() => {
-    const q = loadSearch.trim().toLowerCase()
-    if (!q) return savedQueries
-    return savedQueries.filter((x) => x.name.toLowerCase().includes(q))
-  }, [loadSearch, savedQueries])
-
-  // Click-outside для дропдауна загрузки
-  useEffect(() => {
-    if (!loadOpen) return
-    const handler = (e: MouseEvent) => {
-      if (loadDropdownRef.current && !loadDropdownRef.current.contains(e.target as Node)) {
-        setLoadOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [loadOpen])
 
   // Click-outside для save-промпта
   useEffect(() => {
@@ -234,45 +209,14 @@ export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
           )}
         </div>
 
-        <div ref={loadDropdownRef} style={iconButtonContainerStyle}>
-          <button
-            style={iconButtonStyle}
-            title="Загрузить запрос"
-            onClick={openLoadDropdown}
-            aria-label="Загрузить запрос"
-          >
-            <SearchIcon />
-          </button>
-          {loadOpen && (
-            <div style={loadDropdownStyle}>
-              <input
-                type="text"
-                placeholder="Поиск по имени"
-                value={loadSearch}
-                onChange={(e) => setLoadSearch(e.target.value)}
-                autoFocus
-                style={loadDropdownSearchStyle}
-              />
-              <div style={loadDropdownListStyle}>
-                {filteredSavedQueries.length === 0 ? (
-                  <div style={loadDropdownEmptyStyle}>
-                    {savedQueries.length === 0 ? 'Пока нет сохранённых запросов' : 'Нет совпадений'}
-                  </div>
-                ) : (
-                  filteredSavedQueries.map((q) => (
-                    <div
-                      key={q.id}
-                      onClick={() => onPickSavedQuery(q)}
-                      style={loadDropdownItemStyle}
-                    >
-                      {q.name}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <SearchablePicker<PrecedentQueryRecord>
+          items={savedQueries}
+          getKey={(q) => q.id}
+          getName={(q) => q.name}
+          onPick={onPickSavedQuery}
+          title="Загрузить запрос"
+          emptyText="Пока нет сохранённых запросов"
+        />
 
         <span style={statusStyle}>{renderStatusLine(status, result)}</span>
       </div>
@@ -350,15 +294,6 @@ function FloppyIcon() {
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
       <polyline points="17 21 17 13 7 13 7 21" />
       <polyline points="7 3 7 8 15 8" />
-    </svg>
-  )
-}
-
-function SearchIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   )
 }
@@ -462,50 +397,6 @@ const savePromptButtonStyle: React.CSSProperties = {
 const savePromptErrorStyle: React.CSSProperties = {
   fontSize: 12,
   color: '#a01919',
-}
-
-const loadDropdownStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: 0,
-  background: '#fff',
-  border: '1px solid #ccc',
-  borderRadius: 4,
-  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-  display: 'flex',
-  flexDirection: 'column',
-  width: 280,
-  maxHeight: 280,
-  zIndex: 100,
-  overflow: 'hidden',
-}
-
-const loadDropdownSearchStyle: React.CSSProperties = {
-  fontSize: 13,
-  padding: '8px 10px',
-  border: 'none',
-  borderBottom: '1px solid #eee',
-  outline: 'none',
-}
-
-const loadDropdownListStyle: React.CSSProperties = {
-  overflowY: 'auto',
-  maxHeight: 220,
-}
-
-const loadDropdownItemStyle: React.CSSProperties = {
-  padding: '6px 12px',
-  fontSize: 13,
-  cursor: 'pointer',
-  borderBottom: '1px solid #f5f5f5',
-}
-
-const loadDropdownEmptyStyle: React.CSSProperties = {
-  padding: 12,
-  fontSize: 12,
-  color: '#999',
-  fontStyle: 'italic',
-  textAlign: 'center',
 }
 
 const statusStyle: React.CSSProperties = {

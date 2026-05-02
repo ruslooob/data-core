@@ -1,10 +1,11 @@
 """FastAPI backend для data-core."""
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from datetime import date
+from datetime import date, datetime, timezone
+import uuid as _uuid
 
 
 class CamelModel(BaseModel):
@@ -269,11 +270,17 @@ _precedent_engine: PrecedentEngine | None = None
 
 
 def _get_precedent_engine():
-    """Ленивая инициализация DuckDB-соединения с видимой схемой PQL."""
+    """Ленивая инициализация DuckDB-соединения с видимой схемой PQL.
+
+    Возвращает **новый курсор** на каждый вызов: DuckDB-Python не потокобезопасен
+    при шаре одного соединения между потоками FastAPI threadpool — concurrent
+    execute() приводит к segfault. Курсор изолирует поток и при этом разделяет
+    тот же буферный пул и кэш UDF.
+    """
     global _precedent_engine
     if _precedent_engine is None:
         _precedent_engine = PrecedentEngine(stocks=_stocks, market=_market)
-    return _precedent_engine.con
+    return _precedent_engine.con.cursor()
 
 
 def _to_json_safe(value):
@@ -377,10 +384,6 @@ def list_precedent_queries() -> list[PrecedentQueryRecord]:
 @app.post("/api/precedents/queries", response_model_by_alias=True, status_code=201)
 def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord:
     """Сохраняет прецедентный запрос. Имя должно быть уникальным."""
-    import uuid as _uuid
-    from datetime import datetime, timezone
-    from fastapi import HTTPException
-
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Имя не может быть пустым")
@@ -406,3 +409,369 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     )
 
     return PrecedentQueryRecord(id=new_id, name=name, source=source, created_at=created_at)
+
+
+# ── Бэктест: стратегии, правила, окружения ─────────────────────────────────
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+
+def _validate_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail='Имя не может быть пустым')
+    return name
+
+
+def _rename_with_fk_workaround(
+        con,
+        parent_table: str,
+        parent_id: str,
+        new_name: str,
+        child_fk_col: str,
+) -> None:
+    """Переименование записи parent_table в обход ограничения DuckDB на UPDATE.
+
+    DuckDB переписывает любой UPDATE на родительской таблице в DELETE+INSERT и
+    падает на FK-проверке от дочерних строк, даже когда меняется только поле
+    `name`, а не PK. Это «Over-Eager Constraint Checking in Foreign Keys» из
+    документации DuckDB. Прямой `UPDATE strategies SET name = ?` валится с
+    ConstraintException, как только у стратегии есть хотя бы одна связка.
+
+    Обход: снять дочерние строки из strategy_rules, переименовать родителя,
+    вернуть дочерние строки на место. BEGIN/COMMIT не помогает: внутри одной
+    транзакции DuckDB всё равно проверяет FK по pre-transaction-снапшоту и
+    падает, как будто строки не удалены. Поэтому делаем три отдельных команды
+    в режиме автокоммита. Атомарности на уровне БД нет, но при ошибке UPDATE
+    дочерние строки руками восстанавливаются из python-бэкапа.
+
+    Параметры:
+        parent_table:  'strategies' или 'rules' — таблица, чьё имя меняется.
+        parent_id:     id переименовываемой записи.
+        new_name:      новое имя.
+        child_fk_col:  колонка в strategy_rules, ссылающаяся на parent_table.
+                       'strategy_id' для strategies, 'rule_id' для rules.
+    """
+    backup = con.execute(
+        f'SELECT strategy_id, rule_id, position FROM strategy_rules '
+        f'WHERE {child_fk_col} = ?',
+        [parent_id],
+    ).fetchall()
+    con.execute(
+        f'DELETE FROM strategy_rules WHERE {child_fk_col} = ?', [parent_id],
+    )
+    try:
+        con.execute(
+            f'UPDATE {parent_table} SET name = ? WHERE id = ?', [new_name, parent_id],
+        )
+    except Exception:
+        # UPDATE упал — вернуть дочерние строки, чтобы не оставить записи без связок.
+        for s_id, r_id, position in backup:
+            con.execute(
+                'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+                [s_id, r_id, position],
+            )
+        raise
+    for s_id, r_id, position in backup:
+        con.execute(
+            'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+            [s_id, r_id, position],
+        )
+
+
+# ---- Rule ----
+
+class RuleOut(CamelModel):
+    id: str
+    name: str
+    trigger_sql: str
+    action_type: str
+    action_quantity_sql: str
+    priority: int
+    created_at: str
+
+
+class RuleCreate(CamelModel):
+    name: str
+    trigger_sql: str
+    action_type: str
+    action_quantity_sql: str
+    priority: int
+
+
+class RenameRequest(CamelModel):
+    name: str
+
+
+def _row_to_rule(row) -> RuleOut:
+    return RuleOut(
+        id=row[0], name=row[1], trigger_sql=row[2], action_type=row[3],
+        action_quantity_sql=row[4], priority=row[5], created_at=row[6],
+    )
+
+
+@app.get('/api/rules', response_model_by_alias=True)
+def list_rules() -> list[RuleOut]:
+    con = _get_precedent_engine()
+    rows = con.execute("""
+        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority, created_at
+        FROM rules ORDER BY created_at DESC
+    """).fetchall()
+    return [_row_to_rule(r) for r in rows]
+
+
+@app.post('/api/rules', response_model_by_alias=True, status_code=201)
+def create_rule(req: RuleCreate) -> RuleOut:
+    name = _validate_name(req.name)
+    if req.action_type not in ('buy', 'sell'):
+        raise HTTPException(status_code=400, detail="action_type должен быть 'buy' или 'sell'")
+    if not req.trigger_sql.strip():
+        raise HTTPException(status_code=400, detail='trigger_sql не может быть пустым')
+    if not req.action_quantity_sql.strip():
+        raise HTTPException(status_code=400, detail='action_quantity_sql не может быть пустым')
+
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM rules WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+        raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
+
+    rule_id = str(_uuid.uuid4())
+    created_at = _now_iso()
+    con.execute(
+        'INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [rule_id, name, req.trigger_sql, req.action_type, req.action_quantity_sql, req.priority, created_at],
+    )
+    return RuleOut(
+        id=rule_id, name=name, trigger_sql=req.trigger_sql, action_type=req.action_type,
+        action_quantity_sql=req.action_quantity_sql, priority=req.priority, created_at=created_at,
+    )
+
+
+@app.patch('/api/rules/{rule_id}', response_model_by_alias=True)
+def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
+    name = _validate_name(req.name)
+    con = _get_precedent_engine()
+    row = con.execute("""
+        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority, created_at
+        FROM rules WHERE id = ?
+    """, [rule_id]).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Правило не найдено')
+    dup = con.execute('SELECT 1 FROM rules WHERE name = ? AND id <> ? LIMIT 1', [name, rule_id]).fetchone()
+    if dup is not None:
+        raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
+    _rename_with_fk_workaround(con, 'rules', rule_id, name, 'rule_id')
+    return RuleOut(
+        id=row[0], name=name, trigger_sql=row[2], action_type=row[3],
+        action_quantity_sql=row[4], priority=row[5], created_at=row[6],
+    )
+
+
+@app.delete('/api/rules/{rule_id}', status_code=204)
+def delete_rule(rule_id: str) -> None:
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM rules WHERE id = ? LIMIT 1', [rule_id]).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Правило не найдено')
+    refs = con.execute("""
+        SELECT s.name FROM strategy_rules sr
+        JOIN strategies s ON s.id = sr.strategy_id
+        WHERE sr.rule_id = ?
+    """, [rule_id]).fetchall()
+    if refs:
+        names = ', '.join(f'"{r[0]}"' for r in refs)
+        raise HTTPException(
+            status_code=409,
+            detail=f'Правило используется в стратегиях: {names}. Сначала удалите эти стратегии.',
+        )
+    con.execute('DELETE FROM rules WHERE id = ?', [rule_id])
+
+
+# ---- Strategy ----
+
+class StrategyOut(CamelModel):
+    id: str
+    name: str
+    rule_ids: list[str]
+    created_at: str
+
+
+class StrategyCreate(CamelModel):
+    name: str
+    rule_ids: list[str]
+
+
+def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
+    rows = con.execute(
+        'SELECT rule_id FROM strategy_rules WHERE strategy_id = ? ORDER BY position',
+        [strategy_id],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+@app.get('/api/strategies', response_model_by_alias=True)
+def list_strategies() -> list[StrategyOut]:
+    con = _get_precedent_engine()
+    rows = con.execute(
+        'SELECT id, name, created_at FROM strategies ORDER BY created_at DESC'
+    ).fetchall()
+    return [
+        StrategyOut(id=r[0], name=r[1], rule_ids=_strategy_rule_ids(con, r[0]), created_at=r[2])
+        for r in rows
+    ]
+
+
+@app.post('/api/strategies', response_model_by_alias=True, status_code=201)
+def create_strategy(req: StrategyCreate) -> StrategyOut:
+    name = _validate_name(req.name)
+    if not req.rule_ids:
+        raise HTTPException(status_code=400, detail='Стратегия должна содержать минимум одно правило')
+    if len(set(req.rule_ids)) != len(req.rule_ids):
+        raise HTTPException(status_code=400, detail='Правила в стратегии должны быть уникальными')
+
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM strategies WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+        raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
+
+    placeholders = ','.join(['?'] * len(req.rule_ids))
+    found = con.execute(
+        f'SELECT id FROM rules WHERE id IN ({placeholders})', list(req.rule_ids),
+    ).fetchall()
+    found_ids = {r[0] for r in found}
+    missing = [rid for rid in req.rule_ids if rid not in found_ids]
+    if missing:
+        raise HTTPException(status_code=400, detail=f'Правила не найдены: {", ".join(missing)}')
+
+    strategy_id = str(_uuid.uuid4())
+    created_at = _now_iso()
+    con.execute('INSERT INTO strategies VALUES (?, ?, ?)', [strategy_id, name, created_at])
+    for position, rule_id in enumerate(req.rule_ids):
+        con.execute(
+            'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+            [strategy_id, rule_id, position],
+        )
+    return StrategyOut(id=strategy_id, name=name, rule_ids=list(req.rule_ids), created_at=created_at)
+
+
+@app.patch('/api/strategies/{strategy_id}', response_model_by_alias=True)
+def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
+    name = _validate_name(req.name)
+    con = _get_precedent_engine()
+    row = con.execute(
+        'SELECT id, name, created_at FROM strategies WHERE id = ?', [strategy_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Стратегия не найдена')
+    dup = con.execute(
+        'SELECT 1 FROM strategies WHERE name = ? AND id <> ? LIMIT 1', [name, strategy_id],
+    ).fetchone()
+    if dup is not None:
+        raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
+    _rename_with_fk_workaround(con, 'strategies', strategy_id, name, 'strategy_id')
+    return StrategyOut(
+        id=row[0], name=name, rule_ids=_strategy_rule_ids(con, row[0]), created_at=row[2],
+    )
+
+
+@app.delete('/api/strategies/{strategy_id}', status_code=204)
+def delete_strategy(strategy_id: str) -> None:
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM strategies WHERE id = ? LIMIT 1', [strategy_id]).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Стратегия не найдена')
+    # Каскад: сначала связки strategy_rules, потом саму стратегию.
+    # DuckDB не поддерживает ON DELETE CASCADE на FK, поэтому делаем вручную.
+    con.execute('DELETE FROM strategy_rules WHERE strategy_id = ?', [strategy_id])
+    con.execute('DELETE FROM strategies WHERE id = ?', [strategy_id])
+
+
+# ---- Environment ----
+
+class EnvironmentOut(CamelModel):
+    id: str
+    name: str
+    date_start: str
+    date_end: str
+    starting_capital: float
+    created_at: str
+
+
+class EnvironmentCreate(CamelModel):
+    name: str
+    date_start: str
+    date_end: str
+    starting_capital: float
+
+
+def _row_to_env(row) -> EnvironmentOut:
+    return EnvironmentOut(
+        id=row[0], name=row[1],
+        date_start=row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2]),
+        date_end=row[3].isoformat() if hasattr(row[3], 'isoformat') else str(row[3]),
+        starting_capital=float(row[4]), created_at=row[5],
+    )
+
+
+@app.get('/api/environments', response_model_by_alias=True)
+def list_environments() -> list[EnvironmentOut]:
+    con = _get_precedent_engine()
+    rows = con.execute("""
+        SELECT id, name, date_start, date_end, starting_capital, created_at
+        FROM environments ORDER BY created_at DESC
+    """).fetchall()
+    return [_row_to_env(r) for r in rows]
+
+
+@app.post('/api/environments', response_model_by_alias=True, status_code=201)
+def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
+    name = _validate_name(req.name)
+    try:
+        ds = date.fromisoformat(req.date_start)
+        de = date.fromisoformat(req.date_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Даты должны быть в формате YYYY-MM-DD')
+    if ds > de:
+        raise HTTPException(status_code=400, detail='date_start должен быть не позже date_end')
+    if req.starting_capital <= 0:
+        raise HTTPException(status_code=400, detail='starting_capital должен быть положительным')
+
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM environments WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+        raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
+
+    env_id = str(_uuid.uuid4())
+    created_at = _now_iso()
+    con.execute(
+        'INSERT INTO environments VALUES (?, ?, ?, ?, ?, ?)',
+        [env_id, name, ds, de, req.starting_capital, created_at],
+    )
+    return EnvironmentOut(
+        id=env_id, name=name, date_start=ds.isoformat(), date_end=de.isoformat(),
+        starting_capital=req.starting_capital, created_at=created_at,
+    )
+
+
+@app.patch('/api/environments/{env_id}', response_model_by_alias=True)
+def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
+    name = _validate_name(req.name)
+    con = _get_precedent_engine()
+    row = con.execute("""
+        SELECT id, name, date_start, date_end, starting_capital, created_at
+        FROM environments WHERE id = ?
+    """, [env_id]).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Окружение не найдено')
+    dup = con.execute(
+        'SELECT 1 FROM environments WHERE name = ? AND id <> ? LIMIT 1', [name, env_id],
+    ).fetchone()
+    if dup is not None:
+        raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
+    con.execute('UPDATE environments SET name = ? WHERE id = ?', [name, env_id])
+    return _row_to_env((row[0], name, row[2], row[3], row[4], row[5]))
+
+
+@app.delete('/api/environments/{env_id}', status_code=204)
+def delete_environment(env_id: str) -> None:
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM environments WHERE id = ? LIMIT 1', [env_id]).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Окружение не найдено')
+    # backtest_results появятся позже — тогда здесь будет проверка ссылок и 409.
+    con.execute('DELETE FROM environments WHERE id = ?', [env_id])

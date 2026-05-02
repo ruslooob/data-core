@@ -4,16 +4,19 @@ import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
 import { PrecedentEditorWidget } from './PrecedentEditorWidget'
 import { PriceChartWidget } from './PriceChartWidget'
+import { BacktestEditorWidget } from './BacktestEditorWidget'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor'
 
 interface WidgetInstance {
   id: string
   type: WidgetType
   x: number
   y: number
+  width: number
+  height: number
   group: WidgetGroup
   zIndex: number
 }
@@ -26,11 +29,17 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'event-study': 'Event study',
   'index-chart': 'Index chart',
   'precedent-editor': 'Precedent editor',
+  'backtest-editor': 'BacktestEditor',
 }
 
 const DEFAULT_WIDTH = 640
 const DEFAULT_HEIGHT = 480
 const TOOLBAR_OFFSET_Y = 80
+
+// Виджеты с нестандартным дефолтным размером.
+const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }>> = {
+  'backtest-editor': { width: 1280, height: 960 },
+}
 
 export function WidgetCanvas() {
   const [widgets, setWidgets] = useState<WidgetInstance[]>([])
@@ -38,11 +47,12 @@ export function WidgetCanvas() {
   const [topZ, setTopZ] = useState(1)
 
   const addWidget = (type: WidgetType) => {
+    const size = WIDGET_SIZES[type] ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     const scrollX = window.scrollX
     const scrollY = window.scrollY
-    const centerX = scrollX + window.innerWidth / 2 - DEFAULT_WIDTH / 2
+    const centerX = scrollX + window.innerWidth / 2 - size.width / 2
     const centerY =
-      scrollY + TOOLBAR_OFFSET_Y + (window.innerHeight - TOOLBAR_OFFSET_Y) / 2 - DEFAULT_HEIGHT / 2
+      scrollY + TOOLBAR_OFFSET_Y + (window.innerHeight - TOOLBAR_OFFSET_Y) / 2 - size.height / 2
     const offset = widgets.length * 30
     const newZ = topZ + 1
     setTopZ(newZ)
@@ -54,6 +64,8 @@ export function WidgetCanvas() {
         type,
         x: Math.max(20, centerX + offset),
         y: Math.max(TOOLBAR_OFFSET_Y, centerY + offset),
+        width: size.width,
+        height: size.height,
         group: 'none',
         zIndex: newZ,
       },
@@ -103,6 +115,9 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('precedent-editor')} style={menuItemStyle}>
               Precedent editor
             </button>
+            <button onClick={() => addWidget('backtest-editor')} style={menuItemStyle}>
+              BacktestEditor
+            </button>
           </div>
         )}
       </div>
@@ -114,8 +129,8 @@ export function WidgetCanvas() {
             title={WIDGET_TITLES[w.type]}
             initialX={w.x}
             initialY={w.y}
-            initialWidth={DEFAULT_WIDTH}
-            initialHeight={DEFAULT_HEIGHT}
+            initialWidth={w.width}
+            initialHeight={w.height}
             zIndex={w.zIndex}
             onClose={() => removeWidget(w.id)}
             onFocus={() => focusWidget(w.id)}
@@ -132,6 +147,8 @@ export function WidgetCanvas() {
               <IndexChartWidget group={w.group} />
             ) : w.type === 'precedent-editor' ? (
               <PrecedentEditorWidget group={w.group} />
+            ) : w.type === 'backtest-editor' ? (
+              <BacktestEditorWidget />
             ) : (
               <EventStudyWidget group={w.group} />
             )}
