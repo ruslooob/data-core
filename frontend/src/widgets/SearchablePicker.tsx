@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface SearchablePickerProps<T> {
   items: T[]
@@ -29,12 +30,18 @@ export function SearchablePicker<T>({
 }: SearchablePickerProps<T>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const rootRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (
+        buttonRef.current && !buttonRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
         setOpen(false)
       }
     }
@@ -49,13 +56,18 @@ export function SearchablePicker<T>({
   }, [items, search, getName])
 
   const openDropdown = () => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      setPos({ top: rect.bottom + 4, left: rect.left })
+    }
     setSearch('')
     setOpen(true)
   }
 
   return (
-    <div ref={rootRef} style={containerStyle}>
+    <>
       <button
+        ref={buttonRef}
         style={iconButtonStyle}
         title={title}
         onClick={openDropdown}
@@ -63,8 +75,11 @@ export function SearchablePicker<T>({
       >
         <SearchIcon />
       </button>
-      {open && (
-        <div style={{ ...dropdownStyle, width }}>
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ ...dropdownStyle, top: pos.top, left: pos.left, width }}
+        >
           <input
             type="text"
             placeholder="Поиск по имени"
@@ -91,9 +106,10 @@ export function SearchablePicker<T>({
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
 
@@ -115,10 +131,6 @@ function SearchIcon() {
   )
 }
 
-const containerStyle: React.CSSProperties = {
-  position: 'relative',
-}
-
 const iconButtonStyle: React.CSSProperties = {
   width: 28,
   height: 28,
@@ -134,9 +146,7 @@ const iconButtonStyle: React.CSSProperties = {
 }
 
 const dropdownStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: 0,
+  position: 'fixed',
   background: '#fff',
   border: '1px solid #ccc',
   borderRadius: 4,
@@ -144,7 +154,7 @@ const dropdownStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   maxHeight: 280,
-  zIndex: 1000,
+  zIndex: 10000,
   overflow: 'hidden',
 }
 

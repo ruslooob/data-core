@@ -40,3 +40,22 @@ class DividendDataProvider:
                 year=int(row["year"]),
             ))
         return events
+
+    def load_payments_by_date(self) -> dict[tuple[date, str], float]:
+        """Карта `(payment_date, ticker) → dividend_per_share`.
+
+        Используется бэктест-движком: на каждом тике он смотрит, есть ли
+        в этой карте записи с `payment_date == :tick` для тикеров в портфеле,
+        и автоматически начисляет выплату. См. Часть 3.3 драфта бэктеста.
+        """
+        df = pd.read_csv(DIVIDENDS_PATH)
+        df["payment_date"] = pd.to_datetime(df["payment_date"], dayfirst=True)
+        if self._max_date is not None:
+            df = df[df["payment_date"] <= self._max_date]
+        result: dict[tuple[date, str], float] = {}
+        for _, row in df.iterrows():
+            key = (row["payment_date"].date(), str(row["ticker"]).upper())
+            # При коллизии (две выплаты в один день для одного тикера, что редкость)
+            # — суммируем, иначе вторая теряется молча.
+            result[key] = result.get(key, 0.0) + float(row["dividend_per_share"])
+        return result

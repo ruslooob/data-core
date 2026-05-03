@@ -1,15 +1,34 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  cancelBacktestRun,
   createEnvironment,
   createRule,
   createStrategy,
+  deleteBacktestResult,
   deleteStrategy,
+  getBacktestResult,
+  getBacktestRunLog,
+  getBacktestRunProgress,
+  listBacktestResults,
   listEnvironments,
   listRules,
   listStrategies,
   renameStrategy,
+  startBacktestRun,
+  updateEnvironmentDescription,
+  updateRuleDescription,
+  updateStrategyDescription,
 } from '../api/client'
-import type { ActionType, Environment, Rule, Strategy } from '../api/types'
+import type {
+  ActionType,
+  BacktestResultDetail,
+  BacktestResultMeta,
+  BacktestRunProgress,
+  Environment,
+  Rule,
+  Strategy,
+} from '../api/types'
+import { EquityCurveChart } from './EquityCurveChart'
 import { SearchablePicker } from './SearchablePicker'
 import { SqlEditor } from './SqlEditor'
 
@@ -17,7 +36,7 @@ import { SqlEditor } from './SqlEditor'
 
 type EnvDraft =
   | { kind: 'none' }
-  | { kind: 'inline'; name: string; dateStart: string; dateEnd: string; startingCapital: string }
+  | { kind: 'inline'; name: string; dateStart: string; dateEnd: string; startingCapital: string; description: string }
   | { kind: 'imported'; envId: string }
 
 interface InlineRuleDraft {
@@ -26,6 +45,7 @@ interface InlineRuleDraft {
   actionType: ActionType
   actionQuantitySql: string
   priority: string
+  description: string
 }
 
 type RuleDraft = {
@@ -38,6 +58,7 @@ type RuleDraft = {
 
 interface FormState {
   name: string
+  description: string
   env: EnvDraft
   rules: RuleDraft[]
   envExpanded: boolean
@@ -45,6 +66,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   name: '',
+  description: '',
   env: { kind: 'none' },
   rules: [],
   envExpanded: true,
@@ -56,6 +78,7 @@ const EMPTY_INLINE_RULE: InlineRuleDraft = {
   actionType: 'buy',
   actionQuantitySql: '',
   priority: '100',
+  description: '',
 }
 
 // ── Auto-name ──────────────────────────────────────────────────────────────
@@ -172,6 +195,7 @@ export function BacktestEditorWidget() {
             dateStart: env.dateStart,
             dateEnd: env.dateEnd,
             startingCapital: cap,
+            description: env.description.trim() || null,
           }),
         )
       }
@@ -202,6 +226,7 @@ export function BacktestEditorWidget() {
               actionType: inline.actionType,
               actionQuantitySql: inline.actionQuantitySql,
               priority,
+              description: inline.description.trim() || null,
             }),
           )
           ruleIds.push(created.id)
@@ -210,7 +235,7 @@ export function BacktestEditorWidget() {
 
       // 3. Создать стратегию
       const created = await withCollisionRetry(form.name.trim(), (n) =>
-        createStrategy({ name: n, ruleIds }),
+        createStrategy({ name: n, ruleIds, description: form.description.trim() || null }),
       )
 
       await refresh()
@@ -298,6 +323,8 @@ export function BacktestEditorWidget() {
             <ViewPanel
               strategy={selectedStrategy}
               ruleById={ruleById}
+              environments={environments}
+              envById={envById}
               onRename={(name) => onRenameStrategy(selectedStrategy.id, name)}
               onDelete={() => onDeleteStrategy(selectedStrategy.id)}
             />
@@ -405,6 +432,13 @@ function CreateForm(props: {
           </button>
         </div>
       </div>
+      <textarea
+        value={form.description}
+        onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+        placeholder="Описание стратегии (опционально)"
+        style={descriptionTextareaStyle}
+        rows={2}
+      />
 
       {/* Секция Environment */}
       <Section
@@ -509,6 +543,7 @@ function EnvSection(props: {
                 dateStart: '2020-01-01',
                 dateEnd: '2025-12-31',
                 startingCapital: '1000000',
+                description: '',
               })
             }
           >
@@ -536,6 +571,11 @@ function EnvSection(props: {
         </div>
         <div style={envCardRowStyle}>период: {e.dateStart} — {e.dateEnd}</div>
         <div style={envCardRowStyle}>стартовый капитал: {e.startingCapital.toLocaleString('ru-RU')}</div>
+        <DescriptionEditor
+          initial={e.description}
+          placeholder="Описание окружения"
+          onSave={async (text) => { await updateEnvironmentDescription(e.id, text) }}
+        />
       </div>
     )
   }
@@ -582,6 +622,13 @@ function EnvSection(props: {
           />
         </label>
       </div>
+      <textarea
+        value={env.description}
+        onChange={(e2) => setEnv({ ...env, description: e2.target.value })}
+        placeholder="Описание окружения (опционально)"
+        rows={2}
+        style={descriptionTextareaStyle}
+      />
     </div>
   )
 }
@@ -705,6 +752,15 @@ function InlineRuleEditor(props: {
           minHeight={60}
         />
       </label>
+      <label style={fieldLabelStyle}>
+        Описание (опционально)
+        <textarea
+          value={data.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          rows={2}
+          style={descriptionTextareaStyle}
+        />
+      </label>
     </div>
   )
 }
@@ -735,6 +791,14 @@ function ImportedRuleView(props: { rule: Rule }) {
         <span style={fieldLabelStyle}>Action quantity SQL</span>
         <SqlEditor value={rule.actionQuantitySql} onChange={() => { /* read-only */ }} readOnly minHeight={60} />
       </div>
+      <div>
+        <span style={fieldLabelStyle}>Описание (можно изменить)</span>
+        <DescriptionEditor
+          initial={rule.description}
+          placeholder="Описание правила"
+          onSave={async (text) => { await updateRuleDescription(rule.id, text) }}
+        />
+      </div>
     </div>
   )
 }
@@ -763,16 +827,76 @@ function ImportRulePicker(props: {
 function ViewPanel(props: {
   strategy: Strategy
   ruleById: Map<string, Rule>
+  environments: Environment[]
+  envById: Map<string, Environment>
   onRename: (name: string) => void
   onDelete: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [draftName, setDraftName] = useState(props.strategy.name)
 
+  // Прогон
+  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null)
+  const [activeRun, setActiveRun] = useState<BacktestRunProgress | null>(null)
+  const [runError, setRunError] = useState<string | null>(null)
+  const [runs, setRuns] = useState<BacktestResultMeta[]>([])
+  const [openRunDetail, setOpenRunDetail] = useState<BacktestResultDetail | null>(null)
+  const [openRunLoading, setOpenRunLoading] = useState(false)
+  const running = activeRun?.status === 'running'
+
+  const refreshRuns = useCallback(async () => {
+    try {
+      const all = await listBacktestResults()
+      setRuns(all.filter((r) => r.strategyId === props.strategy.id))
+    } catch {
+      // молча
+    }
+  }, [props.strategy.id])
+
   useEffect(() => {
     setRenaming(false)
     setDraftName(props.strategy.name)
-  }, [props.strategy.id, props.strategy.name])
+    setSelectedEnvId(null)
+    setRunError(null)
+    setActiveRun(null)
+    setOpenRunDetail(null)
+    void refreshRuns()
+  }, [props.strategy.id, props.strategy.name, refreshRuns])
+
+  // Polling прогресса активного прогона раз в секунду.
+  // Зависим только от runId, чтобы обновление полей activeRun (через setActiveRun
+  // внутри tick'а) не cleanup'ило сам интервал и не отменяло pending getBacktestResult.
+  const runId = activeRun?.runId ?? null
+  useEffect(() => {
+    if (!runId) return
+    let stopped = false
+    const tick = async () => {
+      try {
+        const p = await getBacktestRunProgress(runId)
+        if (stopped) return
+        setActiveRun(p)
+        if (p.status === 'done' && p.resultId) {
+          stopped = true
+          clearInterval(handle)
+          await refreshRuns()
+          const detail = await getBacktestResult(p.resultId)
+          setOpenRunDetail(detail)
+        } else if (p.status === 'error') {
+          stopped = true
+          clearInterval(handle)
+          setRunError(p.errorMessage ?? 'Ошибка прогона')
+        } else if (p.status === 'cancelled') {
+          stopped = true
+          clearInterval(handle)
+        }
+      } catch (e) {
+        setRunError(e instanceof Error ? e.message : String(e))
+      }
+    }
+    const handle = setInterval(() => { void tick() }, 1000)
+    void tick()  // первый poll сразу, без секундной задержки
+    return () => { stopped = true; clearInterval(handle) }
+  }, [runId, refreshRuns])
 
   const submitRename = () => {
     const next = draftName.trim()
@@ -781,6 +905,71 @@ function ViewPanel(props: {
     }
     setRenaming(false)
   }
+
+  const onRun = async () => {
+    if (!selectedEnvId) {
+      setRunError('Выберите окружение')
+      return
+    }
+    setRunError(null)
+    setOpenRunDetail(null)
+    try {
+      const started = await startBacktestRun({
+        strategyId: props.strategy.id,
+        environmentId: selectedEnvId,
+      })
+      // ставим начальное состояние; useEffect выше начнёт polling.
+      setActiveRun({
+        runId: started.runId,
+        strategyId: props.strategy.id,
+        environmentId: selectedEnvId,
+        status: 'running',
+        progress: 0,
+        currentDate: null,
+        currentEquity: null,
+        nTradesSoFar: 0,
+        done: false,
+        resultId: null,
+        errorMessage: null,
+      })
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const onCancelRun = async () => {
+    if (!activeRun || activeRun.status !== 'running') return
+    try {
+      await cancelBacktestRun(activeRun.runId)
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const onOpenRun = async (id: string) => {
+    setOpenRunLoading(true)
+    try {
+      const detail = await getBacktestResult(id)
+      setOpenRunDetail(detail)
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setOpenRunLoading(false)
+    }
+  }
+
+  const onDeleteRun = async (id: string) => {
+    if (!confirm('Удалить прогон и его сделки?')) return
+    try {
+      await deleteBacktestResult(id)
+      if (openRunDetail?.id === id) setOpenRunDetail(null)
+      await refreshRuns()
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const selectedEnv = selectedEnvId ? props.envById.get(selectedEnvId) : null
 
   return (
     <div style={viewStyle}>
@@ -813,6 +1002,86 @@ function ViewPanel(props: {
         </div>
       </div>
       <div style={viewMetaStyle}>Создана: {props.strategy.createdAt}</div>
+      <StrategyDescriptionEditor strategy={props.strategy} onSaved={refreshRuns} />
+
+      {/* Запуск прогона */}
+      <div style={viewSectionTitleStyle}>Запустить прогон</div>
+      <div style={runRowStyle}>
+        <span style={runLabelStyle}>Окружение:</span>
+        <span>
+          {selectedEnv
+            ? <span>{selectedEnv.name} <span style={ruleMetaStyle}>{selectedEnv.dateStart}…{selectedEnv.dateEnd}</span></span>
+            : <span style={mutedHintStyle}>не выбрано</span>}
+        </span>
+        <SearchablePicker<Environment>
+          items={props.environments}
+          getKey={(e) => e.id}
+          getName={(e) => e.name}
+          renderMeta={(e) => `${e.dateStart}…${e.dateEnd}`}
+          onPick={(e) => setSelectedEnvId(e.id)}
+          title="Выбрать окружение"
+        />
+        <button
+          style={primaryButtonStyle}
+          disabled={running}
+          onClick={onRun}
+          title={selectedEnvId ? 'Запустить прогон' : 'Сначала выберите окружение'}
+        >
+          {running ? 'Идёт прогон…' : 'Запустить прогон'}
+        </button>
+        {running && (
+          <button style={dangerButtonStyle} onClick={onCancelRun}>
+            Отменить
+          </button>
+        )}
+        {!selectedEnvId && !running && (
+          <span style={validationHintStyle}>Выберите окружение</span>
+        )}
+      </div>
+      {activeRun && activeRun.status === 'running' && (
+        <RunProgressBar progress={activeRun} />
+      )}
+      {activeRun && activeRun.status === 'cancelled' && (
+        <div style={mutedHintStyle}>Прогон отменён</div>
+      )}
+      {runError && <div style={errorBannerStyle}>{runError}</div>}
+
+      {/* История прогонов */}
+      {runs.length > 0 && (
+        <>
+          <div style={viewSectionTitleStyle}>Прогоны этой стратегии ({runs.length})</div>
+          <div style={runListStyle}>
+            {runs.map((r) => {
+              const env = props.envById.get(r.environmentId)
+              return (
+                <div
+                  key={r.id}
+                  style={openRunDetail?.id === r.id ? runListItemActiveStyle : runListItemStyle}
+                  onClick={() => void onOpenRun(r.id)}
+                >
+                  <span style={runListNameStyle}>
+                    {env?.name ?? '(окружение удалено)'} <span style={ruleMetaStyle}>{r.createdAt}</span>
+                  </span>
+                  <span style={runListMetricsStyle}>
+                    return={r.totalReturnPct.toFixed(2)}% · trades={r.nTrades}
+                  </span>
+                  <button
+                    style={iconBtnStyle}
+                    title="Удалить прогон"
+                    onClick={(ev) => { ev.stopPropagation(); void onDeleteRun(r.id) }}
+                  >×</button>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Карточка открытого результата */}
+      {openRunLoading && <div style={mutedHintStyle}>Загрузка…</div>}
+      {openRunDetail && <ResultCard result={openRunDetail} />}
+
+      {/* Правила */}
       <div style={viewSectionTitleStyle}>Правила в порядке исполнения</div>
       <div style={ruleListReadOnlyStyle}>
         {props.strategy.ruleIds.map((rid, i) => {
@@ -839,6 +1108,222 @@ function ViewPanel(props: {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function DescriptionEditor(props: {
+  initial: string | null | undefined
+  onSave: (text: string) => Promise<unknown>
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState(props.initial ?? '')
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setDraft(props.initial ?? '') }, [props.initial])
+  const onSave = async () => {
+    setSaving(true)
+    try {
+      await props.onSave(draft)
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+  if (!editing) {
+    return (
+      <div style={descViewStyle} onClick={() => setEditing(true)} title="Кликни чтобы изменить">
+        {(props.initial && props.initial.trim())
+          ? props.initial
+          : <span style={mutedHintStyle}>{props.placeholder ?? 'Кликни, чтобы добавить описание'}</span>}
+      </div>
+    )
+  }
+  return (
+    <div style={descEditWrapStyle}>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={props.placeholder}
+        rows={3}
+        style={descriptionTextareaStyle}
+        autoFocus
+      />
+      <div style={formActionsStyle}>
+        <button style={primaryButtonStyle} disabled={saving} onClick={onSave}>
+          {saving ? 'Сохранение…' : 'Сохранить'}
+        </button>
+        <button style={secondaryButtonStyle} onClick={() => { setDraft(props.initial ?? ''); setEditing(false) }} disabled={saving}>
+          Отмена
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function StrategyDescriptionEditor(props: { strategy: Strategy; onSaved: () => void }) {
+  return (
+    <DescriptionEditor
+      initial={props.strategy.description}
+      placeholder="Описание стратегии"
+      onSave={async (text) => {
+        await updateStrategyDescription(props.strategy.id, text)
+        props.onSaved()
+      }}
+    />
+  )
+}
+
+function RunProgressBar(props: { progress: BacktestRunProgress }) {
+  const p = props.progress
+  const pct = Math.round(p.progress * 100)
+  return (
+    <div style={progressWrapStyle}>
+      <div style={progressBarOuterStyle}>
+        <div style={{ ...progressBarInnerStyle, width: `${pct}%` }} />
+      </div>
+      <div style={progressMetaStyle}>
+        <span>{pct}%</span>
+        {p.currentDate && <span>дата: {p.currentDate}</span>}
+        {p.currentEquity != null && <span>equity: {p.currentEquity.toFixed(0)}</span>}
+        <span>сделок: {p.nTradesSoFar}</span>
+      </div>
+      <RunLogTail runId={p.runId} active={p.status === 'running'} />
+    </div>
+  )
+}
+
+function RunLogTail(props: { runId: string; active: boolean }) {
+  const [text, setText] = useState('')
+  const [collapsed, setCollapsed] = useState(false)
+  const cursorRef = useRef(0)
+  const containerRef = useRef<HTMLPreElement>(null)
+
+  useEffect(() => {
+    if (!props.runId) return
+    cursorRef.current = 0
+    setText('')
+    let stopped = false
+    const tick = async () => {
+      try {
+        const chunk = await getBacktestRunLog(props.runId, cursorRef.current)
+        if (stopped) return
+        if (chunk.content) {
+          setText((prev) => prev + chunk.content)
+          // Прокручиваем в конец после следующего рендера.
+          setTimeout(() => {
+            const el = containerRef.current
+            if (el) el.scrollTop = el.scrollHeight
+          }, 0)
+        }
+        cursorRef.current = chunk.next_byte
+      } catch {
+        // лог-файла ещё нет / 404 — молча, попробуем в следующий тик
+      }
+    }
+    void tick()
+    if (!props.active) return
+    const handle = setInterval(() => { void tick() }, 1000)
+    return () => { stopped = true; clearInterval(handle) }
+  }, [props.runId, props.active])
+
+  return (
+    <div style={logSectionStyle}>
+      <div style={logHeaderStyle}>
+        <span style={cardSubtitleStyle}>Лог прогона</span>
+        <button style={iconBtnStyle} onClick={() => setCollapsed(!collapsed)}>
+          {collapsed ? '▸' : '▾'}
+        </button>
+      </div>
+      {!collapsed && (
+        <pre ref={containerRef} style={logBodyStyle}>{text || '(лог пуст)'}</pre>
+      )}
+    </div>
+  )
+}
+
+function ResultCard(props: { result: BacktestResultDetail }) {
+  const r = props.result
+  const fmtPct = (v: number) => `${v.toFixed(2)}%`
+  const fmtNum = (v: number | null) => v == null ? '—' : v.toFixed(2)
+  return (
+    <div style={resultCardStyle}>
+      <div style={resultHeaderStyle}>Результат прогона <span style={ruleMetaStyle}>{r.createdAt}</span></div>
+      {(r.strategy || r.environment) && (
+        <div style={metricsGridStyle}>
+          {r.strategy && (
+            <div style={cardSubsectionStyle}>
+              <div style={cardSubtitleStyle}>Стратегия</div>
+              <div>{r.strategy.name}</div>
+              {r.strategy.description && (
+                <div style={mutedHintStyle}>{r.strategy.description}</div>
+              )}
+            </div>
+          )}
+          {r.environment && (
+            <div style={cardSubsectionStyle}>
+              <div style={cardSubtitleStyle}>Окружение</div>
+              <div>{r.environment.name}</div>
+              <div style={mutedHintStyle}>
+                {r.environment.dateStart} — {r.environment.dateEnd},{' '}
+                {r.environment.startingCapital.toLocaleString('ru-RU')}
+              </div>
+              {r.environment.description && (
+                <div style={mutedHintStyle}>{r.environment.description}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <div style={metricsGridStyle}>
+        <Metric label="Σ доходность" value={fmtPct(r.totalReturnPct)} />
+        <Metric label="Год. доходность" value={fmtPct(r.annualReturnPct)} />
+        <Metric label="Макс. просадка" value={fmtPct(r.maxDrawdownPct)} />
+        <Metric label="Sharpe" value={r.sharpe.toFixed(2)} />
+        <Metric label="Сделок" value={String(r.nTrades)} />
+        <Metric label="Profit factor" value={fmtNum(r.profitFactor)} />
+        <Metric label="Win rate" value={r.winRatePct == null ? '—' : fmtPct(r.winRatePct)} />
+      </div>
+      <div style={tradesSectionTitleStyle}>Equity-кривая ({r.equityCurve.length} точек)</div>
+      <EquityCurveChart data={r.equityCurve} height={260} />
+      <div style={tradesSectionTitleStyle}>Журнал сделок ({r.trades.length})</div>
+      <div style={tradesTableWrapperStyle}>
+        <table style={tradesTableStyle}>
+          <thead>
+            <tr>
+              <th style={tradesThStyle}>Дата</th>
+              <th style={tradesThStyle}>Тикер</th>
+              <th style={tradesThStyle}>Тип</th>
+              <th style={tradesThStyle}>Кол-во</th>
+              <th style={tradesThStyle}>Цена</th>
+              <th style={tradesThStyle}>PnL</th>
+              <th style={tradesThStyle}>Правило</th>
+            </tr>
+          </thead>
+          <tbody>
+            {r.trades.map((t, i) => (
+              <tr key={i}>
+                <td style={tradesTdStyle}>{t.tradeDate}</td>
+                <td style={tradesTdStyle}>{t.ticker}</td>
+                <td style={tradesTdStyle}>{t.type}</td>
+                <td style={tradesTdStyle}>{t.quantity}</td>
+                <td style={tradesTdStyle}>{t.price.toFixed(2)}</td>
+                <td style={tradesTdStyle}>{t.pnlRealized == null ? '—' : t.pnlRealized.toFixed(2)}</td>
+                <td style={tradesTdStyle}>{t.ruleName}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function Metric(props: { label: string; value: string }) {
+  return (
+    <div style={metricCellStyle}>
+      <div style={metricLabelStyle}>{props.label}</div>
+      <div style={metricValueStyle}>{props.value}</div>
     </div>
   )
 }
@@ -1217,4 +1702,237 @@ const ruleListItemMissingStyle: React.CSSProperties = {
   fontStyle: 'italic',
   border: '1px solid #f5a8a3',
   borderRadius: 4,
+}
+
+const runRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+}
+
+const runLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#555',
+  fontWeight: 600,
+}
+
+const runListStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  border: '1px solid #eee',
+  borderRadius: 4,
+}
+
+const runListItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '6px 10px',
+  fontSize: 12,
+  cursor: 'pointer',
+  borderBottom: '1px solid #f5f5f5',
+  gap: 8,
+}
+
+const runListItemActiveStyle: React.CSSProperties = {
+  ...runListItemStyle,
+  background: '#eaf2ff',
+  fontWeight: 600,
+}
+
+const runListNameStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const runListMetricsStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: '#666',
+  fontFamily: 'Consolas, Menlo, monospace',
+}
+
+const resultCardStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  padding: 10,
+  border: '1px solid #cdd9f0',
+  borderRadius: 6,
+  background: '#f7faff',
+}
+
+const resultHeaderStyle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 600,
+}
+
+const metricsGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+  gap: 8,
+}
+
+const metricCellStyle: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  padding: '6px 10px',
+}
+
+const metricLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: '#888',
+}
+
+const metricValueStyle: React.CSSProperties = {
+  fontSize: 16,
+  fontWeight: 600,
+  fontFamily: 'Consolas, Menlo, monospace',
+}
+
+const tradesSectionTitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#555',
+  marginTop: 4,
+}
+
+const tradesTableWrapperStyle: React.CSSProperties = {
+  maxHeight: 320,
+  overflowY: 'auto',
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  background: '#fff',
+}
+
+const tradesTableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: 12,
+  fontFamily: 'Consolas, Menlo, monospace',
+}
+
+const tradesThStyle: React.CSSProperties = {
+  textAlign: 'left',
+  padding: '4px 8px',
+  background: '#f5f5f5',
+  borderBottom: '1px solid #e0e0e0',
+  position: 'sticky',
+  top: 0,
+}
+
+const tradesTdStyle: React.CSSProperties = {
+  padding: '3px 8px',
+  borderBottom: '1px solid #f0f0f0',
+  whiteSpace: 'nowrap',
+}
+
+const progressWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  padding: '6px 0',
+}
+
+const progressBarOuterStyle: React.CSSProperties = {
+  width: '100%',
+  height: 8,
+  background: '#eee',
+  borderRadius: 4,
+  overflow: 'hidden',
+}
+
+const progressBarInnerStyle: React.CSSProperties = {
+  height: '100%',
+  background: '#2962FF',
+  transition: 'width 0.3s',
+}
+
+const progressMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 12,
+  fontSize: 12,
+  color: '#555',
+  fontFamily: 'Consolas, Menlo, monospace',
+}
+
+const validationHintStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#a01919',
+  fontStyle: 'italic',
+}
+
+const descriptionTextareaStyle: React.CSSProperties = {
+  fontSize: 13,
+  padding: '6px 8px',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  outline: 'none',
+  fontFamily: 'inherit',
+  resize: 'vertical',
+}
+
+const descViewStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  fontSize: 13,
+  background: '#fafafa',
+  border: '1px dashed #ccc',
+  borderRadius: 4,
+  cursor: 'pointer',
+  whiteSpace: 'pre-wrap',
+  minHeight: 24,
+}
+
+const descEditWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+}
+
+const cardSubsectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  padding: 8,
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  background: '#fff',
+}
+
+const cardSubtitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#555',
+}
+
+const logSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  marginTop: 4,
+}
+
+const logHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+}
+
+const logBodyStyle: React.CSSProperties = {
+  fontFamily: 'Consolas, Menlo, monospace',
+  fontSize: 11,
+  color: '#333',
+  background: '#fafafa',
+  border: '1px solid #e0e0e0',
+  borderRadius: 4,
+  margin: 0,
+  padding: 8,
+  maxHeight: 220,
+  overflowY: 'auto',
+  whiteSpace: 'pre',
 }

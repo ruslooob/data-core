@@ -424,32 +424,35 @@ def _validate_name(name: str) -> str:
     return name
 
 
-def _rename_with_fk_workaround(
+def _update_with_fk_workaround(
         con,
         parent_table: str,
         parent_id: str,
-        new_name: str,
+        column: str,
+        new_value,
         child_fk_col: str,
 ) -> None:
-    """Переименование записи parent_table в обход ограничения DuckDB на UPDATE.
+    """Обновление колонки в parent_table в обход ограничения DuckDB.
 
-    DuckDB переписывает любой UPDATE на родительской таблице в DELETE+INSERT и
-    падает на FK-проверке от дочерних строк, даже когда меняется только поле
-    `name`, а не PK. Это «Over-Eager Constraint Checking in Foreign Keys» из
-    документации DuckDB. Прямой `UPDATE strategies SET name = ?` валится с
-    ConstraintException, как только у стратегии есть хотя бы одна связка.
+    DuckDB переписывает любой UPDATE на родительской таблице в DELETE+INSERT
+    и падает на FK-проверке от дочерних строк, даже когда меняется только
+    скалярная колонка, не PK. Это «Over-Eager Constraint Checking in
+    Foreign Keys» из документации DuckDB. Прямой UPDATE валится с
+    ConstraintException, как только у записи есть хотя бы одна дочерняя
+    ссылка.
 
-    Обход: снять дочерние строки из strategy_rules, переименовать родителя,
-    вернуть дочерние строки на место. BEGIN/COMMIT не помогает: внутри одной
-    транзакции DuckDB всё равно проверяет FK по pre-transaction-снапшоту и
-    падает, как будто строки не удалены. Поэтому делаем три отдельных команды
-    в режиме автокоммита. Атомарности на уровне БД нет, но при ошибке UPDATE
-    дочерние строки руками восстанавливаются из python-бэкапа.
+    Обход: снять дочерние строки из strategy_rules, обновить колонку у
+    родителя, вернуть дочерние строки на место. BEGIN/COMMIT не помогает:
+    внутри одной транзакции DuckDB всё равно проверяет FK по
+    pre-transaction-снапшоту и падает, как будто строки не удалены.
+    Поэтому делаем три отдельных команды в режиме автокоммита.
 
     Параметры:
-        parent_table:  'strategies' или 'rules' — таблица, чьё имя меняется.
-        parent_id:     id переименовываемой записи.
-        new_name:      новое имя.
+        parent_table:  'strategies' или 'rules'.
+        parent_id:     id обновляемой записи.
+        column:        имя колонки ('name' или 'description'). Не пользовательский
+                       вход, прямой interpolation в SQL безопасен.
+        new_value:     новое значение колонки.
         child_fk_col:  колонка в strategy_rules, ссылающаяся на parent_table.
                        'strategy_id' для strategies, 'rule_id' для rules.
     """
@@ -463,10 +466,10 @@ def _rename_with_fk_workaround(
     )
     try:
         con.execute(
-            f'UPDATE {parent_table} SET name = ? WHERE id = ?', [new_name, parent_id],
+            f'UPDATE {parent_table} SET {column} = ? WHERE id = ?',
+            [new_value, parent_id],
         )
     except Exception:
-        # UPDATE упал — вернуть дочерние строки, чтобы не оставить записи без связок.
         for s_id, r_id, position in backup:
             con.execute(
                 'INSERT INTO strategy_rules VALUES (?, ?, ?)',
@@ -480,6 +483,11 @@ def _rename_with_fk_workaround(
         )
 
 
+def _rename_with_fk_workaround(con, parent_table, parent_id, new_name, child_fk_col):
+    """Совместимая обёртка над `_update_with_fk_workaround` для кейса rename."""
+    _update_with_fk_workaround(con, parent_table, parent_id, 'name', new_name, child_fk_col)
+
+
 # ---- Rule ----
 
 class RuleOut(CamelModel):
@@ -490,6 +498,7 @@ class RuleOut(CamelModel):
     action_quantity_sql: str
     priority: int
     created_at: str
+    description: str | None = None
 
 
 class RuleCreate(CamelModel):
@@ -498,16 +507,22 @@ class RuleCreate(CamelModel):
     action_type: str
     action_quantity_sql: str
     priority: int
+    description: str | None = None
 
 
 class RenameRequest(CamelModel):
     name: str
 
 
+class DescriptionRequest(CamelModel):
+    description: str | None = None
+
+
 def _row_to_rule(row) -> RuleOut:
     return RuleOut(
         id=row[0], name=row[1], trigger_sql=row[2], action_type=row[3],
         action_quantity_sql=row[4], priority=row[5], created_at=row[6],
+        description=row[7] if len(row) > 7 else None,
     )
 
 
@@ -515,7 +530,8 @@ def _row_to_rule(row) -> RuleOut:
 def list_rules() -> list[RuleOut]:
     con = _get_precedent_engine()
     rows = con.execute("""
-        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority, created_at
+        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
+               created_at, description
         FROM rules ORDER BY created_at DESC
     """).fetchall()
     return [_row_to_rule(r) for r in rows]
@@ -538,13 +554,28 @@ def create_rule(req: RuleCreate) -> RuleOut:
     rule_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [rule_id, name, req.trigger_sql, req.action_type, req.action_quantity_sql, req.priority, created_at],
+        'INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [rule_id, name, req.trigger_sql, req.action_type, req.action_quantity_sql,
+         req.priority, created_at, req.description],
     )
     return RuleOut(
         id=rule_id, name=name, trigger_sql=req.trigger_sql, action_type=req.action_type,
-        action_quantity_sql=req.action_quantity_sql, priority=req.priority, created_at=created_at,
+        action_quantity_sql=req.action_quantity_sql, priority=req.priority,
+        created_at=created_at, description=req.description,
     )
+
+
+@app.patch('/api/rules/{rule_id}/description', response_model_by_alias=True)
+def update_rule_description(rule_id: str, req: DescriptionRequest) -> RuleOut:
+    con = _get_precedent_engine()
+    if con.execute('SELECT 1 FROM rules WHERE id = ? LIMIT 1', [rule_id]).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Правило не найдено')
+    _update_with_fk_workaround(con, 'rules', rule_id, 'description', req.description, 'rule_id')
+    row = con.execute("""
+        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
+               created_at, description FROM rules WHERE id = ?
+    """, [rule_id]).fetchone()
+    return _row_to_rule(row)
 
 
 @app.patch('/api/rules/{rule_id}', response_model_by_alias=True)
@@ -552,7 +583,8 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     name = _validate_name(req.name)
     con = _get_precedent_engine()
     row = con.execute("""
-        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority, created_at
+        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
+               created_at, description
         FROM rules WHERE id = ?
     """, [rule_id]).fetchone()
     if row is None:
@@ -564,6 +596,7 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     return RuleOut(
         id=row[0], name=name, trigger_sql=row[2], action_type=row[3],
         action_quantity_sql=row[4], priority=row[5], created_at=row[6],
+        description=row[7],
     )
 
 
@@ -593,11 +626,13 @@ class StrategyOut(CamelModel):
     name: str
     rule_ids: list[str]
     created_at: str
+    description: str | None = None
 
 
 class StrategyCreate(CamelModel):
     name: str
     rule_ids: list[str]
+    description: str | None = None
 
 
 def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
@@ -612,12 +647,31 @@ def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
 def list_strategies() -> list[StrategyOut]:
     con = _get_precedent_engine()
     rows = con.execute(
-        'SELECT id, name, created_at FROM strategies ORDER BY created_at DESC'
+        'SELECT id, name, created_at, description FROM strategies ORDER BY created_at DESC'
     ).fetchall()
     return [
-        StrategyOut(id=r[0], name=r[1], rule_ids=_strategy_rule_ids(con, r[0]), created_at=r[2])
+        StrategyOut(
+            id=r[0], name=r[1], rule_ids=_strategy_rule_ids(con, r[0]),
+            created_at=r[2], description=r[3],
+        )
         for r in rows
     ]
+
+
+@app.patch('/api/strategies/{strategy_id}/description', response_model_by_alias=True)
+def update_strategy_description(strategy_id: str, req: DescriptionRequest) -> StrategyOut:
+    con = _get_precedent_engine()
+    row = con.execute(
+        'SELECT id, name, created_at FROM strategies WHERE id = ?', [strategy_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Стратегия не найдена')
+    _update_with_fk_workaround(con, 'strategies', strategy_id, 'description', req.description, 'strategy_id')
+    return StrategyOut(
+        id=row[0], name=row[1],
+        rule_ids=_strategy_rule_ids(con, row[0]),
+        created_at=row[2], description=req.description,
+    )
 
 
 @app.post('/api/strategies', response_model_by_alias=True, status_code=201)
@@ -643,13 +697,19 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
 
     strategy_id = str(_uuid.uuid4())
     created_at = _now_iso()
-    con.execute('INSERT INTO strategies VALUES (?, ?, ?)', [strategy_id, name, created_at])
+    con.execute(
+        'INSERT INTO strategies VALUES (?, ?, ?, ?)',
+        [strategy_id, name, created_at, req.description],
+    )
     for position, rule_id in enumerate(req.rule_ids):
         con.execute(
             'INSERT INTO strategy_rules VALUES (?, ?, ?)',
             [strategy_id, rule_id, position],
         )
-    return StrategyOut(id=strategy_id, name=name, rule_ids=list(req.rule_ids), created_at=created_at)
+    return StrategyOut(
+        id=strategy_id, name=name, rule_ids=list(req.rule_ids),
+        created_at=created_at, description=req.description,
+    )
 
 
 @app.patch('/api/strategies/{strategy_id}', response_model_by_alias=True)
@@ -657,7 +717,7 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     name = _validate_name(req.name)
     con = _get_precedent_engine()
     row = con.execute(
-        'SELECT id, name, created_at FROM strategies WHERE id = ?', [strategy_id],
+        'SELECT id, name, created_at, description FROM strategies WHERE id = ?', [strategy_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
@@ -668,7 +728,8 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
     _rename_with_fk_workaround(con, 'strategies', strategy_id, name, 'strategy_id')
     return StrategyOut(
-        id=row[0], name=name, rule_ids=_strategy_rule_ids(con, row[0]), created_at=row[2],
+        id=row[0], name=name, rule_ids=_strategy_rule_ids(con, row[0]),
+        created_at=row[2], description=row[3],
     )
 
 
@@ -677,8 +738,16 @@ def delete_strategy(strategy_id: str) -> None:
     con = _get_precedent_engine()
     if con.execute('SELECT 1 FROM strategies WHERE id = ? LIMIT 1', [strategy_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
-    # Каскад: сначала связки strategy_rules, потом саму стратегию.
-    # DuckDB не поддерживает ON DELETE CASCADE на FK, поэтому делаем вручную.
+    # Каскад: связки strategy_rules + все backtest_results (и их trade_journal),
+    # потом сама стратегия. DuckDB не поддерживает ON DELETE CASCADE на FK,
+    # поэтому чистим в коде в правильном порядке.
+    con.execute("""
+        DELETE FROM trade_journal
+        WHERE backtest_result_id IN (
+            SELECT id FROM backtest_results WHERE strategy_id = ?
+        )
+    """, [strategy_id])
+    con.execute('DELETE FROM backtest_results WHERE strategy_id = ?', [strategy_id])
     con.execute('DELETE FROM strategy_rules WHERE strategy_id = ?', [strategy_id])
     con.execute('DELETE FROM strategies WHERE id = ?', [strategy_id])
 
@@ -692,6 +761,7 @@ class EnvironmentOut(CamelModel):
     date_end: str
     starting_capital: float
     created_at: str
+    description: str | None = None
 
 
 class EnvironmentCreate(CamelModel):
@@ -699,6 +769,7 @@ class EnvironmentCreate(CamelModel):
     date_start: str
     date_end: str
     starting_capital: float
+    description: str | None = None
 
 
 def _row_to_env(row) -> EnvironmentOut:
@@ -707,6 +778,7 @@ def _row_to_env(row) -> EnvironmentOut:
         date_start=row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2]),
         date_end=row[3].isoformat() if hasattr(row[3], 'isoformat') else str(row[3]),
         starting_capital=float(row[4]), created_at=row[5],
+        description=row[6] if len(row) > 6 else None,
     )
 
 
@@ -714,10 +786,25 @@ def _row_to_env(row) -> EnvironmentOut:
 def list_environments() -> list[EnvironmentOut]:
     con = _get_precedent_engine()
     rows = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description
         FROM environments ORDER BY created_at DESC
     """).fetchall()
     return [_row_to_env(r) for r in rows]
+
+
+@app.patch('/api/environments/{env_id}/description', response_model_by_alias=True)
+def update_environment_description(env_id: str, req: DescriptionRequest) -> EnvironmentOut:
+    con = _get_precedent_engine()
+    row = con.execute("""
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description
+        FROM environments WHERE id = ?
+    """, [env_id]).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Окружение не найдено')
+    # У environments нет дочерних строк в strategy_rules, FK-проблема DuckDB
+    # к нему не относится — обычный UPDATE работает.
+    con.execute('UPDATE environments SET description = ? WHERE id = ?', [req.description, env_id])
+    return _row_to_env((row[0], row[1], row[2], row[3], row[4], row[5], req.description))
 
 
 @app.post('/api/environments', response_model_by_alias=True, status_code=201)
@@ -740,12 +827,13 @@ def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
     env_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO environments VALUES (?, ?, ?, ?, ?, ?)',
-        [env_id, name, ds, de, req.starting_capital, created_at],
+        'INSERT INTO environments VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [env_id, name, ds, de, req.starting_capital, created_at, req.description],
     )
     return EnvironmentOut(
         id=env_id, name=name, date_start=ds.isoformat(), date_end=de.isoformat(),
         starting_capital=req.starting_capital, created_at=created_at,
+        description=req.description,
     )
 
 
@@ -754,7 +842,7 @@ def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
     name = _validate_name(req.name)
     con = _get_precedent_engine()
     row = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description
         FROM environments WHERE id = ?
     """, [env_id]).fetchone()
     if row is None:
@@ -765,7 +853,7 @@ def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
     con.execute('UPDATE environments SET name = ? WHERE id = ?', [name, env_id])
-    return _row_to_env((row[0], name, row[2], row[3], row[4], row[5]))
+    return _row_to_env((row[0], name, row[2], row[3], row[4], row[5], row[6]))
 
 
 @app.delete('/api/environments/{env_id}', status_code=204)
@@ -773,5 +861,254 @@ def delete_environment(env_id: str) -> None:
     con = _get_precedent_engine()
     if con.execute('SELECT 1 FROM environments WHERE id = ? LIMIT 1', [env_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Окружение не найдено')
-    # backtest_results появятся позже — тогда здесь будет проверка ссылок и 409.
+    refs = con.execute(
+        'SELECT COUNT(*) FROM backtest_results WHERE environment_id = ?', [env_id],
+    ).fetchone()[0]
+    if refs > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f'Окружение использовано в {refs} прогонах. Сначала удалите эти прогоны.',
+        )
     con.execute('DELETE FROM environments WHERE id = ?', [env_id])
+
+
+# ── Бэктест: запуск прогона и результаты ───────────────────────────────────
+
+class BacktestRunRequest(CamelModel):
+    strategy_id: str
+    environment_id: str
+
+
+class TradeRecordOut(CamelModel):
+    trade_date: str
+    ticker: str
+    type: str
+    quantity: int
+    price: float
+    rule_name: str
+    pnl_realized: float | None
+
+
+class BacktestResultOut(CamelModel):
+    id: str
+    strategy_id: str
+    environment_id: str
+    created_at: str
+    total_return_pct: float
+    annual_return_pct: float
+    max_drawdown_pct: float
+    sharpe: float
+    n_trades: int
+    profit_factor: float | None
+    win_rate_pct: float | None
+
+
+class BacktestResultDetailOut(BacktestResultOut):
+    trades: list[TradeRecordOut]
+    equity_curve: list[dict]  # [{ date, equity }]
+    strategy: StrategyOut | None = None
+    environment: EnvironmentOut | None = None
+
+
+class BacktestRunStartedOut(CamelModel):
+    run_id: str
+    status: str  # 'running'
+
+
+class BacktestProgressOut(CamelModel):
+    run_id: str
+    strategy_id: str
+    environment_id: str
+    status: str  # 'running' | 'done' | 'error' | 'cancelled'
+    progress: float  # 0..1
+    current_date: str | None
+    current_equity: float | None
+    n_trades_so_far: int
+    done: bool
+    result_id: str | None  # появляется при status='done'
+    error_message: str | None
+
+
+# Singleton runner. Создаём лениво при первом обращении (после загрузки всех модулей).
+_backtest_runner = None
+
+
+def _persist_result_callback(result):
+    from core.backtest_engine import persist_backtest_result
+    return persist_backtest_result(_get_precedent_engine(), result)
+
+
+def _get_backtest_runner():
+    global _backtest_runner
+    if _backtest_runner is None:
+        from core.backtest_runner import BacktestRunner
+        _backtest_runner = BacktestRunner(persist_callback=_persist_result_callback)
+    return _backtest_runner
+
+
+@app.post('/api/backtest/run', response_model_by_alias=True, status_code=202)
+def run_backtest(req: BacktestRunRequest) -> BacktestRunStartedOut:
+    """Запускает прогон в дочернем процессе. Возвращает сразу — без ожидания.
+    Прогресс читается через GET /api/backtest/runs/{run_id}/progress."""
+    from core.backtest_engine import load_environment_spec, load_strategy_spec
+
+    con = _get_precedent_engine()
+    try:
+        strategy = load_strategy_spec(con, req.strategy_id)
+        environment = load_environment_spec(con, req.environment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    runner = _get_backtest_runner()
+    run_id = runner.start_run(strategy, environment)
+    return BacktestRunStartedOut(run_id=run_id, status='running')
+
+
+@app.get('/api/backtest/runs/{run_id}/progress', response_model_by_alias=True)
+def get_run_progress(run_id: str) -> BacktestProgressOut:
+    runner = _get_backtest_runner()
+    p = runner.get_progress(run_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail='Прогон не найден')
+    return BacktestProgressOut(**p)
+
+
+@app.post('/api/backtest/runs/{run_id}/cancel', status_code=204)
+def cancel_run(run_id: str) -> None:
+    runner = _get_backtest_runner()
+    if not runner.cancel(run_id):
+        raise HTTPException(
+            status_code=404,
+            detail='Прогон не найден или уже завершён',
+        )
+
+
+@app.get('/api/backtest/runs/{run_id}/log')
+def get_run_log(run_id: str, after_byte: int = 0) -> dict:
+    """Возвращает хвост лог-файла прогона начиная с байта `after_byte`.
+    Драфт 6.4: используется виджетом для live-tail во время прогона
+    и для просмотра целиком после завершения."""
+    from core.backtest_logger import log_path_for
+    path = log_path_for(run_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail='Лог-файл не найден')
+    with open(path, 'rb') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        if after_byte >= size:
+            return {'content': '', 'next_byte': size}
+        f.seek(after_byte)
+        chunk = f.read()
+    try:
+        text = chunk.decode('utf-8')
+    except UnicodeDecodeError:
+        text = chunk.decode('utf-8', errors='replace')
+    return {'content': text, 'next_byte': size}
+
+
+@app.get('/api/backtest/results', response_model_by_alias=True)
+def list_backtest_results() -> list[BacktestResultOut]:
+    con = _get_precedent_engine()
+    rows = con.execute("""
+        SELECT id, strategy_id, environment_id, created_at,
+               total_return_pct, annual_return_pct, max_drawdown_pct, sharpe,
+               n_trades, profit_factor, win_rate_pct
+        FROM backtest_results ORDER BY created_at DESC
+    """).fetchall()
+    return [
+        BacktestResultOut(
+            id=r[0], strategy_id=r[1], environment_id=r[2], created_at=r[3],
+            total_return_pct=float(r[4]), annual_return_pct=float(r[5]),
+            max_drawdown_pct=float(r[6]), sharpe=float(r[7]),
+            n_trades=int(r[8]),
+            profit_factor=float(r[9]) if r[9] is not None else None,
+            win_rate_pct=float(r[10]) if r[10] is not None else None,
+        )
+        for r in rows
+    ]
+
+
+@app.get('/api/backtest/results/{result_id}', response_model_by_alias=True)
+def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
+    con = _get_precedent_engine()
+    row = con.execute("""
+        SELECT id, strategy_id, environment_id, created_at,
+               total_return_pct, annual_return_pct, max_drawdown_pct, sharpe,
+               n_trades, profit_factor, win_rate_pct
+        FROM backtest_results WHERE id = ?
+    """, [result_id]).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Прогон не найден')
+
+    trade_rows = con.execute("""
+        SELECT trade_date, ticker, type, quantity, price, rule_name, pnl_realized
+        FROM trade_journal WHERE backtest_result_id = ?
+        ORDER BY trade_date, rowid
+    """, [result_id]).fetchall()
+    trades = [
+        TradeRecordOut(
+            trade_date=t[0].isoformat() if hasattr(t[0], 'isoformat') else str(t[0]),
+            ticker=t[1], type=t[2], quantity=int(t[3]), price=float(t[4]),
+            rule_name=t[5],
+            pnl_realized=float(t[6]) if t[6] is not None else None,
+        )
+        for t in trade_rows
+    ]
+
+    from core.backtest_engine import reconstruct_equity_curve
+    curve = reconstruct_equity_curve(con, result_id)
+    equity_curve: list[dict] = [
+        {
+            'date': d.isoformat() if hasattr(d, 'isoformat') else str(d),
+            'equity': float(eq),
+        }
+        for d, eq in curve
+    ]
+
+    # Подгружаем имя стратегии и окружения, чтобы UI показывал контекст
+    # прогона без отдельных запросов.
+    strategy_row = con.execute(
+        'SELECT id, name, created_at, description FROM strategies WHERE id = ?',
+        [row[1]],
+    ).fetchone()
+    strategy_out = None
+    if strategy_row is not None:
+        strategy_out = StrategyOut(
+            id=strategy_row[0], name=strategy_row[1],
+            rule_ids=_strategy_rule_ids(con, strategy_row[0]),
+            created_at=strategy_row[2], description=strategy_row[3],
+        )
+    env_row = con.execute("""
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description
+        FROM environments WHERE id = ?
+    """, [row[2]]).fetchone()
+    env_out = _row_to_env(env_row) if env_row is not None else None
+
+    return BacktestResultDetailOut(
+        id=row[0], strategy_id=row[1], environment_id=row[2], created_at=row[3],
+        total_return_pct=float(row[4]), annual_return_pct=float(row[5]),
+        max_drawdown_pct=float(row[6]), sharpe=float(row[7]),
+        n_trades=int(row[8]),
+        profit_factor=float(row[9]) if row[9] is not None else None,
+        win_rate_pct=float(row[10]) if row[10] is not None else None,
+        trades=trades,
+        equity_curve=equity_curve,
+        strategy=strategy_out,
+        environment=env_out,
+    )
+
+
+@app.delete('/api/backtest/results/{result_id}', status_code=204)
+def delete_backtest_result(result_id: str) -> None:
+    con = _get_precedent_engine()
+    if con.execute(
+        'SELECT 1 FROM backtest_results WHERE id = ? LIMIT 1', [result_id],
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Прогон не найден')
+    # FK trade_journal → backtest_results. Сначала чистим детей, потом родителя.
+    con.execute('DELETE FROM trade_journal WHERE backtest_result_id = ?', [result_id])
+    con.execute('DELETE FROM backtest_results WHERE id = ?', [result_id])
+    # Лог-файл хранится по run_id, который у нас сейчас не сохраняется в
+    # persistent (RunHandle живёт в памяти). Здесь чистить нечего, но если
+    # поле появится — добавить unlink. Для текущего MVP лог-файлы остаются
+    # в data/logs/backtest/ и убираются вручную.

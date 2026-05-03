@@ -77,6 +77,48 @@ def _create_schema(con: duckdb.DuckDBPyConnection) -> None:
             CHECK (starting_capital > 0)
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_results (
+            id                  VARCHAR PRIMARY KEY,
+            strategy_id         VARCHAR NOT NULL REFERENCES strategies(id),
+            environment_id      VARCHAR NOT NULL REFERENCES environments(id),
+            created_at          VARCHAR NOT NULL,
+            total_return_pct    DOUBLE  NOT NULL,
+            annual_return_pct   DOUBLE  NOT NULL,
+            max_drawdown_pct    DOUBLE  NOT NULL,
+            sharpe              DOUBLE  NOT NULL,
+            n_trades            INTEGER NOT NULL,
+            profit_factor       DOUBLE,
+            win_rate_pct        DOUBLE
+        )
+    """)
+    # persistent trade_journal — журнал сделок завершённых прогонов.
+    # Имя совпадает с runtime-таблицей в :memory:-БД движка (намеренно):
+    # после прогона runtime-журнал переносится сюда одной командой.
+    # type включает 'dividend' для записей о выплатах дивидендов
+    # (см. Часть 3.3 драфта бэктеста).
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS trade_journal (
+            id                  VARCHAR PRIMARY KEY,
+            backtest_result_id  VARCHAR NOT NULL REFERENCES backtest_results(id),
+            trade_date          DATE    NOT NULL,
+            ticker              VARCHAR NOT NULL,
+            type                VARCHAR NOT NULL CHECK (type IN ('buy', 'sell', 'dividend')),
+            quantity            INTEGER NOT NULL CHECK (quantity > 0),
+            price               DOUBLE  NOT NULL,
+            rule_name           VARCHAR NOT NULL,
+            pnl_realized        DOUBLE
+        )
+    """)
+    con.execute(
+        'CREATE INDEX IF NOT EXISTS idx_trade_journal_result '
+        'ON trade_journal (backtest_result_id)'
+    )
+
+    # description — свободный текст комментария аналитика. Добавляется как
+    # ALTER TABLE ADD COLUMN IF NOT EXISTS — данные не теряются.
+    for tbl in ('strategies', 'rules', 'environments'):
+        con.execute(f'ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT')
 
 
 def _list_tables(con: duckdb.DuckDBPyConnection) -> list[str]:

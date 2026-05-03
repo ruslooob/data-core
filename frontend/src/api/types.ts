@@ -78,6 +78,7 @@ export interface Rule {
   actionQuantitySql: string
   priority: number
   createdAt: string
+  description?: string | null
 }
 
 export interface RuleCreate {
@@ -86,6 +87,7 @@ export interface RuleCreate {
   actionType: ActionType
   actionQuantitySql: string
   priority: number
+  description?: string | null
 }
 
 export interface Strategy {
@@ -93,11 +95,13 @@ export interface Strategy {
   name: string
   ruleIds: string[]
   createdAt: string
+  description?: string | null
 }
 
 export interface StrategyCreate {
   name: string
   ruleIds: string[]
+  description?: string | null
 }
 
 export interface Environment {
@@ -107,6 +111,7 @@ export interface Environment {
   dateEnd: string
   startingCapital: number
   createdAt: string
+  description?: string | null
 }
 
 export interface EnvironmentCreate {
@@ -114,6 +119,64 @@ export interface EnvironmentCreate {
   dateStart: string
   dateEnd: string
   startingCapital: number
+  description?: string | null
+}
+
+export interface BacktestResultMeta {
+  id: string
+  strategyId: string
+  environmentId: string
+  createdAt: string
+  totalReturnPct: number
+  annualReturnPct: number
+  maxDrawdownPct: number
+  sharpe: number
+  nTrades: number
+  profitFactor: number | null
+  winRatePct: number | null
+}
+
+export type TradeType = 'buy' | 'sell' | 'dividend'
+
+export interface BacktestTrade {
+  tradeDate: string
+  ticker: string
+  type: TradeType
+  quantity: number
+  price: number
+  ruleName: string
+  pnlRealized: number | null
+}
+
+export interface BacktestResultDetail extends BacktestResultMeta {
+  trades: BacktestTrade[]
+  equityCurve: { date: string; equity: number }[]
+  strategy: Strategy | null
+  environment: Environment | null
+}
+
+export interface BacktestRunRequest {
+  strategyId: string
+  environmentId: string
+}
+
+export interface BacktestRunStarted {
+  runId: string
+  status: 'running'
+}
+
+export interface BacktestRunProgress {
+  runId: string
+  strategyId: string
+  environmentId: string
+  status: 'running' | 'done' | 'error' | 'cancelled'
+  progress: number  // 0..1
+  currentDate: string | null
+  currentEquity: number | null
+  nTradesSoFar: number
+  done: boolean
+  resultId: string | null
+  errorMessage: string | null
 }
 
 export interface EventStudyRequest {

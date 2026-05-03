@@ -1,6 +1,11 @@
 import type {
   AggregateStudyRequest,
   AggregateStudyResult,
+  BacktestResultDetail,
+  BacktestResultMeta,
+  BacktestRunProgress,
+  BacktestRunRequest,
+  BacktestRunStarted,
   Candle,
   DividendEvent,
   Environment,
@@ -229,4 +234,70 @@ export function renameEnvironment(id: string, name: string): Promise<Environment
 
 export function deleteEnvironment(id: string): Promise<void> {
   return deleteJson(`/api/environments/${id}`)
+}
+
+export function updateStrategyDescription(id: string, description: string): Promise<Strategy> {
+  return fetchJson<Strategy>(`/api/strategies/${id}/description`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description }),
+  })
+}
+
+export function updateRuleDescription(id: string, description: string): Promise<Rule> {
+  return fetchJson<Rule>(`/api/rules/${id}/description`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description }),
+  })
+}
+
+export function updateEnvironmentDescription(id: string, description: string): Promise<Environment> {
+  return fetchJson<Environment>(`/api/environments/${id}/description`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description }),
+  })
+}
+
+export function startBacktestRun(request: BacktestRunRequest): Promise<BacktestRunStarted> {
+  return fetchJson<BacktestRunStarted>('/api/backtest/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export function getBacktestRunProgress(runId: string): Promise<BacktestRunProgress> {
+  return fetchJson<BacktestRunProgress>(`/api/backtest/runs/${runId}/progress`)
+}
+
+export async function cancelBacktestRun(runId: string): Promise<void> {
+  const response = await fetch(`/api/backtest/runs/${runId}/cancel`, { method: 'POST' })
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`${response.status} ${response.statusText}`)
+  }
+}
+
+export interface BacktestLogChunk {
+  content: string
+  next_byte: number
+}
+
+export function getBacktestRunLog(runId: string, afterByte: number): Promise<BacktestLogChunk> {
+  return fetchJson<BacktestLogChunk>(
+    `/api/backtest/runs/${runId}/log?after_byte=${afterByte}`,
+  )
+}
+
+export function listBacktestResults(): Promise<BacktestResultMeta[]> {
+  return fetchJson<BacktestResultMeta[]>('/api/backtest/results')
+}
+
+export function getBacktestResult(id: string): Promise<BacktestResultDetail> {
+  return fetchJson<BacktestResultDetail>(`/api/backtest/results/${id}`)
+}
+
+export function deleteBacktestResult(id: string): Promise<void> {
+  return deleteJson(`/api/backtest/results/${id}`)
 }
