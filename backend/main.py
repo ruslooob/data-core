@@ -539,6 +539,8 @@ def list_rules() -> list[RuleOut]:
 
 @app.post('/api/rules', response_model_by_alias=True, status_code=201)
 def create_rule(req: RuleCreate) -> RuleOut:
+    from core.rule_validator import RuleSqlError, validate_quantity_sql, validate_trigger_sql
+
     name = _validate_name(req.name)
     if req.action_type not in ('buy', 'sell'):
         raise HTTPException(status_code=400, detail="action_type должен быть 'buy' или 'sell'")
@@ -546,6 +548,12 @@ def create_rule(req: RuleCreate) -> RuleOut:
         raise HTTPException(status_code=400, detail='trigger_sql не может быть пустым')
     if not req.action_quantity_sql.strip():
         raise HTTPException(status_code=400, detail='action_quantity_sql не может быть пустым')
+
+    try:
+        validate_trigger_sql(req.trigger_sql)
+        validate_quantity_sql(req.action_quantity_sql)
+    except RuleSqlError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     con = _get_precedent_engine()
     if con.execute('SELECT 1 FROM rules WHERE name = ? LIMIT 1', [name]).fetchone() is not None:

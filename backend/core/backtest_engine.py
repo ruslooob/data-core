@@ -126,8 +126,14 @@ _RUNTIME_TABLES = (
     'trade_journal',
     'equity_curve',
 )
-_RUNTIME_UDFS = ('_close_price', '_open_price', '_volume', '_avg_price', '_volume_ratio')
-_RUNTIME_MACROS = ('close_price', 'open_price', 'volume', 'avg_price', 'volume_ratio')
+_RUNTIME_UDFS = (
+    '_close_price', '_open_price', '_volume', '_avg_price',
+    '_volume_ratio', '_sma', '_volume_sma', '_volatility', '_return_n_days',
+)
+_RUNTIME_MACROS = (
+    'close_price', 'open_price', 'volume', 'avg_price', 'volume_ratio',
+    'sma', 'volume_sma', 'volatility', 'return_n_days',
+)
 
 
 class BacktestEngine:
@@ -272,6 +278,22 @@ class BacktestEngine:
             ['VARCHAR', 'DATE', 'INTEGER', 'INTEGER'], 'DOUBLE',
             null_handling='special',
         )
+        self.con.create_function(
+            '_sma', self._sma, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
+            null_handling='special',
+        )
+        self.con.create_function(
+            '_volume_sma', self._volume_sma, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
+            null_handling='special',
+        )
+        self.con.create_function(
+            '_volatility', self._volatility, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
+            null_handling='special',
+        )
+        self.con.create_function(
+            '_return_n_days', self._return_n_days, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
+            null_handling='special',
+        )
 
         # Макросы — короткие синонимы и значения по умолчанию.
         for macro in ('close_price', 'open_price', 'volume', 'avg_price', 'volume_ratio'):
@@ -296,19 +318,35 @@ class BacktestEngine:
             "CREATE MACRO volume_ratio(ticker, d, window_before := 5, window_after := 5) "
             "AS _volume_ratio(ticker, d, window_before, window_after)"
         )
+        # `window` — зарезервированное слово в DuckDB (оконные функции),
+        # поэтому используем `w` как имя параметра макроса.
+        self.con.execute("CREATE MACRO sma(ticker, d, w) AS _sma(ticker, d, w)")
+        self.con.execute("CREATE MACRO volume_sma(ticker, d, w) AS _volume_sma(ticker, d, w)")
+        self.con.execute("CREATE MACRO volatility(ticker, d, w) AS _volatility(ticker, d, w)")
+        self.con.execute("CREATE MACRO return_n_days(ticker, d, n) AS _return_n_days(ticker, d, n)")
 
     # ── Реализация TA-функций (Python) ─────────────────────────────────────
 
     def _close_price(self, ticker: str, d: date) -> float | None:
-        return self._point_price(ticker, d, 'CLOSE')
+        """`close_price(ticker, d)` — последняя известная цена закрытия до d
+        включительно. Если на саму дату d торгов не было (праздник эмитента
+        при работающем IMOEX и т.п.), возвращается close ближайшего предыдущего
+        торгового дня. Это нужно, чтобы переоценка equity не рушилась в дни,
+        когда у тикера нет записи в CSV."""
+        return self._last_known_value(ticker, d, 'CLOSE')
 
     def _open_price(self, ticker: str, d: date) -> float | None:
-        return self._point_price(ticker, d, 'OPEN')
+        """`open_price(ticker, d)` — строгое совпадение по дате. Если торгов
+        на дату не было — None. Открытие нельзя переносить с предыдущего
+        дня, иначе сломается логика исполнения сделок."""
+        return self._exact_value(ticker, d, 'OPEN')
 
     def _volume(self, ticker: str, d: date) -> float | None:
-        return self._point_price(ticker, d, 'VOL')
+        """`volume(ticker, d)` — строгое совпадение. На нерабочий день
+        у эмитента объёма нет, NULL семантически корректен."""
+        return self._exact_value(ticker, d, 'VOL')
 
-    def _point_price(self, ticker: str | None, d: date | None, col: str) -> float | None:
+    def _exact_value(self, ticker: str | None, d: date | None, col: str) -> float | None:
         if ticker is None or d is None or self._stocks is None:
             return None
         try:
@@ -320,6 +358,19 @@ class BacktestEngine:
         if row.empty:
             return None
         return float(row.iloc[0][col])
+
+    def _last_known_value(self, ticker: str | None, d: date | None, col: str) -> float | None:
+        if ticker is None or d is None or self._stocks is None:
+            return None
+        try:
+            df = self._stocks.get_candles(ticker, normalized=True)
+        except (ValueError, FileNotFoundError, OSError):
+            return None
+        target = pd.Timestamp(d)
+        filtered = df[df['DATE'] <= target]
+        if filtered.empty:
+            return None
+        return float(filtered.iloc[-1][col])
 
     def _avg_price(self, ticker: str | None) -> float | None:
         if ticker is None:
@@ -340,6 +391,75 @@ class BacktestEngine:
         if self._stocks is None:
             return None
         return self._stocks.volume_ratio(ticker, d, int(window_before), int(window_after))
+
+    # ── Оконные TA-функции (Часть 5.4 драфта) ──────────────────────────────
+    # Все четыре функции используют окно [date - window, date - 1] —
+    # правая граница (саму дату d) НЕ включают. На вход — ticker, дата
+    # и размер окна; на выход — DOUBLE или NULL, если данных меньше окна.
+
+    def _window_slice(self, ticker: str, d: date, n: int, col: str) -> pd.Series | None:
+        """Последние n строк колонки `col` СТРОГО ДО даты d. None, если данных меньше n."""
+        if ticker is None or d is None or self._stocks is None or n is None or int(n) <= 0:
+            return None
+        try:
+            df = self._stocks.get_candles(ticker, normalized=True)
+        except (ValueError, FileNotFoundError, OSError):
+            return None
+        target = pd.Timestamp(d)
+        filtered = df[df['DATE'] < target].tail(int(n))
+        if len(filtered) < int(n):
+            return None
+        return filtered[col]
+
+    def _sma(self, ticker: str | None, d: date | None, window: int) -> float | None:
+        s = self._window_slice(ticker, d, int(window) if window is not None else 0, 'CLOSE')
+        if s is None:
+            return None
+        return float(s.mean())
+
+    def _volume_sma(self, ticker: str | None, d: date | None, window: int) -> float | None:
+        s = self._window_slice(ticker, d, int(window) if window is not None else 0, 'VOL')
+        if s is None:
+            return None
+        return float(s.mean())
+
+    def _volatility(self, ticker: str | None, d: date | None, window: int) -> float | None:
+        """Стандартное отклонение дневных лог-доходностей за последние `window` торговых
+        дней до d. Использует существующий ряд get_log_returns, чтобы согласоваться с
+        car()/vol_ratio()."""
+        if ticker is None or d is None or self._stocks is None or window is None:
+            return None
+        n = int(window)
+        if n <= 1:
+            return None
+        try:
+            log_returns = self._stocks.get_log_returns(ticker)
+        except (ValueError, FileNotFoundError, OSError):
+            return None
+        target = pd.Timestamp(d)
+        filtered = log_returns[log_returns.index < target].tail(n)
+        if len(filtered) < n:
+            return None
+        return float(filtered.std(ddof=1))
+
+    def _return_n_days(self, ticker: str | None, d: date | None, n: int) -> float | None:
+        """Накопленная (простая) доходность за последние n торговых дней до d:
+        exp(Σ log_ret) − 1. Соответствует «накопленная доходность» драфта 5.4."""
+        if ticker is None or d is None or self._stocks is None or n is None:
+            return None
+        nn = int(n)
+        if nn <= 0:
+            return None
+        try:
+            log_returns = self._stocks.get_log_returns(ticker)
+        except (ValueError, FileNotFoundError, OSError):
+            return None
+        target = pd.Timestamp(d)
+        filtered = log_returns[log_returns.index < target].tail(nn)
+        if len(filtered) < nn:
+            return None
+        import math
+        return float(math.exp(filtered.sum()) - 1.0)
 
     # ── Главный цикл ───────────────────────────────────────────────────────
 
@@ -794,15 +914,21 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
     prices = market.load_market_index_prices()
     mask = (prices.index >= pd.Timestamp(date_start)) & (prices.index <= pd.Timestamp(date_end))
     trading_days = [ts.date() for ts in prices.index[mask]]
+    trading_index = pd.DatetimeIndex([pd.Timestamp(d) for d in trading_days])
 
-    # Pre-compute close-цены по уникальным тикерам — один pandas-индекс на тикер.
+    # Pre-compute close-цены по уникальным тикерам, выровненные на торговый
+    # календарь IMOEX через forward-fill. Если у тикера на конкретный
+    # торговый день IMOEX нет записи (например, эмитент-специфичный
+    # выходной), берётся последняя известная close. Это согласуется с
+    # семантикой `close_price` в движке (см. _close_price).
     stocks = StockDataProvider()
     unique_tickers = {str(t[1]) for t in trades}
     candles_by_ticker: dict[str, pd.Series] = {}
     for t in unique_tickers:
         try:
             df = stocks.get_candles(t, normalized=True)
-            candles_by_ticker[t] = df.set_index('DATE')['CLOSE']
+            closes = df.set_index('DATE')['CLOSE']
+            candles_by_ticker[t] = closes.reindex(trading_index, method='ffill')
         except (ValueError, FileNotFoundError, OSError):
             candles_by_ticker[t] = pd.Series(dtype=float)
 
@@ -846,7 +972,10 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
             closes = candles_by_ticker.get(ticker)
             if closes is None or ts_tick not in closes.index:
                 continue
-            market_value += total_qty * float(closes.loc[ts_tick])
+            close = closes.loc[ts_tick]
+            if pd.isna(close):  # ffill не нашёл предыдущего значения
+                continue
+            market_value += total_qty * float(close)
 
         curve.append((tick, cash + market_value))
 

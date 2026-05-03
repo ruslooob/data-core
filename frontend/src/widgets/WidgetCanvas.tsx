@@ -5,10 +5,11 @@ import { IndexChartWidget } from './IndexChartWidget'
 import { PrecedentEditorWidget } from './PrecedentEditorWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { BacktestEditorWidget } from './BacktestEditorWidget'
+import { EntityEditorWidget } from './EntityEditorWidget'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor' | 'entity-editor'
 
 interface WidgetInstance {
   id: string
@@ -30,6 +31,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'index-chart': 'Index chart',
   'precedent-editor': 'Precedent editor',
   'backtest-editor': 'BacktestEditor',
+  'entity-editor': 'EntityEditor',
 }
 
 const DEFAULT_WIDTH = 640
@@ -39,6 +41,7 @@ const TOOLBAR_OFFSET_Y = 80
 // Виджеты с нестандартным дефолтным размером.
 const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }>> = {
   'backtest-editor': { width: 1280, height: 960 },
+  'entity-editor': { width: 1280, height: 960 },
 }
 
 export function WidgetCanvas() {
@@ -118,6 +121,9 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('backtest-editor')} style={menuItemStyle}>
               BacktestEditor
             </button>
+            <button onClick={() => addWidget('entity-editor')} style={menuItemStyle}>
+              EntityEditor
+            </button>
           </div>
         )}
       </div>
@@ -149,6 +155,8 @@ export function WidgetCanvas() {
               <PrecedentEditorWidget group={w.group} />
             ) : w.type === 'backtest-editor' ? (
               <BacktestEditorWidget />
+            ) : w.type === 'entity-editor' ? (
+              <EntityEditorWidget />
             ) : (
               <EventStudyWidget group={w.group} />
             )}
