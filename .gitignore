@@ -16,3 +16,6 @@ backend/notebooks/outputs/*
 data/db/backup_*/
 data/db/*.duckdb.wal
 data/db/*.duckdb.tmp/
+/data/logs/
+tmp_*
+.tmp_*
