@@ -20,7 +20,7 @@ class CamelModel(BaseModel):
 from core.dividend_data_provider import DividendDataProvider
 from core.event_study import EventStudy, AggregateStudyResult
 from core.market_data_provider import MarketDataProvider
-from core.precedent_engine import PrecedentEngine
+from core.postgres_db import get_pool
 from core.stock_data_provider import StockDataProvider
 
 # Дефолтные провайдеры без max_date — для эндпоинтов API, где режим
@@ -29,7 +29,7 @@ _stocks = StockDataProvider()
 _market = MarketDataProvider()
 _dividends = DividendDataProvider()
 
-# Служебные файлы, которые не являются тикерами акций
+# Служебные тикеры/пути, которые не являются акциями
 _NON_TICKER_FILES = {"DIVIDENDS", "IMOEX", "RUONIA", "SPLITS"}
 
 app = FastAPI(title="data-core API", version="0.1.0")
@@ -266,25 +266,8 @@ def run_aggregate_study(req: AggregateStudyRequest) -> AggregateStudyResponse:
 
 PRECEDENT_MAX_ROWS = 1000
 
-_precedent_engine: PrecedentEngine | None = None
-
-
-def _get_precedent_engine():
-    """Ленивая инициализация DuckDB-соединения с видимой схемой PQL.
-
-    Возвращает **новый курсор** на каждый вызов: DuckDB-Python не потокобезопасен
-    при шаре одного соединения между потоками FastAPI threadpool — concurrent
-    execute() приводит к segfault. Курсор изолирует поток и при этом разделяет
-    тот же буферный пул и кэш UDF.
-    """
-    global _precedent_engine
-    if _precedent_engine is None:
-        _precedent_engine = PrecedentEngine(stocks=_stocks, market=_market)
-    return _precedent_engine.con.cursor()
-
-
 def _to_json_safe(value):
-    """Конвертирует значение из DuckDB в JSON-сериализуемое."""
+    """Конвертирует значение из БД в JSON-сериализуемое."""
     from datetime import date as _date, datetime as _dt
     from decimal import Decimal
     if value is None:
@@ -296,6 +279,37 @@ def _to_json_safe(value):
     if isinstance(value, Decimal):
         return float(value)
     return value
+
+
+def _pg():
+    """Открывает psycopg-коннект для одного HTTP-запроса.
+
+    autocommit=True снимает необходимость явного commit() для
+    INSERT/UPDATE/DELETE. Коннект закрывается автоматически по выходу
+    из scope handler-функции (CPython ref-counting).
+
+    На больших нагрузках лучше переехать на pool — `core.postgres_db.get_pool()`
+    уже доступен. Сейчас минимальная инвазивность важнее.
+    """
+    import psycopg
+    from core.postgres_db import PG_DSN
+    return psycopg.connect(PG_DSN, autocommit=True)
+
+
+_PG_TYPE_NAMES = {
+    23: 'INTEGER',  20: 'BIGINT', 21: 'SMALLINT',
+    700: 'REAL', 701: 'DOUBLE',
+    1700: 'NUMERIC',
+    25: 'TEXT', 1043: 'VARCHAR',
+    16: 'BOOLEAN',
+    1082: 'DATE', 1114: 'TIMESTAMP', 1184: 'TIMESTAMPTZ',
+    114: 'JSON', 3802: 'JSONB',
+}
+
+
+def _pg_type_name(type_code: int) -> str:
+    """Сопоставление OID типа Postgres → читаемое имя."""
+    return _PG_TYPE_NAMES.get(type_code, f'OID:{type_code}')
 
 
 class PrecedentSearchRequest(CamelModel):
@@ -322,17 +336,17 @@ class PrecedentSearchResponse(CamelModel):
 def search_precedents(req: PrecedentSearchRequest) -> PrecedentSearchResponse:
     """Исполняет PQL-запрос. Жёсткий потолок MAX_ROWS=1000."""
     import time
-    import duckdb as duckdb_module
+    import psycopg
     from fastapi import HTTPException
 
-    con = _get_precedent_engine()
+    con = _pg()
     started_at = time.monotonic()
 
     try:
         cur = con.execute(req.source)
         description = cur.description or []
         rows = cur.fetchmany(PRECEDENT_MAX_ROWS + 1)
-    except duckdb_module.Error as e:
+    except psycopg.Error as e:
         raise HTTPException(
             status_code=400,
             detail={"message": str(e), "line": None, "column": None},
@@ -343,7 +357,7 @@ def search_precedents(req: PrecedentSearchRequest) -> PrecedentSearchResponse:
         rows = rows[:PRECEDENT_MAX_ROWS]
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
-    columns = [PrecedentColumn(name=col[0], type=str(col[1])) for col in description]
+    columns = [PrecedentColumn(name=col.name, type=_pg_type_name(col.type_code)) for col in description]
     rows_safe = [[_to_json_safe(v) for v in row] for row in rows]
 
     return PrecedentSearchResponse(
@@ -370,7 +384,7 @@ class PrecedentQuerySaveRequest(CamelModel):
 @app.get("/api/precedents/queries", response_model_by_alias=True)
 def list_precedent_queries() -> list[PrecedentQueryRecord]:
     """Список сохранённых прецедентных запросов, отсортированный по дате создания (новые первыми)."""
-    con = _get_precedent_engine()
+    con = _pg()
     rows = con.execute("""
         SELECT id, name, source, created_at FROM precedent_queries
         ORDER BY created_at DESC
@@ -393,9 +407,9 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     if not source.strip():
         raise HTTPException(status_code=400, detail="Текст запроса не может быть пустым")
 
-    con = _get_precedent_engine()
+    con = _pg()
     existing = con.execute(
-        "SELECT 1 FROM precedent_queries WHERE name = ? LIMIT 1",
+        "SELECT 1 FROM precedent_queries WHERE name = %s LIMIT 1",
         [name],
     ).fetchone()
     if existing is not None:
@@ -404,7 +418,7 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     new_id = str(_uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
     con.execute(
-        "INSERT INTO precedent_queries VALUES (?, ?, ?, ?)",
+        "INSERT INTO precedent_queries VALUES (%s, %s, %s, %s)",
         [new_id, name, source, created_at],
     )
 
@@ -458,27 +472,27 @@ def _update_with_fk_workaround(
     """
     backup = con.execute(
         f'SELECT strategy_id, rule_id, position FROM strategy_rules '
-        f'WHERE {child_fk_col} = ?',
+        f'WHERE {child_fk_col} = %s',
         [parent_id],
     ).fetchall()
     con.execute(
-        f'DELETE FROM strategy_rules WHERE {child_fk_col} = ?', [parent_id],
+        f'DELETE FROM strategy_rules WHERE {child_fk_col} = %s', [parent_id],
     )
     try:
         con.execute(
-            f'UPDATE {parent_table} SET {column} = ? WHERE id = ?',
+            f'UPDATE {parent_table} SET {column} = %s WHERE id = %s',
             [new_value, parent_id],
         )
     except Exception:
         for s_id, r_id, position in backup:
             con.execute(
-                'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+                'INSERT INTO strategy_rules VALUES (%s, %s, %s)',
                 [s_id, r_id, position],
             )
         raise
     for s_id, r_id, position in backup:
         con.execute(
-            'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+            'INSERT INTO strategy_rules VALUES (%s, %s, %s)',
             [s_id, r_id, position],
         )
 
@@ -528,7 +542,7 @@ def _row_to_rule(row) -> RuleOut:
 
 @app.get('/api/rules', response_model_by_alias=True)
 def list_rules() -> list[RuleOut]:
-    con = _get_precedent_engine()
+    con = _pg()
     rows = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
                created_at, description
@@ -555,14 +569,14 @@ def create_rule(req: RuleCreate) -> RuleOut:
     except RuleSqlError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM rules WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM rules WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
 
     rule_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO rules VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
         [rule_id, name, req.trigger_sql, req.action_type, req.action_quantity_sql,
          req.priority, created_at, req.description],
     )
@@ -575,13 +589,13 @@ def create_rule(req: RuleCreate) -> RuleOut:
 
 @app.patch('/api/rules/{rule_id}/description', response_model_by_alias=True)
 def update_rule_description(rule_id: str, req: DescriptionRequest) -> RuleOut:
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM rules WHERE id = ? LIMIT 1', [rule_id]).fetchone() is None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM rules WHERE id = %s LIMIT 1', [rule_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Правило не найдено')
     _update_with_fk_workaround(con, 'rules', rule_id, 'description', req.description, 'rule_id')
     row = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-               created_at, description FROM rules WHERE id = ?
+               created_at, description FROM rules WHERE id = %s
     """, [rule_id]).fetchone()
     return _row_to_rule(row)
 
@@ -589,15 +603,15 @@ def update_rule_description(rule_id: str, req: DescriptionRequest) -> RuleOut:
 @app.patch('/api/rules/{rule_id}', response_model_by_alias=True)
 def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     name = _validate_name(req.name)
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
                created_at, description
-        FROM rules WHERE id = ?
+        FROM rules WHERE id = %s
     """, [rule_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Правило не найдено')
-    dup = con.execute('SELECT 1 FROM rules WHERE name = ? AND id <> ? LIMIT 1', [name, rule_id]).fetchone()
+    dup = con.execute('SELECT 1 FROM rules WHERE name = %s AND id <> %s LIMIT 1', [name, rule_id]).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
     _rename_with_fk_workaround(con, 'rules', rule_id, name, 'rule_id')
@@ -610,13 +624,13 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
 
 @app.delete('/api/rules/{rule_id}', status_code=204)
 def delete_rule(rule_id: str) -> None:
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM rules WHERE id = ? LIMIT 1', [rule_id]).fetchone() is None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM rules WHERE id = %s LIMIT 1', [rule_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Правило не найдено')
     refs = con.execute("""
         SELECT s.name FROM strategy_rules sr
         JOIN strategies s ON s.id = sr.strategy_id
-        WHERE sr.rule_id = ?
+        WHERE sr.rule_id = %s
     """, [rule_id]).fetchall()
     if refs:
         names = ', '.join(f'"{r[0]}"' for r in refs)
@@ -624,7 +638,7 @@ def delete_rule(rule_id: str) -> None:
             status_code=409,
             detail=f'Правило используется в стратегиях: {names}. Сначала удалите эти стратегии.',
         )
-    con.execute('DELETE FROM rules WHERE id = ?', [rule_id])
+    con.execute('DELETE FROM rules WHERE id = %s', [rule_id])
 
 
 # ---- Strategy ----
@@ -645,7 +659,7 @@ class StrategyCreate(CamelModel):
 
 def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
     rows = con.execute(
-        'SELECT rule_id FROM strategy_rules WHERE strategy_id = ? ORDER BY position',
+        'SELECT rule_id FROM strategy_rules WHERE strategy_id = %s ORDER BY position',
         [strategy_id],
     ).fetchall()
     return [r[0] for r in rows]
@@ -653,7 +667,7 @@ def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
 
 @app.get('/api/strategies', response_model_by_alias=True)
 def list_strategies() -> list[StrategyOut]:
-    con = _get_precedent_engine()
+    con = _pg()
     rows = con.execute(
         'SELECT id, name, created_at, description FROM strategies ORDER BY created_at DESC'
     ).fetchall()
@@ -668,9 +682,9 @@ def list_strategies() -> list[StrategyOut]:
 
 @app.patch('/api/strategies/{strategy_id}/description', response_model_by_alias=True)
 def update_strategy_description(strategy_id: str, req: DescriptionRequest) -> StrategyOut:
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute(
-        'SELECT id, name, created_at FROM strategies WHERE id = ?', [strategy_id],
+        'SELECT id, name, created_at FROM strategies WHERE id = %s', [strategy_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
@@ -690,11 +704,11 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
     if len(set(req.rule_ids)) != len(req.rule_ids):
         raise HTTPException(status_code=400, detail='Правила в стратегии должны быть уникальными')
 
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM strategies WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM strategies WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
 
-    placeholders = ','.join(['?'] * len(req.rule_ids))
+    placeholders = ','.join(['%s'] * len(req.rule_ids))
     found = con.execute(
         f'SELECT id FROM rules WHERE id IN ({placeholders})', list(req.rule_ids),
     ).fetchall()
@@ -706,12 +720,12 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
     strategy_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO strategies VALUES (?, ?, ?, ?)',
+        'INSERT INTO strategies VALUES (%s, %s, %s, %s)',
         [strategy_id, name, created_at, req.description],
     )
     for position, rule_id in enumerate(req.rule_ids):
         con.execute(
-            'INSERT INTO strategy_rules VALUES (?, ?, ?)',
+            'INSERT INTO strategy_rules VALUES (%s, %s, %s)',
             [strategy_id, rule_id, position],
         )
     return StrategyOut(
@@ -723,14 +737,14 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
 @app.patch('/api/strategies/{strategy_id}', response_model_by_alias=True)
 def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     name = _validate_name(req.name)
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute(
-        'SELECT id, name, created_at, description FROM strategies WHERE id = ?', [strategy_id],
+        'SELECT id, name, created_at, description FROM strategies WHERE id = %s', [strategy_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
     dup = con.execute(
-        'SELECT 1 FROM strategies WHERE name = ? AND id <> ? LIMIT 1', [name, strategy_id],
+        'SELECT 1 FROM strategies WHERE name = %s AND id <> %s LIMIT 1', [name, strategy_id],
     ).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
@@ -743,8 +757,8 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
 
 @app.delete('/api/strategies/{strategy_id}', status_code=204)
 def delete_strategy(strategy_id: str) -> None:
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM strategies WHERE id = ? LIMIT 1', [strategy_id]).fetchone() is None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM strategies WHERE id = %s LIMIT 1', [strategy_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
     # Каскад: связки strategy_rules + все backtest_results (и их trade_journal),
     # потом сама стратегия. DuckDB не поддерживает ON DELETE CASCADE на FK,
@@ -752,12 +766,12 @@ def delete_strategy(strategy_id: str) -> None:
     con.execute("""
         DELETE FROM trade_journal
         WHERE backtest_result_id IN (
-            SELECT id FROM backtest_results WHERE strategy_id = ?
+            SELECT id FROM backtest_results WHERE strategy_id = %s
         )
     """, [strategy_id])
-    con.execute('DELETE FROM backtest_results WHERE strategy_id = ?', [strategy_id])
-    con.execute('DELETE FROM strategy_rules WHERE strategy_id = ?', [strategy_id])
-    con.execute('DELETE FROM strategies WHERE id = ?', [strategy_id])
+    con.execute('DELETE FROM backtest_results WHERE strategy_id = %s', [strategy_id])
+    con.execute('DELETE FROM strategy_rules WHERE strategy_id = %s', [strategy_id])
+    con.execute('DELETE FROM strategies WHERE id = %s', [strategy_id])
 
 
 # ---- Environment ----
@@ -792,7 +806,7 @@ def _row_to_env(row) -> EnvironmentOut:
 
 @app.get('/api/environments', response_model_by_alias=True)
 def list_environments() -> list[EnvironmentOut]:
-    con = _get_precedent_engine()
+    con = _pg()
     rows = con.execute("""
         SELECT id, name, date_start, date_end, starting_capital, created_at, description
         FROM environments ORDER BY created_at DESC
@@ -802,16 +816,16 @@ def list_environments() -> list[EnvironmentOut]:
 
 @app.patch('/api/environments/{env_id}/description', response_model_by_alias=True)
 def update_environment_description(env_id: str, req: DescriptionRequest) -> EnvironmentOut:
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute("""
         SELECT id, name, date_start, date_end, starting_capital, created_at, description
-        FROM environments WHERE id = ?
+        FROM environments WHERE id = %s
     """, [env_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Окружение не найдено')
     # У environments нет дочерних строк в strategy_rules, FK-проблема DuckDB
     # к нему не относится — обычный UPDATE работает.
-    con.execute('UPDATE environments SET description = ? WHERE id = ?', [req.description, env_id])
+    con.execute('UPDATE environments SET description = %s WHERE id = %s', [req.description, env_id])
     return _row_to_env((row[0], row[1], row[2], row[3], row[4], row[5], req.description))
 
 
@@ -828,14 +842,14 @@ def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
     if req.starting_capital <= 0:
         raise HTTPException(status_code=400, detail='starting_capital должен быть положительным')
 
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM environments WHERE name = ? LIMIT 1', [name]).fetchone() is not None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM environments WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
 
     env_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO environments VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO environments VALUES (%s, %s, %s, %s, %s, %s, %s)',
         [env_id, name, ds, de, req.starting_capital, created_at, req.description],
     )
     return EnvironmentOut(
@@ -848,36 +862,36 @@ def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
 @app.patch('/api/environments/{env_id}', response_model_by_alias=True)
 def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
     name = _validate_name(req.name)
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute("""
         SELECT id, name, date_start, date_end, starting_capital, created_at, description
-        FROM environments WHERE id = ?
+        FROM environments WHERE id = %s
     """, [env_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Окружение не найдено')
     dup = con.execute(
-        'SELECT 1 FROM environments WHERE name = ? AND id <> ? LIMIT 1', [name, env_id],
+        'SELECT 1 FROM environments WHERE name = %s AND id <> %s LIMIT 1', [name, env_id],
     ).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
-    con.execute('UPDATE environments SET name = ? WHERE id = ?', [name, env_id])
+    con.execute('UPDATE environments SET name = %s WHERE id = %s', [name, env_id])
     return _row_to_env((row[0], name, row[2], row[3], row[4], row[5], row[6]))
 
 
 @app.delete('/api/environments/{env_id}', status_code=204)
 def delete_environment(env_id: str) -> None:
-    con = _get_precedent_engine()
-    if con.execute('SELECT 1 FROM environments WHERE id = ? LIMIT 1', [env_id]).fetchone() is None:
+    con = _pg()
+    if con.execute('SELECT 1 FROM environments WHERE id = %s LIMIT 1', [env_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Окружение не найдено')
     refs = con.execute(
-        'SELECT COUNT(*) FROM backtest_results WHERE environment_id = ?', [env_id],
+        'SELECT COUNT(*) FROM backtest_results WHERE environment_id = %s', [env_id],
     ).fetchone()[0]
     if refs > 0:
         raise HTTPException(
             status_code=409,
             detail=f'Окружение использовано в {refs} прогонах. Сначала удалите эти прогоны.',
         )
-    con.execute('DELETE FROM environments WHERE id = ?', [env_id])
+    con.execute('DELETE FROM environments WHERE id = %s', [env_id])
 
 
 # ── Бэктест: запуск прогона и результаты ───────────────────────────────────
@@ -943,7 +957,7 @@ _backtest_runner = None
 
 def _persist_result_callback(result):
     from core.backtest_engine import persist_backtest_result
-    return persist_backtest_result(_get_precedent_engine(), result)
+    return persist_backtest_result(_pg(), result)
 
 
 def _get_backtest_runner():
@@ -960,7 +974,7 @@ def run_backtest(req: BacktestRunRequest) -> BacktestRunStartedOut:
     Прогресс читается через GET /api/backtest/runs/{run_id}/progress."""
     from core.backtest_engine import load_environment_spec, load_strategy_spec
 
-    con = _get_precedent_engine()
+    con = _pg()
     try:
         strategy = load_strategy_spec(con, req.strategy_id)
         environment = load_environment_spec(con, req.environment_id)
@@ -1016,7 +1030,7 @@ def get_run_log(run_id: str, after_byte: int = 0) -> dict:
 
 @app.get('/api/backtest/results', response_model_by_alias=True)
 def list_backtest_results() -> list[BacktestResultOut]:
-    con = _get_precedent_engine()
+    con = _pg()
     rows = con.execute("""
         SELECT id, strategy_id, environment_id, created_at,
                total_return_pct, annual_return_pct, max_drawdown_pct, sharpe,
@@ -1038,20 +1052,20 @@ def list_backtest_results() -> list[BacktestResultOut]:
 
 @app.get('/api/backtest/results/{result_id}', response_model_by_alias=True)
 def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
-    con = _get_precedent_engine()
+    con = _pg()
     row = con.execute("""
         SELECT id, strategy_id, environment_id, created_at,
                total_return_pct, annual_return_pct, max_drawdown_pct, sharpe,
                n_trades, profit_factor, win_rate_pct
-        FROM backtest_results WHERE id = ?
+        FROM backtest_results WHERE id = %s
     """, [result_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Прогон не найден')
 
     trade_rows = con.execute("""
         SELECT trade_date, ticker, type, quantity, price, rule_name, pnl_realized
-        FROM trade_journal WHERE backtest_result_id = ?
-        ORDER BY trade_date, rowid
+        FROM trade_journal WHERE backtest_result_id = %s
+        ORDER BY trade_date, id
     """, [result_id]).fetchall()
     trades = [
         TradeRecordOut(
@@ -1076,7 +1090,7 @@ def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
     # Подгружаем имя стратегии и окружения, чтобы UI показывал контекст
     # прогона без отдельных запросов.
     strategy_row = con.execute(
-        'SELECT id, name, created_at, description FROM strategies WHERE id = ?',
+        'SELECT id, name, created_at, description FROM strategies WHERE id = %s',
         [row[1]],
     ).fetchone()
     strategy_out = None
@@ -1088,7 +1102,7 @@ def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
         )
     env_row = con.execute("""
         SELECT id, name, date_start, date_end, starting_capital, created_at, description
-        FROM environments WHERE id = ?
+        FROM environments WHERE id = %s
     """, [row[2]]).fetchone()
     env_out = _row_to_env(env_row) if env_row is not None else None
 
@@ -1108,14 +1122,14 @@ def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
 
 @app.delete('/api/backtest/results/{result_id}', status_code=204)
 def delete_backtest_result(result_id: str) -> None:
-    con = _get_precedent_engine()
+    con = _pg()
     if con.execute(
-        'SELECT 1 FROM backtest_results WHERE id = ? LIMIT 1', [result_id],
+        'SELECT 1 FROM backtest_results WHERE id = %s LIMIT 1', [result_id],
     ).fetchone() is None:
         raise HTTPException(status_code=404, detail='Прогон не найден')
     # FK trade_journal → backtest_results. Сначала чистим детей, потом родителя.
-    con.execute('DELETE FROM trade_journal WHERE backtest_result_id = ?', [result_id])
-    con.execute('DELETE FROM backtest_results WHERE id = ?', [result_id])
+    con.execute('DELETE FROM trade_journal WHERE backtest_result_id = %s', [result_id])
+    con.execute('DELETE FROM backtest_results WHERE id = %s', [result_id])
     # Лог-файл хранится по run_id, который у нас сейчас не сохраняется в
     # persistent (RunHandle живёт в памяти). Здесь чистить нечего, но если
     # поле появится — добавить unlink. Для текущего MVP лог-файлы остаются

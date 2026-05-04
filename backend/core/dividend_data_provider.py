@@ -1,61 +1,71 @@
-"""Поставщик дивидендных событий.
+"""Поставщик дивидендных событий из Postgres-таблицы `dividends`.
 
-Контракт — см. docs/SPEC_DATA_PROVIDERS.md.
+Контракт публичных методов сохранён по сравнению с CSV-версией.
 """
 from __future__ import annotations
 
-import os
 from datetime import date
 
 import pandas as pd
 
 from core.models import DividendEvent
-
-DIVIDENDS_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'stocks', 'dividends_all.csv')
+from core.postgres_db import get_pool
 
 
 class DividendDataProvider:
-    """Поставщик дивидендных событий из CSV.
+    """Поставщик дивидендных событий.
 
     Параметры:
-        max_date: последняя видимая дата (включительно). По умолчанию None — без ограничений.
-                  События с announcement_date > max_date отбрасываются.
+        max_date: последняя видимая дата (включительно). По умолчанию None —
+                  без ограничений. События с announcement_date > max_date
+                  отбрасываются.
     """
 
     def __init__(self, max_date: date | None = None):
-        self._max_date = pd.Timestamp(max_date) if max_date is not None else None
+        self._max_date = pd.Timestamp(max_date).date() if max_date is not None else None
 
     def load_dividends(self) -> list[DividendEvent]:
-        """Загружает дивидендные события: ticker, announcement_date, dividend_per_share, year."""
-        df = pd.read_csv(DIVIDENDS_PATH)
-        df["announcement_date"] = pd.to_datetime(df["announcement_date"], dayfirst=True)
+        """Дивидендные события: ticker, announcement_date, dividend, year."""
+        sql = (
+            'SELECT ticker, announcement_date, dividend_per_share, year '
+            'FROM dividends'
+        )
+        params: list = []
         if self._max_date is not None:
-            df = df[df["announcement_date"] <= self._max_date]
-        events: list[DividendEvent] = []
-        for _, row in df.iterrows():
-            events.append(DividendEvent(
-                ticker=str(row["ticker"]).upper(),
-                event_date=row["announcement_date"].date(),
-                dividend=float(row["dividend_per_share"]),
-                year=int(row["year"]),
-            ))
-        return events
+            sql += ' WHERE announcement_date <= %s'
+            params.append(self._max_date)
+        sql += ' ORDER BY announcement_date'
+        with get_pool().connection() as con:
+            rows = con.execute(sql, params).fetchall()
+        return [
+            DividendEvent(
+                ticker=str(r[0]).upper(),
+                event_date=r[1],
+                dividend=float(r[2]),
+                year=int(r[3]),
+            )
+            for r in rows
+        ]
 
     def load_payments_by_date(self) -> dict[tuple[date, str], float]:
         """Карта `(payment_date, ticker) → dividend_per_share`.
 
-        Используется бэктест-движком: на каждом тике он смотрит, есть ли
-        в этой карте записи с `payment_date == :tick` для тикеров в портфеле,
-        и автоматически начисляет выплату. См. Часть 3.3 драфта бэктеста.
+        Использует payment_date (не announcement_date). Записи без
+        payment_date пропускаются. При коллизии (две выплаты в один день
+        для одного тикера) суммируются.
         """
-        df = pd.read_csv(DIVIDENDS_PATH)
-        df["payment_date"] = pd.to_datetime(df["payment_date"], dayfirst=True)
+        sql = (
+            'SELECT payment_date, ticker, dividend_per_share '
+            'FROM dividends WHERE payment_date IS NOT NULL'
+        )
+        params: list = []
         if self._max_date is not None:
-            df = df[df["payment_date"] <= self._max_date]
+            sql += ' AND payment_date <= %s'
+            params.append(self._max_date)
+        with get_pool().connection() as con:
+            rows = con.execute(sql, params).fetchall()
         result: dict[tuple[date, str], float] = {}
-        for _, row in df.iterrows():
-            key = (row["payment_date"].date(), str(row["ticker"]).upper())
-            # При коллизии (две выплаты в один день для одного тикера, что редкость)
-            # — суммируем, иначе вторая теряется молча.
-            result[key] = result.get(key, 0.0) + float(row["dividend_per_share"])
+        for payment_date, ticker, div in rows:
+            key = (payment_date, str(ticker).upper())
+            result[key] = result.get(key, 0.0) + float(div)
         return result

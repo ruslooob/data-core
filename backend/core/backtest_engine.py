@@ -1,50 +1,57 @@
-"""Движок бэктеста: один прогон стратегии в окружении.
+"""Движок бэктеста: один прогон стратегии в одном окружении.
 
-Концепция полностью описана в `docs/drafts/BACKTEST_GLOSSARY_DRAFT.md`.
-Этот модуль реализует MVP — главный цикл по тикам, частичное исполнение
-с FIFO-списанием лотов, расчёт 7 метрик.
-
-Архитектура MVP:
-    - Движок работает на **существующем** соединении к `data-core.duckdb`,
-      переданном сверху. DuckDB на Windows не даёт двум коннектам открыть
-      один файл (даже READ_ONLY), поэтому изоляция через `:memory:`+ATTACH
-      из драфта пока недоступна — отложено до полноценной реализации
-      многопоточности.
-    - Runtime-таблицы создаются с префиксом `runtime_` (`run_context`,
-      `portfolio_state`, ..., `equity_curve`). После прогона
-      они дропаются.
-    - На каждом тике пересоздаётся `StockDataProvider(max_date=:tick - 1)`,
-      UDF читают `self._stocks` динамически — поэтому достаточно один раз
-      зарегистрировать UDF и подменять провайдера.
-    - В пользовательских SQL триггерах используется `:tick`/`:ticker` как
-      именованные параметры — DuckDB ожидает `$tick`/`$ticker`, поэтому
-      препроцессор `_normalize_named_params` делает замену перед execute.
+Архитектура (после переезда на Postgres):
+- Коннект psycopg к Postgres (autocommit=False, чтобы TEMP TABLE жили
+  до конца сессии). Один коннект = одна сессия = один прогон.
+- Runtime-таблицы (`run_context`, `portfolio_state`, `portfolio_positions`,
+  `trade_journal`, `equity_curve`) — TEMP TABLE, видны только этой сессии.
+  Стратегии и движок обращаются к ним без префикса. Persistent-таблицы
+  (`tagged_events`, `events`, и т.п.) видны через обычный JOIN.
+- TA-функции (`car`, `vol_ratio`, `volume_ratio`, `close_price`, `open_price`,
+  `volume`, `sma`, `volume_sma`, `volatility`, `return_n_days`, `avg_price`)
+  живут в Postgres как plpython3u-функции (см. `scripts/init_postgres_*_udfs.py`).
+- No-lookahead — через session-GUC `backtest.max_date`. Перед триггерной
+  фазой движок выставляет `max_date = tick - 1`, перед исполнением и
+  переоценкой — `tick`. UDF читают этот GUC и фильтруют котировки по нему.
+- Пользовательские SQL-параметры `:tick` / `:ticker` приводятся к `$1`/`$2`
+  и параметру по имени. См. `_normalize_named_params`.
 """
 from __future__ import annotations
 
-import os
+import math
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-import duckdb
 import pandas as pd
+import psycopg
 
-# DuckDB ожидает именованные параметры в форме `$name`, а драфт PQL фиксирует
-# синтаксис `:name` (унаследован от Postgres-стиля). Препроцессор заменяет
-# `:name` на `$name` перед `con.execute(...)`. Lookbehind на `:` отсекает
-# `::DATE` — DuckDB-cast — чтобы не сломать его.
+from core.dividend_data_provider import DividendDataProvider
+from core.market_data_provider import MarketDataProvider
+from core.stock_data_provider import StockDataProvider
+
+DIVIDEND_RULE_NAME = '*dividend*'
+
+# Регулярка для замены `:name` → `%(name)s` (psycopg named params).
+# Lookbehind на `:` исключает `::CAST` (его в Postgres всё равно нет, но на всякий).
 _NAMED_PARAM_RE = re.compile(r'(?<!:):([A-Za-z_][A-Za-z0-9_]*)')
 
 
 def _normalize_named_params(sql: str) -> str:
-    return _NAMED_PARAM_RE.sub(r'$\1', sql)
+    return _NAMED_PARAM_RE.sub(r'%(\1)s', sql)
+
+
+_PARAM_USAGE_RE = re.compile(r'%\(([A-Za-z_][A-Za-z0-9_]*)\)s')
+
+
+def _filter_params(sql: str, params: dict) -> dict:
+    used = set(_PARAM_USAGE_RE.findall(sql))
+    return {k: v for k, v in params.items() if k in used}
 
 
 def _annualize_return(total_return_pct: float, date_start: date, date_end: date) -> float:
-    """CAGR через календарные годы. Возвращает 0 если период невалиден."""
     days = (date_end - date_start).days
     if days <= 0:
         return 0.0
@@ -55,35 +62,12 @@ def _annualize_return(total_return_pct: float, date_start: date, date_end: date)
     return (growth_factor ** (1.0 / years) - 1.0) * 100.0
 
 
-_PARAM_USAGE_RE = re.compile(r'\$([A-Za-z_][A-Za-z0-9_]*)')
-
-
-def _filter_params(sql: str, params: dict) -> dict:
-    """Возвращает подмножество params, которое реально упомянуто в SQL.
-
-    DuckDB строго проверяет соответствие именованных параметров: если передать
-    неиспользуемый параметр — `Parameter argument/count mismatch`.
-    """
-    used = set(_PARAM_USAGE_RE.findall(sql))
-    return {k: v for k, v in params.items() if k in used}
-
-from core.dividend_data_provider import DividendDataProvider
-from core.market_data_provider import MarketDataProvider
-from core.stock_data_provider import StockDataProvider
-
-DIVIDEND_RULE_NAME = '*dividend*'
-
-_DB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'db')
-APP_DB_PATH = os.path.abspath(os.path.join(_DB_DIR, 'data-core.duckdb'))
-
-
 @dataclass
 class RuleSpec:
-    """Спецификация правила, как её даёт persistent-таблица `rules`."""
     id: str
     name: str
     trigger_sql: str
-    action_type: str  # 'buy' | 'sell'
+    action_type: str
     action_quantity_sql: str
     priority: int
 
@@ -108,16 +92,15 @@ class EnvironmentSpec:
 class TradeRecord:
     trade_date: date
     ticker: str
-    type: str  # 'buy' | 'sell'
+    type: str
     quantity: int
     price: float
     rule_name: str
-    pnl_realized: float | None  # заполняется только у sell
+    pnl_realized: float | None
 
 
 @dataclass
 class BacktestResult:
-    """Возвращается из `BacktestEngine.run()`."""
     strategy_id: str
     environment_id: str
     total_return_pct: float
@@ -138,28 +121,22 @@ _RUNTIME_TABLES = (
     'trade_journal',
     'equity_curve',
 )
-_RUNTIME_UDFS = (
-    '_close_price', '_open_price', '_volume', '_avg_price',
-    '_volume_ratio', '_sma', '_volume_sma', '_volatility', '_return_n_days',
-)
-_RUNTIME_MACROS = (
-    'close_price', 'open_price', 'volume', 'avg_price', 'volume_ratio',
-    'sma', 'volume_sma', 'volatility', 'return_n_days',
-)
 
 
 class BacktestEngine:
     """Один прогон одной стратегии в одном окружении.
 
-    Движок работает на **переданном сверху** соединении (или курсоре) к
-    persistent-БД. Это вынужденная архитектура MVP — см. модуль-docstring.
+    Принимает свой psycopg-коннект; полностью владеет им (закрывать
+    обязан caller через engine.close()). Все runtime-таблицы создаются
+    как TEMP в этой сессии — приватны, удалятся автоматически при
+    закрытии коннекта.
     """
 
     def __init__(
             self,
             strategy: StrategySpec,
             environment: EnvironmentSpec,
-            con,
+            con: psycopg.Connection,
             logger,
     ):
         self.strategy = strategy
@@ -167,308 +144,86 @@ class BacktestEngine:
         self.con = con
         self.logger = logger
 
-        self._market = MarketDataProvider()  # без max_date — нужен только календарь IMOEX
-        self._stocks: StockDataProvider | None = None  # пересоздаётся на каждом тике
-
-        # Дивидендные выплаты: карта (payment_date, ticker) → dividend_per_share.
-        # Загружается один раз на старте прогона; max_date не выставляем, т.к.
-        # обращение к карте происходит по конкретной дате-тику и не зависит от
-        # «прошлого/будущего» — это рыночная механика, не лук-аhead.
+        # Провайдер для календаря (без max_date) — нужен для списка торговых
+        # дней IMOEX. Чтения котировок при бэктесте идут через UDF в Postgres.
+        self._market = MarketDataProvider()
         self._dividend_payments = DividendDataProvider().load_payments_by_date()
 
-        self._cleanup_runtime()  # на случай остатков от предыдущего прогона
         self._create_runtime_tables()
         self._init_portfolio()
 
     # ── Runtime-схема ──────────────────────────────────────────────────────
-
-    def _cleanup_runtime(self) -> None:
-        for tbl in _RUNTIME_TABLES:
-            try:
-                self.con.execute(f'DROP TABLE IF EXISTS {tbl}')
-            except duckdb.Error:
-                pass
-        for fn in _RUNTIME_UDFS:
-            try:
-                self.con.remove_function(fn)
-            except (duckdb.CatalogException, duckdb.InvalidInputException):
-                pass
-        for macro in _RUNTIME_MACROS:
-            try:
-                self.con.execute(f'DROP MACRO IF EXISTS {macro}')
-            except duckdb.Error:
-                pass
+    # `_cleanup_runtime` НЕ нужен: каждый прогон открывает свой psycopg-коннект
+    # (см. backtest_worker.py), его TEMP-схема пустая. DROP без квалификатора
+    # был бы опасен — Postgres резолвил бы имя на persistent-таблицу
+    # `public.trade_journal` и удалил её.
 
     def _create_runtime_tables(self) -> None:
+        # ON COMMIT PRESERVE ROWS — таблица переживает COMMIT, удалится
+        # только при DISCARD/закрытии сессии.
         self.con.execute("""
-            CREATE TABLE run_context (
-                current_date     DATE,
+            CREATE TEMP TABLE run_context (
+                current_tick     DATE,
                 index            INTEGER,
                 date_start       DATE,
                 date_end         DATE,
-                starting_capital DOUBLE
-            )
+                starting_capital DOUBLE PRECISION
+            ) ON COMMIT PRESERVE ROWS
         """)
         self.con.execute("""
-            CREATE TABLE portfolio_state (
-                cash   DOUBLE NOT NULL,
-                equity DOUBLE NOT NULL
-            )
+            CREATE TEMP TABLE portfolio_state (
+                cash   DOUBLE PRECISION NOT NULL,
+                equity DOUBLE PRECISION NOT NULL
+            ) ON COMMIT PRESERVE ROWS
         """)
+        # Используем serial id чтобы можно было удалять конкретный лот при FIFO-sell.
         self.con.execute("""
-            CREATE TABLE portfolio_positions (
+            CREATE TEMP TABLE portfolio_positions (
+                lot_id     SERIAL PRIMARY KEY,
                 ticker     VARCHAR NOT NULL,
                 quantity   INTEGER NOT NULL,
-                buy_price  DOUBLE  NOT NULL,
-                buy_date   DATE    NOT NULL
-            )
+                buy_price  DOUBLE PRECISION NOT NULL,
+                buy_date   DATE NOT NULL
+            ) ON COMMIT PRESERVE ROWS
         """)
         self.con.execute("""
-            CREATE TABLE trade_journal (
+            CREATE TEMP TABLE trade_journal (
+                trade_id      SERIAL PRIMARY KEY,
                 trade_date    DATE    NOT NULL,
                 ticker        VARCHAR NOT NULL,
-                type          VARCHAR NOT NULL,
+                type          VARCHAR NOT NULL CHECK (type IN ('buy', 'sell', 'dividend')),
                 quantity      INTEGER NOT NULL,
-                price         DOUBLE  NOT NULL,
+                price         DOUBLE PRECISION NOT NULL,
                 rule_name     VARCHAR NOT NULL,
-                pnl_realized  DOUBLE,
-                CHECK (type IN ('buy', 'sell', 'dividend'))
-            )
+                pnl_realized  DOUBLE PRECISION
+            ) ON COMMIT PRESERVE ROWS
         """)
         self.con.execute("""
-            CREATE TABLE equity_curve (
+            CREATE TEMP TABLE equity_curve (
                 tick_date DATE   NOT NULL,
-                equity    DOUBLE NOT NULL
-            )
+                equity    DOUBLE PRECISION NOT NULL
+            ) ON COMMIT PRESERVE ROWS
         """)
+        self.con.commit()
 
     def _init_portfolio(self) -> None:
         capital = float(self.environment.starting_capital)
         self.con.execute(
-            "INSERT INTO run_context VALUES (NULL, 0, ?, ?, ?)",
+            "INSERT INTO run_context VALUES (NULL, 0, %s, %s, %s)",
             [self.environment.date_start, self.environment.date_end, capital],
         )
         self.con.execute(
-            "INSERT INTO portfolio_state VALUES (?, ?)", [capital, capital],
+            "INSERT INTO portfolio_state VALUES (%s, %s)", [capital, capital],
         )
+        self.con.commit()
 
-    # ── UDF: TA-функции, регистрируемые с актуальным max_date-провайдером ───
+    # ── max_date GUC для no-lookahead ──────────────────────────────────────
 
-    def _register_udfs(self) -> None:
-        """Зарегистрировать (или перерегистрировать) TA-функции для текущего тика.
-
-        Перед регистрацией снимаем старые версии — иначе DuckDB бросит
-        CatalogException "function already exists".
-        """
-        for name in _RUNTIME_UDFS:
-            try:
-                self.con.remove_function(name)
-            except (duckdb.CatalogException, duckdb.InvalidInputException):
-                pass
-
-        self.con.create_function(
-            '_close_price', self._close_price, ['VARCHAR', 'DATE'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_open_price', self._open_price, ['VARCHAR', 'DATE'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_volume', self._volume, ['VARCHAR', 'DATE'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_avg_price', self._avg_price, ['VARCHAR'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_volume_ratio', self._volume_ratio,
-            ['VARCHAR', 'DATE', 'INTEGER', 'INTEGER'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_sma', self._sma, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_volume_sma', self._volume_sma, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_volatility', self._volatility, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
-            null_handling='special',
-        )
-        self.con.create_function(
-            '_return_n_days', self._return_n_days, ['VARCHAR', 'DATE', 'INTEGER'], 'DOUBLE',
-            null_handling='special',
-        )
-
-        # Макросы — короткие синонимы и значения по умолчанию.
-        for macro in _RUNTIME_MACROS:
-            try:
-                self.con.execute(f"DROP MACRO IF EXISTS {macro}")
-            except duckdb.Error:
-                pass
-
-        self.con.execute(
-            "CREATE MACRO close_price(ticker, d) AS _close_price(ticker, d)"
-        )
-        self.con.execute(
-            "CREATE MACRO open_price(ticker, d) AS _open_price(ticker, d)"
-        )
-        self.con.execute(
-            "CREATE MACRO volume(ticker, d) AS _volume(ticker, d)"
-        )
-        self.con.execute(
-            "CREATE MACRO avg_price(ticker) AS _avg_price(ticker)"
-        )
-        self.con.execute(
-            "CREATE MACRO volume_ratio(ticker, d, window_before := 5, window_after := 5) "
-            "AS _volume_ratio(ticker, d, window_before, window_after)"
-        )
-        # `window` — зарезервированное слово в DuckDB (оконные функции),
-        # поэтому используем `w` как имя параметра макроса.
-        self.con.execute("CREATE MACRO sma(ticker, d, w) AS _sma(ticker, d, w)")
-        self.con.execute("CREATE MACRO volume_sma(ticker, d, w) AS _volume_sma(ticker, d, w)")
-        self.con.execute("CREATE MACRO volatility(ticker, d, w) AS _volatility(ticker, d, w)")
-        self.con.execute("CREATE MACRO return_n_days(ticker, d, n) AS _return_n_days(ticker, d, n)")
-
-    # ── Реализация TA-функций (Python) ─────────────────────────────────────
-
-    def _close_price(self, ticker: str, d: date) -> float | None:
-        """`close_price(ticker, d)` — последняя известная цена закрытия до d
-        включительно. Если на саму дату d торгов не было (праздник эмитента
-        при работающем IMOEX и т.п.), возвращается close ближайшего предыдущего
-        торгового дня. Это нужно, чтобы переоценка equity не рушилась в дни,
-        когда у тикера нет записи в CSV."""
-        return self._last_known_value(ticker, d, 'CLOSE')
-
-    def _open_price(self, ticker: str, d: date) -> float | None:
-        """`open_price(ticker, d)` — строгое совпадение по дате. Если торгов
-        на дату не было — None. Открытие нельзя переносить с предыдущего
-        дня, иначе сломается логика исполнения сделок."""
-        return self._exact_value(ticker, d, 'OPEN')
-
-    def _volume(self, ticker: str, d: date) -> float | None:
-        """`volume(ticker, d)` — строгое совпадение. На нерабочий день
-        у эмитента объёма нет, NULL семантически корректен."""
-        return self._exact_value(ticker, d, 'VOL')
-
-    def _exact_value(self, ticker: str | None, d: date | None, col: str) -> float | None:
-        if ticker is None or d is None or self._stocks is None:
-            return None
-        try:
-            df = self._stocks.get_candles(ticker, normalized=True)
-        except (ValueError, FileNotFoundError, OSError):
-            return None
-        target = pd.Timestamp(d)
-        row = df.loc[df['DATE'] == target]
-        if row.empty:
-            return None
-        return float(row.iloc[0][col])
-
-    def _last_known_value(self, ticker: str | None, d: date | None, col: str) -> float | None:
-        if ticker is None or d is None or self._stocks is None:
-            return None
-        try:
-            df = self._stocks.get_candles(ticker, normalized=True)
-        except (ValueError, FileNotFoundError, OSError):
-            return None
-        target = pd.Timestamp(d)
-        filtered = df[df['DATE'] <= target]
-        if filtered.empty:
-            return None
-        return float(filtered.iloc[-1][col])
-
-    def _avg_price(self, ticker: str | None) -> float | None:
-        if ticker is None:
-            return None
-        row = self.con.execute(
-            "SELECT SUM(quantity * buy_price) / SUM(quantity) FROM portfolio_positions "
-            "WHERE ticker = ?",
-            [ticker],
-        ).fetchone()
-        if row is None or row[0] is None:
-            return None
-        return float(row[0])
-
-    def _volume_ratio(
-            self, ticker: str | None, d: date | None,
-            window_before: int, window_after: int,
-    ) -> float | None:
-        if self._stocks is None:
-            return None
-        return self._stocks.volume_ratio(ticker, d, int(window_before), int(window_after))
-
-    # ── Оконные TA-функции (Часть 5.4 драфта) ──────────────────────────────
-    # Все четыре функции используют окно [date - window, date - 1] —
-    # правая граница (саму дату d) НЕ включают. На вход — ticker, дата
-    # и размер окна; на выход — DOUBLE или NULL, если данных меньше окна.
-
-    def _window_slice(self, ticker: str, d: date, n: int, col: str) -> pd.Series | None:
-        """Последние n строк колонки `col` СТРОГО ДО даты d. None, если данных меньше n."""
-        if ticker is None or d is None or self._stocks is None or n is None or int(n) <= 0:
-            return None
-        try:
-            df = self._stocks.get_candles(ticker, normalized=True)
-        except (ValueError, FileNotFoundError, OSError):
-            return None
-        target = pd.Timestamp(d)
-        filtered = df[df['DATE'] < target].tail(int(n))
-        if len(filtered) < int(n):
-            return None
-        return filtered[col]
-
-    def _sma(self, ticker: str | None, d: date | None, window: int) -> float | None:
-        s = self._window_slice(ticker, d, int(window) if window is not None else 0, 'CLOSE')
-        if s is None:
-            return None
-        return float(s.mean())
-
-    def _volume_sma(self, ticker: str | None, d: date | None, window: int) -> float | None:
-        s = self._window_slice(ticker, d, int(window) if window is not None else 0, 'VOL')
-        if s is None:
-            return None
-        return float(s.mean())
-
-    def _volatility(self, ticker: str | None, d: date | None, window: int) -> float | None:
-        """Стандартное отклонение дневных лог-доходностей за последние `window` торговых
-        дней до d. Использует существующий ряд get_log_returns, чтобы согласоваться с
-        car()/vol_ratio()."""
-        if ticker is None or d is None or self._stocks is None or window is None:
-            return None
-        n = int(window)
-        if n <= 1:
-            return None
-        try:
-            log_returns = self._stocks.get_log_returns(ticker)
-        except (ValueError, FileNotFoundError, OSError):
-            return None
-        target = pd.Timestamp(d)
-        filtered = log_returns[log_returns.index < target].tail(n)
-        if len(filtered) < n:
-            return None
-        return float(filtered.std(ddof=1))
-
-    def _return_n_days(self, ticker: str | None, d: date | None, n: int) -> float | None:
-        """Накопленная (простая) доходность за последние n торговых дней до d:
-        exp(Σ log_ret) − 1. Соответствует «накопленная доходность» драфта 5.4."""
-        if ticker is None or d is None or self._stocks is None or n is None:
-            return None
-        nn = int(n)
-        if nn <= 0:
-            return None
-        try:
-            log_returns = self._stocks.get_log_returns(ticker)
-        except (ValueError, FileNotFoundError, OSError):
-            return None
-        target = pd.Timestamp(d)
-        filtered = log_returns[log_returns.index < target].tail(nn)
-        if len(filtered) < nn:
-            return None
-        import math
-        return float(math.exp(filtered.sum()) - 1.0)
+    def _set_max_date(self, d: date | None) -> None:
+        """Выставляет session-GUC backtest.max_date. None → пустая строка
+        (UDF трактуют как «вся история», но в бэктесте всегда задан)."""
+        value = d.isoformat() if d is not None else ''
+        self.con.execute("SELECT set_config('backtest.max_date', %s, false)", [value])
 
     # ── Главный цикл ───────────────────────────────────────────────────────
 
@@ -477,20 +232,10 @@ class BacktestEngine:
             on_progress=None,
             should_cancel=None,
     ) -> BacktestResult | None:
-        """Главный цикл прогона.
-
-        Параметры:
-            on_progress: callable(progress_dict) — вызывается раз в тик.
-                Получает dict по Q23: progress (0..1), current_date,
-                current_equity, n_trades_so_far. Дросселирование оставлено
-                на сторону caller'а.
-            should_cancel: callable() -> bool. Если вернёт True — цикл
-                прерывается на ближайшем тике, run() возвращает None.
-        """
         trading_days = self._compute_trading_days()
         if not trading_days:
             raise ValueError(
-                f'Нет торговых дней в периоде {self.environment.date_start}..{self.environment.date_end}'
+                f'Нет торговых дней в периоде {self.environment.date_start}..{self.environment.date_end}',
             )
         total = len(trading_days)
 
@@ -501,9 +246,13 @@ class BacktestEngine:
             self._update_run_context(tick, index)
             prev_date = trading_days[index - 1] if index > 0 else None
 
-            # Триггер и quantity-запрос видят данные строго до tick-1 (no-lookahead).
-            self._stocks = StockDataProvider(max_date=prev_date)
-            self._register_udfs()
+            # Триггер и quantity-фаза: данные строго до tick (исключительно).
+            # Если prev_date None (первый тик) — задаём день до первого тика
+            # как дату-минус-1, чтобы UDF гарантированно отдавали NULL.
+            if prev_date is not None:
+                self._set_max_date(prev_date)
+            else:
+                self._set_max_date(date(1990, 1, 1))
             candidates = self._collect_candidates(tick)
 
             if candidates:
@@ -512,14 +261,12 @@ class BacktestEngine:
                     n=len(candidates),
                 )
 
-            # Исполнение по open(tick) и переоценка по close(tick) — провайдер,
-            # видящий tick. UDF читают self._stocks динамически, так что
-            # перерегистрировать их не нужно.
-            self._stocks = StockDataProvider(max_date=tick)
+            # Исполнение и переоценка: данные включают tick.
+            self._set_max_date(tick)
             self._execute_candidates(candidates, tick)
             self._reprice_equity(tick)
-            # Дивиденды начисляются после переоценки — в конце тика
             self._apply_dividends(tick)
+            self.con.commit()
 
             state = self.con.execute(
                 'SELECT cash, equity FROM portfolio_state',
@@ -535,15 +282,12 @@ class BacktestEngine:
             )
 
             if on_progress is not None:
-                state = self.con.execute(
-                    'SELECT cash, equity FROM portfolio_state',
-                ).fetchone()
                 n_trades = self.con.execute(
                     'SELECT COUNT(*) FROM trade_journal',
                 ).fetchone()[0]
                 on_progress({
                     'progress': (index + 1) / total,
-                    'current_date': tick.isoformat() if hasattr(tick, 'isoformat') else str(tick),
+                    'current_tick': tick.isoformat(),
                     'current_equity': float(state[1]) if state else 0.0,
                     'n_trades_so_far': int(n_trades),
                 })
@@ -558,7 +302,7 @@ class BacktestEngine:
 
     def _update_run_context(self, tick: date, index: int) -> None:
         self.con.execute(
-            "UPDATE run_context SET current_date = ?, index = ?",
+            "UPDATE run_context SET current_tick = %s, index = %s",
             [tick, index],
         )
 
@@ -573,7 +317,8 @@ class BacktestEngine:
                 trigger_rows = self.con.execute(
                     trigger_sql, _filter_params(trigger_sql, {'tick': tick}),
                 ).fetchall()
-            except duckdb.Error as e:
+            except psycopg.Error as e:
+                self.con.rollback()
                 self.logger.debug(
                     'trigger error', tick=tick, rule=rule.name, error=str(e),
                 )
@@ -589,7 +334,8 @@ class BacktestEngine:
                         quantity_sql,
                         _filter_params(quantity_sql, {'tick': tick, 'ticker': ticker}),
                     ).fetchone()
-                except duckdb.Error as e:
+                except psycopg.Error as e:
+                    self.con.rollback()
                     self.logger.debug(
                         'candidate dropped', tick=tick, rule=rule.name,
                         ticker=ticker, reason='quantity_error', error=str(e),
@@ -623,8 +369,6 @@ class BacktestEngine:
                     'priority': rule.priority,
                     'rule_name': rule.name,
                 })
-        # Стабильная сортировка по priority desc, потом по позиции в strategy.rules.
-        # Сортировка стабильная — порядок добавления (rule order + ticker order) сохраняется.
         candidates.sort(key=lambda c: -c['priority'])
         return candidates
 
@@ -637,6 +381,23 @@ class BacktestEngine:
             else:
                 self._execute_sell(cand, tick)
 
+    def _open_price(self, ticker: str, d: date) -> float | None:
+        """Берёт open_price через Postgres-UDF (с учётом session GUC max_date)."""
+        row = self.con.execute(
+            'SELECT open_price(%s, %s)', [ticker, d],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
+
+    def _close_price(self, ticker: str, d: date) -> float | None:
+        row = self.con.execute(
+            'SELECT close_price(%s, %s)', [ticker, d],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
+
     def _execute_buy(self, cand: dict[str, Any], tick: date) -> None:
         price = self._open_price(cand['ticker'], tick)
         if price is None or price <= 0:
@@ -646,7 +407,7 @@ class BacktestEngine:
             )
             return
         cash = self.con.execute('SELECT cash FROM portfolio_state').fetchone()[0]
-        affordable = int(cash // price)
+        affordable = int(float(cash) // price)
         actual = min(cand['quantity'], affordable)
         if actual <= 0:
             self.logger.warn(
@@ -657,14 +418,16 @@ class BacktestEngine:
             return
         cost = actual * price
         self.con.execute(
-            'INSERT INTO portfolio_positions VALUES (?, ?, ?, ?)',
+            'INSERT INTO portfolio_positions (ticker, quantity, buy_price, buy_date) '
+            'VALUES (%s, %s, %s, %s)',
             [cand['ticker'], actual, price, tick],
         )
         self.con.execute(
-            'UPDATE portfolio_state SET cash = cash - ?', [cost],
+            'UPDATE portfolio_state SET cash = cash - %s', [cost],
         )
         self.con.execute(
-            'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, NULL)',
+            'INSERT INTO trade_journal (trade_date, ticker, type, quantity, price, rule_name, pnl_realized) '
+            'VALUES (%s, %s, %s, %s, %s, %s, NULL)',
             [tick, cand['ticker'], 'buy', actual, price, cand['rule_name']],
         )
         self.logger.debug(
@@ -678,10 +441,9 @@ class BacktestEngine:
         price = self._open_price(cand['ticker'], tick)
         if price is None or price <= 0:
             return
-        # Все лоты этого тикера, отсортированные FIFO (от самого старого).
         lots = self.con.execute(
-            'SELECT rowid, quantity, buy_price, buy_date FROM portfolio_positions '
-            'WHERE ticker = ? ORDER BY buy_date ASC, rowid ASC',
+            'SELECT lot_id, quantity, buy_price FROM portfolio_positions '
+            'WHERE ticker = %s ORDER BY buy_date ASC, lot_id ASC',
             [cand['ticker']],
         ).fetchall()
         total_held = sum(l[1] for l in lots)
@@ -691,29 +453,30 @@ class BacktestEngine:
 
         remaining = actual
         pnl_total = 0.0
-        for rowid, qty, buy_price, _buy_date in lots:
+        for lot_id, qty, buy_price in lots:
             if remaining <= 0:
                 break
             take = min(qty, remaining)
-            pnl_total += take * (price - buy_price)
+            pnl_total += take * (price - float(buy_price))
             new_qty = qty - take
             if new_qty == 0:
                 self.con.execute(
-                    'DELETE FROM portfolio_positions WHERE rowid = ?', [rowid],
+                    'DELETE FROM portfolio_positions WHERE lot_id = %s', [lot_id],
                 )
             else:
                 self.con.execute(
-                    'UPDATE portfolio_positions SET quantity = ? WHERE rowid = ?',
-                    [new_qty, rowid],
+                    'UPDATE portfolio_positions SET quantity = %s WHERE lot_id = %s',
+                    [new_qty, lot_id],
                 )
             remaining -= take
 
         proceeds = actual * price
         self.con.execute(
-            'UPDATE portfolio_state SET cash = cash + ?', [proceeds],
+            'UPDATE portfolio_state SET cash = cash + %s', [proceeds],
         )
         self.con.execute(
-            'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO trade_journal (trade_date, ticker, type, quantity, price, rule_name, pnl_realized) '
+            'VALUES (%s, %s, %s, %s, %s, %s, %s)',
             [tick, cand['ticker'], 'sell', actual, price, cand['rule_name'], pnl_total],
         )
         self.logger.debug(
@@ -725,7 +488,6 @@ class BacktestEngine:
     # ── Дивиденды ──────────────────────────────────────────────────────────
 
     def _apply_dividends(self, tick: date) -> None:
-        """Начисляет выплаты дивидендов на конец тика по позициям в портфеле."""
         positions = self.con.execute(
             'SELECT ticker, SUM(quantity) FROM portfolio_positions GROUP BY ticker',
         ).fetchall()
@@ -735,11 +497,12 @@ class BacktestEngine:
                 continue
             payout = float(div_per_share) * int(total_qty)
             self.con.execute(
-                'UPDATE portfolio_state SET cash = cash + ?, equity = equity + ?',
+                'UPDATE portfolio_state SET cash = cash + %s, equity = equity + %s',
                 [payout, payout],
             )
             self.con.execute(
-                'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO trade_journal (trade_date, ticker, type, quantity, price, rule_name, pnl_realized) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
                 [tick, ticker, 'dividend', int(total_qty), float(div_per_share),
                  DIVIDEND_RULE_NAME, payout],
             )
@@ -748,33 +511,39 @@ class BacktestEngine:
                 ticker=ticker, qty=int(total_qty),
                 per_share=float(div_per_share), payout=round(payout, 2),
             )
-            # Обновим последнюю точку equity_curve на этом тике, чтобы не было
-            # «двойного» состояния — equity уже пересчитано выше, тут просто
-            # синхронизируем последнюю точку.
             self.con.execute(
-                'UPDATE equity_curve SET equity = equity + ? '
-                'WHERE tick_date = ?',
+                'UPDATE equity_curve SET equity = equity + %s WHERE tick_date = %s',
                 [payout, tick],
             )
 
     # ── Переоценка equity и запись точки кривой ────────────────────────────
 
     def _reprice_equity(self, tick: date) -> None:
-        cash = self.con.execute('SELECT cash FROM portfolio_state').fetchone()[0]
-        positions = self.con.execute(
-            'SELECT ticker, quantity FROM portfolio_positions',
-        ).fetchall()
-        market_value = 0.0
-        for ticker, qty in positions:
-            close = self._close_price(ticker, tick)
-            if close is not None:
-                market_value += qty * close
-        equity = float(cash) + market_value
-        self.con.execute(
-            'UPDATE portfolio_state SET equity = ?', [equity],
+        # Один SQL вместо цикла по lots: GROUP BY ticker + один close_price-call
+        # на тикер. Без этого на стратегиях типа «buy 1 каждый день» к концу
+        # прогона тысячи лотов одного тикера → тысячи round-trip'ов на тик.
+        row = self.con.execute(
+            """
+            SELECT s.cash + COALESCE((
+                SELECT SUM(p.total_qty * close_price(p.ticker, %(tick)s))
+                FROM (
+                    SELECT ticker, SUM(quantity) AS total_qty
+                    FROM portfolio_positions
+                    GROUP BY ticker
+                ) p
+            ), 0) AS equity
+            FROM portfolio_state s
+            """,
+            {'tick': tick},
+        ).fetchone()
+        equity = float(row[0]) if row and row[0] is not None else float(
+            self.con.execute('SELECT cash FROM portfolio_state').fetchone()[0],
         )
         self.con.execute(
-            'INSERT INTO equity_curve VALUES (?, ?)', [tick, equity],
+            'UPDATE portfolio_state SET equity = %s', [equity],
+        )
+        self.con.execute(
+            'INSERT INTO equity_curve VALUES (%s, %s)', [tick, equity],
         )
 
     # ── Расчёт метрик и формирование результата ────────────────────────────
@@ -792,12 +561,10 @@ class BacktestEngine:
             final_equity = equity_curve[-1][1]
 
         total_return_pct = (final_equity - starting) / starting * 100.0
-
         annual_return_pct = _annualize_return(
             total_return_pct, self.environment.date_start, self.environment.date_end,
         )
 
-        # Peak-to-trough просадка: пик растёт по ходу, DD считается от пика.
         peak = starting
         max_dd = 0.0
         for _, eq in equity_curve:
@@ -809,7 +576,6 @@ class BacktestEngine:
                     max_dd = dd
         max_drawdown_pct = max_dd * 100.0
 
-        # Sharpe — годовой по дневным доходностям equity (rf=0 для MVP)
         if len(equity_curve) > 1:
             eq_series = pd.Series([e for _, e in equity_curve])
             daily_ret = eq_series.pct_change().dropna()
@@ -820,10 +586,9 @@ class BacktestEngine:
         else:
             sharpe = 0.0
 
-        # Журнал сделок и журнальные метрики
         trade_rows = self.con.execute(
             'SELECT trade_date, ticker, type, quantity, price, rule_name, pnl_realized '
-            'FROM trade_journal ORDER BY trade_date, rowid',
+            'FROM trade_journal ORDER BY trade_date, trade_id',
         ).fetchall()
         trades = [
             TradeRecord(
@@ -860,16 +625,23 @@ class BacktestEngine:
         )
 
     def close(self) -> None:
-        """Очистить runtime-таблицы и UDF, чтобы не загрязнять persistent-БД."""
-        self._cleanup_runtime()
+        """TEMP TABLE удалятся при закрытии коннекта; здесь только rollback
+        возможной незакрытой транзакции и сброс GUC."""
+        try:
+            self.con.execute("RESET backtest.max_date")
+            self.con.commit()
+        except psycopg.Error:
+            try:
+                self.con.rollback()
+            except psycopg.Error:
+                pass
 
 
-# ── Загрузка спецификаций из persistent-БД ─────────────────────────────────
+# ── Загрузка спецификаций из Postgres ──────────────────────────────────────
 
 def load_strategy_spec(con, strategy_id: str) -> StrategySpec:
-    """Читает strategy + rules из app-БД (через переданный курсор/коннект)."""
     s_row = con.execute(
-        'SELECT id, name FROM strategies WHERE id = ?', [strategy_id],
+        'SELECT id, name FROM strategies WHERE id = %s', [strategy_id],
     ).fetchone()
     if s_row is None:
         raise ValueError(f'Стратегия {strategy_id} не найдена')
@@ -877,7 +649,7 @@ def load_strategy_spec(con, strategy_id: str) -> StrategySpec:
         'SELECT r.id, r.name, r.trigger_sql, r.action_type, r.action_quantity_sql, r.priority '
         'FROM strategy_rules sr '
         'JOIN rules r ON r.id = sr.rule_id '
-        'WHERE sr.strategy_id = ? '
+        'WHERE sr.strategy_id = %s '
         'ORDER BY sr.position',
         [strategy_id],
     ).fetchall()
@@ -894,7 +666,7 @@ def load_strategy_spec(con, strategy_id: str) -> StrategySpec:
 def load_environment_spec(con, environment_id: str) -> EnvironmentSpec:
     row = con.execute(
         'SELECT id, name, date_start, date_end, starting_capital '
-        'FROM environments WHERE id = ?',
+        'FROM environments WHERE id = %s',
         [environment_id],
     ).fetchone()
     if row is None:
@@ -908,18 +680,12 @@ def load_environment_spec(con, environment_id: str) -> EnvironmentSpec:
 
 def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
     """Восстанавливает equity-кривую прогона из persistent trade_journal +
-    рыночных данных. См. Часть 6.2 драфта (вариант «Не хранить, реконструировать
-    при открытии карточки»).
-
-    Алгоритм: один проход по торговым дням окружения; на каждом тике применяем
-    все trade_journal-строки с `trade_date <= tick`, держим словарь FIFO-лотов
-    по тикерам и cash; equity = cash + Σ(qty × close(tick)).
-    """
+    рыночных данных. Один проход по торговым дням окружения."""
     env_row = con.execute("""
         SELECT e.date_start, e.date_end, e.starting_capital
         FROM environments e
         JOIN backtest_results br ON br.environment_id = e.id
-        WHERE br.id = ?
+        WHERE br.id = %s
     """, [result_id]).fetchone()
     if env_row is None:
         return []
@@ -928,8 +694,8 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
     trades = con.execute("""
         SELECT trade_date, ticker, type, quantity, price
         FROM trade_journal
-        WHERE backtest_result_id = ?
-        ORDER BY trade_date, rowid
+        WHERE backtest_result_id = %s
+        ORDER BY trade_date, id
     """, [result_id]).fetchall()
 
     market = MarketDataProvider()
@@ -938,20 +704,15 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
     trading_days = [ts.date() for ts in prices.index[mask]]
     trading_index = pd.DatetimeIndex([pd.Timestamp(d) for d in trading_days])
 
-    # Pre-compute close-цены по уникальным тикерам, выровненные на торговый
-    # календарь IMOEX через forward-fill. Если у тикера на конкретный
-    # торговый день IMOEX нет записи (например, эмитент-специфичный
-    # выходной), берётся последняя известная close. Это согласуется с
-    # семантикой `close_price` в движке (см. _close_price).
     stocks = StockDataProvider()
     unique_tickers = {str(t[1]) for t in trades}
     candles_by_ticker: dict[str, pd.Series] = {}
     for t in unique_tickers:
         try:
-            df = stocks.get_candles(t, normalized=True)
+            df = stocks.get_candles(t)
             closes = df.set_index('DATE')['CLOSE']
             candles_by_ticker[t] = closes.reindex(trading_index, method='ffill')
-        except (ValueError, FileNotFoundError, OSError):
+        except ValueError:
             candles_by_ticker[t] = pd.Series(dtype=float)
 
     cash = float(starting_capital)
@@ -960,7 +721,6 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
     trade_idx = 0
 
     for tick in trading_days:
-        # Применяем все сделки с датой <= tick.
         while trade_idx < len(trades) and trades[trade_idx][0] <= tick:
             _td, ticker, ttype, qty, price = trades[trade_idx]
             ticker = str(ticker)
@@ -995,7 +755,7 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
             if closes is None or ts_tick not in closes.index:
                 continue
             close = closes.loc[ts_tick]
-            if pd.isna(close):  # ffill не нашёл предыдущего значения
+            if pd.isna(close):
                 continue
             market_value += total_qty * float(close)
 
@@ -1013,7 +773,7 @@ def persist_backtest_result(
     result_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
     con.execute(
-        'INSERT INTO backtest_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO backtest_results VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
         [
             result_id, result.strategy_id, result.environment_id, created_at,
             float(result.total_return_pct), float(result.annual_return_pct),
@@ -1025,7 +785,7 @@ def persist_backtest_result(
     )
     for trade in result.trades:
         con.execute(
-            'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO trade_journal VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
             [
                 str(uuid.uuid4()), result_id, trade.trade_date, trade.ticker,
                 trade.type, int(trade.quantity), float(trade.price),

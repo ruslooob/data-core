@@ -1,22 +1,17 @@
 """Дочерний процесс одного бэктест-прогона.
 
-Точка входа `worker_main` вызывается через `multiprocessing.Process`.
+После переезда на Postgres воркер открывает свой psycopg-коннект
+(autocommit=False) — это даёт ему собственную сессию, в которой будут
+жить TEMP TABLE движка и SD-кэш plpython3u-UDF. По окончании прогона
+коннект закрывается, всё runtime-состояние удаляется автоматически.
+
 Воркер изолирован от веб-процесса:
-
-- Открывает свой DuckDB-коннект **только в `:memory:`**. Никаких файлов на
-  диске — это снимает Windows-ограничение «двух коннектов на один файл»
-  (см. docs/drafts/DB_WRITER_PROCESS_DRAFT.md).
-- Spec стратегии и окружения приходят сериализованно через аргументы
-  Process — никакого чтения persistent-БД из воркера.
+- Spec стратегии и окружения приходят через args Process (pickle).
 - Прогресс пишется в `progress_queue`. Финальный результат и ошибки —
-  туда же, отдельным сообщением. Веб-процесс читает очередь в фоновом
-  потоке.
-- Отмена — через `cancel_event`. Движок проверяет его на каждом тике.
+  туда же.
+- Отмена — через `cancel_event`, движок проверяет на каждом тике.
 
-Любое неперехваченное исключение (в т.ч. на этапе `duckdb.connect`,
-создании `BacktestLogger` или импортов) пишется в
-`data/logs/backtest/<run_id>.err` — иначе процесс умер бы молча
-без следов в логе.
+Любое неперехваченное исключение пишется в `data/logs/backtest/<run_id>.err`.
 """
 from __future__ import annotations
 
@@ -26,10 +21,11 @@ from multiprocessing.synchronize import Event as EventType
 from queue import Full
 from typing import Any
 
-import duckdb
+import psycopg
 
 from core.backtest_engine import BacktestEngine
 from core.backtest_logger import BacktestLogger, LOG_DIR
+from core.postgres_db import PG_DSN
 
 
 def worker_main(
@@ -39,10 +35,7 @@ def worker_main(
         cancel_event: EventType,
         run_id: str,
 ) -> None:
-    """Запускается в дочернем процессе. Гоняет один прогон от начала до конца.
-
-    `run_id` нужен для имени лог-файла `data/logs/backtest/<run_id>.log`.
-    """
+    """Запускается в дочернем процессе. Гоняет один прогон от начала до конца."""
 
     def push(message: dict) -> None:
         try:
@@ -51,9 +44,6 @@ def worker_main(
             pass
 
     def dump_fatal(message: str) -> None:
-        """Сбрасывает traceback на диск ДО любого нормального логгера.
-        Используется когда падает init воркера (duckdb.connect/BacktestLogger
-        ещё не открыты). Файл `<run_id>.err` рядом с лог-файлами."""
         try:
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             with open(LOG_DIR / f'{run_id}.err', 'w', encoding='utf-8') as fp:
@@ -69,7 +59,7 @@ def worker_main(
     con = None
     logger = None
     try:
-        con = duckdb.connect(':memory:')
+        con = psycopg.connect(PG_DSN, autocommit=False)
         logger = BacktestLogger(run_id=run_id, level='DEBUG')
 
         try:
@@ -110,6 +100,10 @@ def worker_main(
                 push({'kind': 'done', 'result': result})
 
         except Exception as e:
+            try:
+                con.rollback()
+            except Exception:
+                pass
             logger.error('run failed', error=str(e))
             push({
                 'kind': 'error',
@@ -118,8 +112,6 @@ def worker_main(
             })
 
     except Exception as e:
-        # Падение на init воркера (до или во время создания logger) —
-        # дампим traceback в `.err` чтобы потом не плясать вокруг spawn'а.
         tb = traceback.format_exc()
         dump_fatal(f'worker init failed: {e}\n{tb}')
         push({'kind': 'error', 'message': str(e), 'traceback': tb})
@@ -127,4 +119,7 @@ def worker_main(
         if logger is not None:
             logger.close()
         if con is not None:
-            con.close()
+            try:
+                con.close()
+            except Exception:
+                pass
