@@ -21,7 +21,7 @@ def stocks() -> StockDataProvider:
 
 @pytest.fixture(scope='module')
 def con(stocks):
-    return PrecedentEngine(stocks, MarketDataProvider()).con
+    return PrecedentEngine(stocks, MarketDataProvider()).con.cursor()
 
 
 # ---------- vol_ratio ----------

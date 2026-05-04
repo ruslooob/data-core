@@ -18,7 +18,7 @@ EVENT_DATE_SQL = "DATE '2022-12-16'"
 
 @pytest.fixture(scope='module')
 def con():
-    return PrecedentEngine(StockDataProvider(), MarketDataProvider()).con
+    return PrecedentEngine(StockDataProvider(), MarketDataProvider()).con.cursor()
 
 
 @pytest.fixture(scope='module')

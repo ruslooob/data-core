@@ -128,3 +128,35 @@ def test_stats_duration_ms_present():
     assert "durationMs" in stats
     assert isinstance(stats["durationMs"], int)
     assert stats["durationMs"] >= 0
+
+
+# ---------- UDF/macro доступность через cursor ----------
+# Регрессия: TEMP MACRO живёт в приватной temp-схеме коннекта и не виден из
+# `con.cursor()` (новой сессии), которым API возвращает соединение каждому
+# запросу. Эти тесты гарантируют, что vol_ratio/volume_ratio/car доступны
+# в публичном контракте /api/precedents/search.
+
+def test_vol_ratio_callable_via_api():
+    r = client.post("/api/precedents/search", json={
+        "source": "SELECT vol_ratio('LKOH', DATE '2022-12-16') AS v",
+    })
+    assert r.status_code == 200, r.text
+    rows = r.json()["rows"]
+    assert len(rows) == 1
+    assert rows[0][0] is not None
+
+
+def test_volume_ratio_callable_via_api():
+    r = client.post("/api/precedents/search", json={
+        "source": "SELECT volume_ratio('LKOH', DATE '2022-12-16') AS v",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"][0][0] is not None
+
+
+def test_car_callable_via_api():
+    r = client.post("/api/precedents/search", json={
+        "source": "SELECT car('LKOH', DATE '2022-12-16') AS c",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"][0][0] is not None
