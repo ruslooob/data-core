@@ -43,6 +43,18 @@ def _normalize_named_params(sql: str) -> str:
     return _NAMED_PARAM_RE.sub(r'$\1', sql)
 
 
+def _annualize_return(total_return_pct: float, date_start: date, date_end: date) -> float:
+    """CAGR через календарные годы. Возвращает 0 если период невалиден."""
+    days = (date_end - date_start).days
+    if days <= 0:
+        return 0.0
+    years = days / 365.25
+    growth_factor = 1.0 + total_return_pct / 100.0
+    if growth_factor <= 0:
+        return 0.0
+    return (growth_factor ** (1.0 / years) - 1.0) * 100.0
+
+
 _PARAM_USAGE_RE = re.compile(r'\$([A-Za-z_][A-Za-z0-9_]*)')
 
 
@@ -80,7 +92,7 @@ class RuleSpec:
 class StrategySpec:
     id: str
     name: str
-    rules: list[RuleSpec]  # упорядочены по `position`
+    rules: list[RuleSpec]
 
 
 @dataclass
@@ -100,7 +112,7 @@ class TradeRecord:
     quantity: int
     price: float
     rule_name: str
-    pnl_realized: float | None  # только у sell
+    pnl_realized: float | None  # заполняется только у sell
 
 
 @dataclass
@@ -148,7 +160,7 @@ class BacktestEngine:
             strategy: StrategySpec,
             environment: EnvironmentSpec,
             con,
-            logger=None,
+            logger,
     ):
         self.strategy = strategy
         self.environment = environment
@@ -248,10 +260,7 @@ class BacktestEngine:
         Перед регистрацией снимаем старые версии — иначе DuckDB бросит
         CatalogException "function already exists".
         """
-        for name in (
-                '_close_price', '_open_price', '_volume',
-                '_avg_price', '_volume_ratio',
-        ):
+        for name in _RUNTIME_UDFS:
             try:
                 self.con.remove_function(name)
             except (duckdb.CatalogException, duckdb.InvalidInputException):
@@ -296,7 +305,7 @@ class BacktestEngine:
         )
 
         # Макросы — короткие синонимы и значения по умолчанию.
-        for macro in ('close_price', 'open_price', 'volume', 'avg_price', 'volume_ratio'):
+        for macro in _RUNTIME_MACROS:
             try:
                 self.con.execute(f"DROP MACRO IF EXISTS {macro}")
             except duckdb.Error:
@@ -497,7 +506,7 @@ class BacktestEngine:
             self._register_udfs()
             candidates = self._collect_candidates(tick)
 
-            if self.logger and candidates:
+            if candidates:
                 self.logger.debug(
                     f'tick {index + 1:04d} {tick} candidates',
                     n=len(candidates),
@@ -509,23 +518,21 @@ class BacktestEngine:
             self._stocks = StockDataProvider(max_date=tick)
             self._execute_candidates(candidates, tick)
             self._reprice_equity(tick)
-            # Дивиденды начисляются после переоценки — в конце тика, по факту
-            # «деньги пришли». Часть 3.3 драфта.
+            # Дивиденды начисляются после переоценки — в конце тика
             self._apply_dividends(tick)
 
-            if self.logger:
-                state = self.con.execute(
-                    'SELECT cash, equity FROM portfolio_state',
-                ).fetchone()
-                positions = self.con.execute(
-                    'SELECT COUNT(DISTINCT ticker) FROM portfolio_positions',
-                ).fetchone()[0]
-                self.logger.debug(
-                    f'tick {index + 1:04d} {tick} end',
-                    equity=round(float(state[1]), 2),
-                    cash=round(float(state[0]), 2),
-                    positions=int(positions),
-                )
+            state = self.con.execute(
+                'SELECT cash, equity FROM portfolio_state',
+            ).fetchone()
+            positions = self.con.execute(
+                'SELECT COUNT(DISTINCT ticker) FROM portfolio_positions',
+            ).fetchone()[0]
+            self.logger.debug(
+                f'tick {index + 1:04d} {tick} end',
+                equity=round(float(state[1]), 2),
+                cash=round(float(state[0]), 2),
+                positions=int(positions),
+            )
 
             if on_progress is not None:
                 state = self.con.execute(
@@ -566,25 +573,48 @@ class BacktestEngine:
                 trigger_rows = self.con.execute(
                     trigger_sql, _filter_params(trigger_sql, {'tick': tick}),
                 ).fetchall()
-            except duckdb.Error:
-                # Жёсткая ошибка триггера — в MVP пропускаем правило, продолжаем прогон.
+            except duckdb.Error as e:
+                self.logger.debug(
+                    'trigger error', tick=tick, rule=rule.name, error=str(e),
+                )
                 continue
             tickers = [r[0] for r in trigger_rows if r and r[0] is not None]
+            if not tickers:
+                self.logger.debug(
+                    'trigger empty', tick=tick, rule=rule.name,
+                )
             for ticker in tickers:
                 try:
                     qty_row = self.con.execute(
                         quantity_sql,
                         _filter_params(quantity_sql, {'tick': tick, 'ticker': ticker}),
                     ).fetchone()
-                except duckdb.Error:
+                except duckdb.Error as e:
+                    self.logger.debug(
+                        'candidate dropped', tick=tick, rule=rule.name,
+                        ticker=ticker, reason='quantity_error', error=str(e),
+                    )
                     continue
                 if qty_row is None or qty_row[0] is None:
+                    self.logger.debug(
+                        'candidate dropped', tick=tick, rule=rule.name,
+                        ticker=ticker, reason='quantity_null',
+                    )
                     continue
                 try:
                     quantity = int(qty_row[0])
                 except (TypeError, ValueError):
+                    self.logger.debug(
+                        'candidate dropped', tick=tick, rule=rule.name,
+                        ticker=ticker, reason='quantity_not_int',
+                        value=str(qty_row[0]),
+                    )
                     continue
                 if quantity <= 0:
+                    self.logger.debug(
+                        'candidate dropped', tick=tick, rule=rule.name,
+                        ticker=ticker, reason='quantity_zero', quantity=quantity,
+                    )
                     continue
                 candidates.append({
                     'ticker': str(ticker),
@@ -610,22 +640,20 @@ class BacktestEngine:
     def _execute_buy(self, cand: dict[str, Any], tick: date) -> None:
         price = self._open_price(cand['ticker'], tick)
         if price is None or price <= 0:
-            if self.logger:
-                self.logger.warn(
-                    'buy skipped: no open price',
-                    ticker=cand['ticker'], date=tick.isoformat(),
-                )
+            self.logger.warn(
+                'buy skipped: no open price',
+                ticker=cand['ticker'], date=tick.isoformat(),
+            )
             return
         cash = self.con.execute('SELECT cash FROM portfolio_state').fetchone()[0]
         affordable = int(cash // price)
         actual = min(cand['quantity'], affordable)
         if actual <= 0:
-            if self.logger:
-                self.logger.warn(
-                    'buy skipped: insufficient cash',
-                    ticker=cand['ticker'], requested=cand['quantity'],
-                    affordable=affordable, cash=round(float(cash), 2),
-                )
+            self.logger.warn(
+                'buy skipped: insufficient cash',
+                ticker=cand['ticker'], requested=cand['quantity'],
+                affordable=affordable, cash=round(float(cash), 2),
+            )
             return
         cost = actual * price
         self.con.execute(
@@ -639,13 +667,12 @@ class BacktestEngine:
             'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, NULL)',
             [tick, cand['ticker'], 'buy', actual, price, cand['rule_name']],
         )
-        if self.logger:
-            self.logger.debug(
-                'trade buy',
-                ticker=cand['ticker'], qty=actual, price=round(price, 2),
-                fill_ratio=round(actual / cand['quantity'], 2),
-                rule=cand['rule_name'],
-            )
+        self.logger.debug(
+            'trade buy',
+            ticker=cand['ticker'], qty=actual, price=round(price, 2),
+            fill_ratio=round(actual / cand['quantity'], 2),
+            rule=cand['rule_name'],
+        )
 
     def _execute_sell(self, cand: dict[str, Any], tick: date) -> None:
         price = self._open_price(cand['ticker'], tick)
@@ -689,12 +716,11 @@ class BacktestEngine:
             'INSERT INTO trade_journal VALUES (?, ?, ?, ?, ?, ?, ?)',
             [tick, cand['ticker'], 'sell', actual, price, cand['rule_name'], pnl_total],
         )
-        if self.logger:
-            self.logger.debug(
-                'trade sell',
-                ticker=cand['ticker'], qty=actual, price=round(price, 2),
-                pnl=round(pnl_total, 2), rule=cand['rule_name'],
-            )
+        self.logger.debug(
+            'trade sell',
+            ticker=cand['ticker'], qty=actual, price=round(price, 2),
+            pnl=round(pnl_total, 2), rule=cand['rule_name'],
+        )
 
     # ── Дивиденды ──────────────────────────────────────────────────────────
 
@@ -717,12 +743,11 @@ class BacktestEngine:
                 [tick, ticker, 'dividend', int(total_qty), float(div_per_share),
                  DIVIDEND_RULE_NAME, payout],
             )
-            if self.logger:
-                self.logger.info(
-                    'dividend payout',
-                    ticker=ticker, qty=int(total_qty),
-                    per_share=float(div_per_share), payout=round(payout, 2),
-                )
+            self.logger.info(
+                'dividend payout',
+                ticker=ticker, qty=int(total_qty),
+                per_share=float(div_per_share), payout=round(payout, 2),
+            )
             # Обновим последнюю точку equity_curve на этом тике, чтобы не было
             # «двойного» состояния — equity уже пересчитано выше, тут просто
             # синхронизируем последнюю точку.
@@ -768,14 +793,11 @@ class BacktestEngine:
 
         total_return_pct = (final_equity - starting) / starting * 100.0
 
-        # Годовая доходность: нормировка на длину прогона в торговых днях / 252.
-        years = max(len(equity_curve), 1) / 252.0
-        if years > 0 and starting > 0 and final_equity > 0:
-            annual_return_pct = ((final_equity / starting) ** (1.0 / years) - 1.0) * 100.0
-        else:
-            annual_return_pct = 0.0
+        annual_return_pct = _annualize_return(
+            total_return_pct, self.environment.date_start, self.environment.date_end,
+        )
 
-        # Просадка
+        # Peak-to-trough просадка: пик растёт по ходу, DD считается от пика.
         peak = starting
         max_dd = 0.0
         for _, eq in equity_curve:
