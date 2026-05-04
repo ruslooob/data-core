@@ -98,14 +98,37 @@ def _create_schema(pg) -> None:
         cur.execute(DDL_DIVIDENDS)
 
 
-def _parse_filename(filename: str) -> tuple[str, str]:
-    """Из `LKOH_Лукойл_1day_*.txt` → ('LKOH', 'Лукойл').
-    Имя содержит уникод; читаем filename как есть."""
+def _parse_ticker_and_name(filename: str, file_path: str) -> tuple[str, str]:
+    """Возвращает (ticker, name) для файла котировок.
+
+    Ticker берётся из первой data-строки (поле `<TICKER>`) — это надёжно
+    работает и для compound-тикеров типа `DEPOSIT_RUONIA`. Name —
+    «человеческое» название, извлекается из имени файла как блок после
+    ticker и до `_1day_`.
+
+    Пример: `DEPOSIT_RUONIA_RUONIA_1day_20000301_20250915.txt` →
+    ticker=`DEPOSIT_RUONIA` (из файла), name=`RUONIA` (из имени файла).
+    """
+    # Читаем ticker из первой data-строки.
+    with open(file_path, 'r', encoding='utf-8') as fh:
+        fh.readline()  # пропустить заголовок
+        first = fh.readline()
+    ticker = first.split(';', 1)[0].strip().upper()
+
+    # Имя из filename: всё между ticker и `_1day_`.
     base = os.path.splitext(filename)[0]
-    parts = base.split('_')
-    if len(parts) < 2:
-        return parts[0].upper(), ''
-    return parts[0].upper(), parts[1]
+    if '_1day_' in base:
+        prefix = base.split('_1day_', 1)[0]
+        # prefix начинается с `TICKER_NAME` (но ticker может содержать `_`).
+        # Снимаем ticker по началу строки.
+        if prefix.upper().startswith(ticker + '_'):
+            name = prefix[len(ticker) + 1:]
+        else:
+            name = prefix
+    else:
+        parts = base.split('_')
+        name = parts[1] if len(parts) >= 2 else ''
+    return ticker, name
 
 
 def _load_candles_df(path: str, splits: list[dict]) -> pd.DataFrame:
@@ -156,7 +179,7 @@ def _migrate_stocks_and_candles(pg) -> int:
     with pg.cursor() as cur:
         for path in files:
             filename = os.path.basename(path)
-            ticker, name = _parse_filename(filename)
+            ticker, name = _parse_ticker_and_name(filename, path)
             ticker_splits = splits.get(ticker, [])
             cur.execute(
                 'INSERT INTO stocks (ticker, name, splits) VALUES (%s, %s, %s) '
