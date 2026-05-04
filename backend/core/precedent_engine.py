@@ -213,7 +213,7 @@ class PrecedentEngine:
         )
 
         self.con.execute("""
-            CREATE OR REPLACE TEMP MACRO car(
+            CREATE OR REPLACE MACRO car(
                 ticker, event_date,
                 model := 'market_model',
                 window_before := 5,
@@ -226,14 +226,14 @@ class PrecedentEngine:
             )
         """)
         self.con.execute("""
-            CREATE OR REPLACE TEMP MACRO vol_ratio(
+            CREATE OR REPLACE MACRO vol_ratio(
                 ticker, event_date,
                 window_before := 5,
                 window_after := 5
             ) AS _vol_ratio_impl(ticker, event_date, window_before, window_after)
         """)
         self.con.execute("""
-            CREATE OR REPLACE TEMP MACRO volume_ratio(
+            CREATE OR REPLACE MACRO volume_ratio(
                 ticker, event_date,
                 window_before := 5,
                 window_after := 5
