@@ -214,6 +214,67 @@ function SelectorRow(props: { label: string; current: string | null; picker: Rea
 
 // ── Вкладка «Архив» ──────────────────────────────────────────────────────
 
+// ── Сортировка таблицы Архива ─────────────────────────────────────────────
+
+type ArchiveSortKey =
+  | 'strategy' | 'environment' | 'period'
+  | 'totalReturnPct' | 'annualReturnPct' | 'maxDrawdownPct' | 'sharpe'
+  | 'nTrades' | 'profitFactor' | 'winRatePct'
+  | 'createdAt'
+
+function compareByKey(
+  a: BacktestResultMeta,
+  b: BacktestResultMeta,
+  key: ArchiveSortKey,
+  strategyById: Map<string, Strategy>,
+  envById: Map<string, Environment>,
+): number {
+  const cmpStr = (x: string, y: string) => x.localeCompare(y, 'ru')
+  // null трактуем как «меньше любого числа» при desc — то есть в самом конце
+  // при «по убыванию». Реализуем как очень маленькое число.
+  const num = (v: number | null | undefined) => v == null ? Number.NEGATIVE_INFINITY : v
+  switch (key) {
+    case 'strategy': return cmpStr(strategyById.get(a.strategyId)?.name ?? '', strategyById.get(b.strategyId)?.name ?? '')
+    case 'environment': return cmpStr(envById.get(a.environmentId)?.name ?? '', envById.get(b.environmentId)?.name ?? '')
+    case 'period': {
+      const pa = envById.get(a.environmentId)
+      const pb = envById.get(b.environmentId)
+      return cmpStr(pa ? `${pa.dateStart}…${pa.dateEnd}` : '', pb ? `${pb.dateStart}…${pb.dateEnd}` : '')
+    }
+    case 'totalReturnPct': return num(a.totalReturnPct) - num(b.totalReturnPct)
+    case 'annualReturnPct': return num(a.annualReturnPct) - num(b.annualReturnPct)
+    case 'maxDrawdownPct': return num(a.maxDrawdownPct) - num(b.maxDrawdownPct)
+    case 'sharpe': return num(a.sharpe) - num(b.sharpe)
+    case 'nTrades': return num(a.nTrades) - num(b.nTrades)
+    case 'profitFactor': return num(a.profitFactor) - num(b.profitFactor)
+    case 'winRatePct': return num(a.winRatePct) - num(b.winRatePct)
+    case 'createdAt': return cmpStr(a.createdAt, b.createdAt)
+  }
+}
+
+function SortableTh(props: {
+  label: string
+  thKey: ArchiveSortKey
+  sortKey: ArchiveSortKey
+  sortDir: 'asc' | 'desc'
+  onClick: (key: ArchiveSortKey) => void
+  numeric?: boolean
+}) {
+  const active = props.sortKey === props.thKey
+  const indicator = active ? (props.sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+  const style: React.CSSProperties = {
+    ...(props.numeric ? archiveThStyleNum : archiveThStyle),
+    cursor: 'pointer',
+    userSelect: 'none',
+    color: active ? '#2962FF' : (archiveThStyle.color as string | undefined),
+  }
+  return (
+    <th style={style} onClick={() => props.onClick(props.thKey)} title="Сортировать">
+      {props.label}{indicator}
+    </th>
+  )
+}
+
 function ArchiveTab() {
   const [results, setResults] = useState<BacktestResultMeta[]>([])
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -221,6 +282,12 @@ function ArchiveTab() {
   const [selectedDetail, setSelectedDetail] = useState<BacktestResultDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  // Сортировка
+  const [sortKey, setSortKey] = useState<ArchiveSortKey>('createdAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  // Фильтры
+  const [filterStrategyId, setFilterStrategyId] = useState<string | null>(null)
+  const [filterEnvironmentId, setFilterEnvironmentId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -267,33 +334,90 @@ function ArchiveTab() {
     }
   }
 
+  // Применяем фильтры и сортировку.
+  const visibleResults = useMemo(() => {
+    let rs = results
+    if (filterStrategyId) rs = rs.filter((r) => r.strategyId === filterStrategyId)
+    if (filterEnvironmentId) rs = rs.filter((r) => r.environmentId === filterEnvironmentId)
+    return [...rs].sort((a, b) => compareByKey(a, b, sortKey, strategyById, envById) * (sortDir === 'asc' ? 1 : -1))
+  }, [results, filterStrategyId, filterEnvironmentId, sortKey, sortDir, strategyById, envById])
+
+  const onSortClick = (key: ArchiveSortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      // Для метрик дефолт desc (большие сверху), для текста — asc.
+      setSortDir(key === 'strategy' || key === 'environment' || key === 'period' ? 'asc' : 'desc')
+    }
+  }
+
+  const filterStrategy = filterStrategyId ? strategyById.get(filterStrategyId) ?? null : null
+  const filterEnv = filterEnvironmentId ? envById.get(filterEnvironmentId) ?? null : null
+
   return (
     <div style={tabBodyStyle}>
       {error && <div style={errorBannerStyle}>{error}</div>}
-      <Section title={`Все прогоны (${results.length})`}>
-        {results.length === 0 ? (
-          <div style={emptyHintStyle}>Прогонов ещё нет</div>
+      <Section title={`Все прогоны (${visibleResults.length} из ${results.length})`}>
+        <div style={filterRowStyle}>
+          <span style={selectorLabelStyle}>Фильтры:</span>
+          <span style={selectorValueStyle}>
+            стратегия: {filterStrategy
+              ? <span><b>{filterStrategy.name}</b> <button style={inlineLinkStyle} onClick={() => setFilterStrategyId(null)}>×</button></span>
+              : <span style={mutedStyle}>все</span>}
+          </span>
+          <SearchablePicker<Strategy>
+            items={strategies}
+            getKey={(s) => s.id}
+            getName={(s) => s.name}
+            onPick={(s) => setFilterStrategyId(s.id)}
+            title="Фильтровать по стратегии"
+          />
+          <span style={selectorValueStyle}>
+            окружение: {filterEnv
+              ? <span><b>{filterEnv.name}</b> <button style={inlineLinkStyle} onClick={() => setFilterEnvironmentId(null)}>×</button></span>
+              : <span style={mutedStyle}>все</span>}
+          </span>
+          <SearchablePicker<Environment>
+            items={environments}
+            getKey={(e) => e.id}
+            getName={(e) => e.name}
+            renderMeta={(e) => `${e.dateStart}…${e.dateEnd}`}
+            onPick={(e) => setFilterEnvironmentId(e.id)}
+            title="Фильтровать по окружению"
+          />
+          {(filterStrategyId || filterEnvironmentId) && (
+            <button
+              style={inlineLinkStyle}
+              onClick={() => { setFilterStrategyId(null); setFilterEnvironmentId(null) }}
+            >
+              сбросить
+            </button>
+          )}
+        </div>
+        {visibleResults.length === 0 ? (
+          <div style={emptyHintStyle}>{results.length === 0 ? 'Прогонов ещё нет' : 'Под фильтр ничего не попало'}</div>
         ) : (
           <div style={archiveTableWrapStyle}>
             <table style={archiveTableStyle}>
               <thead>
                 <tr>
-                  <th style={archiveThStyle}>Стратегия</th>
-                  <th style={archiveThStyle}>Окружение</th>
-                  <th style={archiveThStyle}>Период</th>
-                  <th style={archiveThStyleNum}>Σ доход.</th>
-                  <th style={archiveThStyleNum}>Год. доход.</th>
-                  <th style={archiveThStyleNum}>Просадка</th>
-                  <th style={archiveThStyleNum}>Sharpe</th>
-                  <th style={archiveThStyleNum}>Сделок</th>
-                  <th style={archiveThStyleNum}>Profit factor</th>
-                  <th style={archiveThStyleNum}>Win rate</th>
-                  <th style={archiveThStyle}>Создан</th>
+                  <SortableTh label="Стратегия" thKey="strategy" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
+                  <SortableTh label="Окружение" thKey="environment" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
+                  <SortableTh label="Период" thKey="period" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
+                  <SortableTh label="Σ доход." thKey="totalReturnPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Год. доход." thKey="annualReturnPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Просадка" thKey="maxDrawdownPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Sharpe" thKey="sharpe" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Сделок" thKey="nTrades" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Profit factor" thKey="profitFactor" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Win rate" thKey="winRatePct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
+                  <SortableTh label="Создан" thKey="createdAt" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
                   <th style={archiveThStyle}></th>
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => {
+                {visibleResults.map((r) => {
                   const s = strategyById.get(r.strategyId)
                   const e = envById.get(r.environmentId)
                   const isSelected = selectedDetail?.id === r.id
@@ -632,6 +756,21 @@ const archiveTableWrapStyle: React.CSSProperties = { overflowX: 'auto', maxHeigh
 const archiveTableStyle: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 12 }
 const archiveThStyle: React.CSSProperties = { textAlign: 'left', padding: '6px 10px', background: '#f5f5f5', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, fontWeight: 600 }
 const archiveThStyleNum: React.CSSProperties = { ...archiveThStyle, textAlign: 'right' }
+const filterRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 8,
+  padding: '4px 0',
+}
+const inlineLinkStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#2962FF',
+  fontSize: 12,
+  cursor: 'pointer',
+  padding: '0 4px',
+}
 const archiveTrStyle: React.CSSProperties = { cursor: 'pointer' }
 const archiveTrSelectedStyle: React.CSSProperties = { ...archiveTrStyle, background: '#eaf2ff' }
 const archiveTdStyle: React.CSSProperties = { padding: '4px 10px', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }
