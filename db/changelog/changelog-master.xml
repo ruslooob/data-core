@@ -13,4 +13,6 @@
         одно атомарное изменение. Запуск см. в docker-compose.yml.
     -->
 
+    <include file="changes/001-initial-schema.xml" relativeToChangelogFile="true"/>
+
 </databaseChangeLog>

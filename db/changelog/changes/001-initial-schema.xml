@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <changeSet id="001-initial-schema" author="ruslan">
+
+        <!-- =====================================================
+             1. Доменные таблицы: события и теги
+             ===================================================== -->
+
+        <createTable tableName="tags">
+            <column name="code" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR"/>
+            <column name="type" type="VARCHAR"/>
+        </createTable>
+
+        <createTable tableName="events">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="date_start" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="date_end" type="DATE"/>
+            <column name="event" type="VARCHAR"/>
+        </createTable>
+
+        <createTable tableName="event_tags">
+            <column name="event_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="event_tags_event_id_fkey"
+                             references="events(id)" deleteCascade="true"/>
+            </column>
+            <column name="tag_code" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="event_tags_tag_code_fkey"
+                             references="tags(code)" deleteCascade="true"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="event_tags" columnNames="event_id, tag_code"/>
+
+        <sql>
+            CREATE OR REPLACE VIEW tagged_events AS
+            SELECT
+                e.id         AS event_id,
+                e.date_start,
+                e.date_end,
+                e.event,
+                t.code       AS tag,
+                t.name       AS tag_name,
+                t.type       AS tag_type
+            FROM events     e
+            JOIN event_tags et ON et.event_id = e.id
+            JOIN tags       t  ON t.code      = et.tag_code
+        </sql>
+
+        <createTable tableName="precedent_queries">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="source" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- =====================================================
+             2. Котировки и макроданные
+             ===================================================== -->
+
+        <createTable tableName="stocks">
+            <column name="ticker" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR"/>
+            <column name="splits" type="JSONB"/>
+        </createTable>
+
+        <createTable tableName="stock_candles">
+            <column name="ticker" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="stock_candles_ticker_fkey"
+                             references="stocks(ticker)" deleteCascade="true"/>
+            </column>
+            <column name="candle_date" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="open" type="DOUBLE PRECISION"/>
+            <column name="high" type="DOUBLE PRECISION"/>
+            <column name="low" type="DOUBLE PRECISION"/>
+            <column name="close" type="DOUBLE PRECISION"/>
+            <column name="volume" type="DOUBLE PRECISION"/>
+            <column name="open_interest" type="DOUBLE PRECISION"/>
+        </createTable>
+        <addPrimaryKey tableName="stock_candles" columnNames="ticker, candle_date"/>
+
+        <createTable tableName="risk_free_rate">
+            <column name="rate_date" type="DATE">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="annual_rate_pct" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="dividends">
+            <column name="ticker" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="announcement_date" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="payment_date" type="DATE"/>
+            <column name="dividend_per_share" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="year" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="dividends" columnNames="ticker, announcement_date, year"/>
+
+        <!-- =====================================================
+             3. Исследования (Research)
+             ===================================================== -->
+
+        <createTable tableName="research">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="description" type="TEXT"/>
+            <column name="conclusion" type="TEXT"/>
+            <column name="created_at" type="TIMESTAMP WITH TIME ZONE" defaultValueComputed="NOW()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- =====================================================
+             4. Бэктест: правила, стратегии, окружения
+             ===================================================== -->
+
+        <createTable tableName="rules">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="trigger_sql" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action_type" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="action_quantity_sql" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="priority" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="description" type="VARCHAR"/>
+            <column name="research_id" type="VARCHAR">
+                <constraints foreignKeyName="rules_research_id_fkey"
+                             references="research(id)" deleteCascade="true"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="strategies">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="description" type="VARCHAR"/>
+            <column name="research_id" type="VARCHAR">
+                <constraints foreignKeyName="strategies_research_id_fkey"
+                             references="research(id)" deleteCascade="true"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="strategy_rules">
+            <column name="strategy_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="strategy_rules_strategy_id_fkey"
+                             references="strategies(id)" deleteCascade="true"/>
+            </column>
+            <column name="rule_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="strategy_rules_rule_id_fkey"
+                             references="rules(id)"/>
+            </column>
+            <column name="position" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="strategy_rules" columnNames="strategy_id, rule_id"/>
+
+        <createTable tableName="environments">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="date_start" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="date_end" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="starting_capital" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="description" type="VARCHAR"/>
+            <column name="research_id" type="VARCHAR">
+                <constraints foreignKeyName="environments_research_id_fkey"
+                             references="research(id)" deleteCascade="true"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="backtest_results">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="strategy_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="backtest_results_strategy_id_fkey"
+                             references="strategies(id)"/>
+            </column>
+            <column name="environment_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="backtest_results_environment_id_fkey"
+                             references="environments(id)"/>
+            </column>
+            <column name="created_at" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="total_return_pct" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="annual_return_pct" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="max_drawdown_pct" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="sharpe" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="n_trades" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+            <column name="profit_factor" type="DOUBLE PRECISION"/>
+            <column name="win_rate_pct" type="DOUBLE PRECISION"/>
+            <column name="research_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="backtest_results_research_id_fkey"
+                             references="research(id)" deleteCascade="true"/>
+            </column>
+        </createTable>
+
+        <createTable tableName="trade_journal">
+            <column name="id" type="VARCHAR">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="backtest_result_id" type="VARCHAR">
+                <constraints nullable="false" foreignKeyName="trade_journal_backtest_result_id_fkey"
+                             references="backtest_results(id)" deleteCascade="true"/>
+            </column>
+            <column name="trade_date" type="DATE">
+                <constraints nullable="false"/>
+            </column>
+            <column name="ticker" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="type" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="quantity" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+            <column name="price" type="DOUBLE PRECISION">
+                <constraints nullable="false"/>
+            </column>
+            <column name="rule_name" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pnl_realized" type="DOUBLE PRECISION"/>
+        </createTable>
+        <createIndex tableName="trade_journal" indexName="idx_trade_journal_result">
+            <column name="backtest_result_id"/>
+        </createIndex>
+
+        <!-- =====================================================
+             5. UNIQUE-индексы Research:
+                composite (research_id, name) + partial для общих
+             ===================================================== -->
+
+        <addUniqueConstraint tableName="rules"
+                             columnNames="research_id, name"
+                             constraintName="rules_research_id_name_uniq"/>
+        <addUniqueConstraint tableName="strategies"
+                             columnNames="research_id, name"
+                             constraintName="strategies_research_id_name_uniq"/>
+        <addUniqueConstraint tableName="environments"
+                             columnNames="research_id, name"
+                             constraintName="environments_research_id_name_uniq"/>
+
+        <!-- Partial UNIQUE-индексы. Liquibase нативного тега для partial-index
+             не имеет; это Postgres-специфика, поэтому через <sql>. -->
+        <sql>
+            CREATE UNIQUE INDEX rules_shared_name_uniq
+                ON rules (name) WHERE research_id IS NULL
+        </sql>
+        <sql>
+            CREATE UNIQUE INDEX strategies_shared_name_uniq
+                ON strategies (name) WHERE research_id IS NULL
+        </sql>
+        <sql>
+            CREATE UNIQUE INDEX environments_shared_name_uniq
+                ON environments (name) WHERE research_id IS NULL
+        </sql>
+
+    </changeSet>
+
+</databaseChangeLog>
