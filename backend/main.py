@@ -663,10 +663,10 @@ def _row_to_rule(row) -> RuleOut:
 @app.get('/api/rules', response_model_by_alias=True)
 def list_rules(
         research_id: str = Query(..., alias='researchId'),
-        include_shared: bool = Query(False, alias='includeShared'),
+        include_common: bool = Query(False, alias='includeCommon'),
 ) -> list[RuleOut]:
     con = _pg()
-    if include_shared:
+    if include_common:
         rows = con.execute("""
             SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
                    created_at, description
@@ -812,10 +812,10 @@ def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
 @app.get('/api/strategies', response_model_by_alias=True)
 def list_strategies(
         research_id: str = Query(..., alias='researchId'),
-        include_shared: bool = Query(False, alias='includeShared'),
+        include_common: bool = Query(False, alias='includeCommon'),
 ) -> list[StrategyOut]:
     con = _pg()
-    if include_shared:
+    if include_common:
         rows = con.execute(
             'SELECT id, name, created_at, description FROM strategies '
             'WHERE research_id = %s OR research_id IS NULL '
@@ -973,10 +973,10 @@ def _row_to_env(row) -> EnvironmentOut:
 @app.get('/api/environments', response_model_by_alias=True)
 def list_environments(
         research_id: str = Query(..., alias='researchId'),
-        include_shared: bool = Query(False, alias='includeShared'),
+        include_common: bool = Query(False, alias='includeCommon'),
 ) -> list[EnvironmentOut]:
     con = _pg()
-    if include_shared:
+    if include_common:
         rows = con.execute("""
             SELECT id, name, date_start, date_end, starting_capital, created_at, description
             FROM environments

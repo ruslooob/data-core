@@ -17,6 +17,7 @@ import {
   updateStrategyDescription,
 } from '../api/client'
 import type { ActionType, Environment, Rule, Strategy } from '../api/types'
+import { useRequiredResearchId } from '../contexts/ActiveResearch'
 import { SearchablePicker } from './SearchablePicker'
 import { SqlEditor } from './SqlEditor'
 
@@ -201,6 +202,7 @@ function DescriptionEditor(props: DescriptionEditorProps) {
 // ── Strategies tab ────────────────────────────────────────────────────────
 
 function StrategiesTab() {
+  const researchId = useRequiredResearchId()
   const [items, setItems] = useState<Strategy[]>([])
   const [rules, setRules] = useState<Rule[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
@@ -208,10 +210,13 @@ function StrategiesTab() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, r] = await Promise.all([listStrategies(), listRules()])
+      const [s, r] = await Promise.all([
+        listStrategies(researchId, true),
+        listRules(researchId, true),
+      ])
       setItems(s); setRules(r)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [])
+  }, [researchId])
   useEffect(() => { void refresh() }, [refresh])
 
   const ruleById = useMemo(() => {
@@ -269,6 +274,7 @@ function NewStrategyForm(props: {
   onCreated: (id: string) => void | Promise<void>
   onError: (msg: string) => void
 }) {
+  const researchId = useRequiredResearchId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [ruleIds, setRuleIds] = useState<string[]>([])
@@ -290,6 +296,7 @@ function NewStrategyForm(props: {
     try {
       const created = await createStrategy({
         name: name.trim(), ruleIds, description: description.trim() || null,
+        researchId,
       })
       await props.onCreated(created.id)
     } catch (e) {
@@ -409,14 +416,15 @@ function ExistingStrategyView(props: {
 // ── Rules tab ────────────────────────────────────────────────────────────
 
 function RulesTab() {
+  const researchId = useRequiredResearchId()
   const [items, setItems] = useState<Rule[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try { setItems(await listRules()) }
+    try { setItems(await listRules(researchId, true)) }
     catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [])
+  }, [researchId])
   useEffect(() => { void refresh() }, [refresh])
 
   const current = selected && selected !== 'new'
@@ -463,6 +471,7 @@ function NewRuleForm(props: {
   onCreated: (id: string) => void | Promise<void>
   onError: (msg: string) => void
 }) {
+  const researchId = useRequiredResearchId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [actionType, setActionType] = useState<ActionType>('buy')
@@ -484,6 +493,7 @@ function NewRuleForm(props: {
         triggerSql, actionType, actionQuantitySql: quantitySql,
         priority: p,
         description: description.trim() || null,
+        researchId,
       })
       await props.onCreated(created.id)
     } catch (e) {
@@ -574,14 +584,15 @@ function ExistingRuleView(props: {
 // ── Environments tab ────────────────────────────────────────────────────
 
 function EnvironmentsTab() {
+  const researchId = useRequiredResearchId()
   const [items, setItems] = useState<Environment[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try { setItems(await listEnvironments()) }
+    try { setItems(await listEnvironments(researchId, true)) }
     catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [])
+  }, [researchId])
   useEffect(() => { void refresh() }, [refresh])
 
   const current = selected && selected !== 'new'
@@ -628,6 +639,7 @@ function NewEnvironmentForm(props: {
   onCreated: (id: string) => void | Promise<void>
   onError: (msg: string) => void
 }) {
+  const researchId = useRequiredResearchId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [dateStart, setDateStart] = useState('2020-01-01')
@@ -644,6 +656,7 @@ function NewEnvironmentForm(props: {
       const created = await createEnvironment({
         name: name.trim(), dateStart, dateEnd, startingCapital: cap,
         description: description.trim() || null,
+        researchId,
       })
       await props.onCreated(created.id)
     } catch (e) { props.onError(e instanceof Error ? e.message : String(e)) }

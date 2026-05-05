@@ -1,5 +1,5 @@
 """Тесты этапа R3 — фильтрация листинговых эндпоинтов по research_id и
-видимость общих сущностей через include_shared.
+видимость общих сущностей через include_common.
 """
 from __future__ import annotations
 
@@ -94,10 +94,10 @@ def test_private_strategy_visible_only_in_owning_research(research_a, research_b
     assert sid not in b_ids
 
 
-def test_shared_strategy_hidden_by_default_and_visible_with_include_shared(research_a):
-    """Существующие 24 общих стратегии не должны появляться без include_shared."""
+def test_shared_strategy_hidden_by_default_and_visible_with_include_common(research_a):
+    """Существующие 24 общих стратегии не должны появляться без include_common."""
     r_default = client.get('/api/strategies', params={'researchId': research_a})
-    r_shared = client.get('/api/strategies', params={'researchId': research_a, 'includeShared': True})
+    r_shared = client.get('/api/strategies', params={'researchId': research_a, 'includeCommon': True})
     assert r_default.status_code == 200
     assert r_shared.status_code == 200
     assert len(r_default.json()) == 0

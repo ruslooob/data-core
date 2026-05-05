@@ -66,6 +66,28 @@ export interface PrecedentQuerySaveRequest {
   source: string
 }
 
+// ── Исследование (Research) ─────────────────────────────────────────────────
+
+export interface Research {
+  id: string
+  name: string
+  description: string | null
+  conclusion: string | null
+  createdAt: string
+  isDefault: boolean
+}
+
+export interface ResearchCreate {
+  name: string
+  description?: string | null
+}
+
+export interface ResearchPatch {
+  name?: string | null
+  description?: string | null
+  conclusion?: string | null
+}
+
 // ── Бэктест: стратегии, правила, окружения ──────────────────────────────────
 
 export type ActionType = 'buy' | 'sell'
@@ -88,6 +110,7 @@ export interface RuleCreate {
   actionQuantitySql: string
   priority: number
   description?: string | null
+  researchId?: string | null
 }
 
 export interface Strategy {
@@ -102,6 +125,7 @@ export interface StrategyCreate {
   name: string
   ruleIds: string[]
   description?: string | null
+  researchId?: string | null
 }
 
 export interface Environment {
@@ -120,6 +144,7 @@ export interface EnvironmentCreate {
   dateEnd: string
   startingCapital: number
   description?: string | null
+  researchId?: string | null
 }
 
 export interface BacktestResultMeta {
@@ -158,6 +183,7 @@ export interface BacktestResultDetail extends BacktestResultMeta {
 export interface BacktestRunRequest {
   strategyId: string
   environmentId: string
+  researchId: string
 }
 
 export interface BacktestRunStarted {

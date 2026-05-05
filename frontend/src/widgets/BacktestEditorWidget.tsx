@@ -17,6 +17,7 @@ import type {
   Environment,
   Strategy,
 } from '../api/types'
+import { useRequiredResearchId } from '../contexts/ActiveResearch'
 import { EquityCurveChart } from './EquityCurveChart'
 import { SearchablePicker } from './SearchablePicker'
 
@@ -51,6 +52,7 @@ export function BacktestEditorWidget() {
 // ── Вкладка «Запуск» ─────────────────────────────────────────────────────
 
 function LaunchTab() {
+  const researchId = useRequiredResearchId()
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
@@ -62,13 +64,16 @@ function LaunchTab() {
   useEffect(() => {
     void (async () => {
       try {
-        const [s, e] = await Promise.all([listStrategies(), listEnvironments()])
+        const [s, e] = await Promise.all([
+          listStrategies(researchId, true),
+          listEnvironments(researchId, true),
+        ])
         setStrategies(s); setEnvironments(e)
       } catch (err) {
         setRunError(err instanceof Error ? err.message : String(err))
       }
     })()
-  }, [])
+  }, [researchId])
 
   const running = activeRun?.status === 'running'
 
@@ -80,6 +85,7 @@ function LaunchTab() {
       const started = await startBacktestRun({
         strategyId: selectedStrategy.id,
         environmentId: selectedEnv.id,
+        researchId,
       })
       setActiveRun({
         runId: started.runId,
@@ -276,6 +282,7 @@ function SortableTh(props: {
 }
 
 function ArchiveTab() {
+  const researchId = useRequiredResearchId()
   const [results, setResults] = useState<BacktestResultMeta[]>([])
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [environments, setEnvironments] = useState<Environment[]>([])
@@ -292,13 +299,15 @@ function ArchiveTab() {
   const refresh = useCallback(async () => {
     try {
       const [r, s, e] = await Promise.all([
-        listBacktestResults(), listStrategies(), listEnvironments(),
+        listBacktestResults(researchId),
+        listStrategies(researchId, true),
+        listEnvironments(researchId, true),
       ])
       setResults(r); setStrategies(s); setEnvironments(e)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [])
+  }, [researchId])
   useEffect(() => { void refresh() }, [refresh])
 
   const strategyById = useMemo(() => {

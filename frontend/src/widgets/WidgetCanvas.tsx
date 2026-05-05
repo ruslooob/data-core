@@ -6,6 +6,7 @@ import { PrecedentEditorWidget } from './PrecedentEditorWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { BacktestEditorWidget } from './BacktestEditorWidget'
 import { EntityEditorWidget } from './EntityEditorWidget'
+import { ResearchSelector } from './research/ResearchSelector'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
@@ -101,6 +102,7 @@ export function WidgetCanvas() {
   return (
     <>
       <div style={toolbarStyle}>
+        <ResearchSelector />
         <button onClick={() => setMenuOpen(!menuOpen)} style={addWidgetButtonStyle}>
           + Добавить виджет
         </button>

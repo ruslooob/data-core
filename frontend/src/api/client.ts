@@ -16,6 +16,9 @@ import type {
   PrecedentQuerySaveRequest,
   PrecedentSearchRequest,
   PrecedentSearchResult,
+  Research,
+  ResearchCreate,
+  ResearchPatch,
   Rule,
   RuleCreate,
   SeriesName,
@@ -150,6 +153,36 @@ export function savePrecedentQuery(
   })
 }
 
+// ── Исследования (Research) ─────────────────────────────────────────────────
+
+export function listResearch(): Promise<Research[]> {
+  return fetchJson<Research[]>('/api/research')
+}
+
+export function getResearch(id: string): Promise<Research> {
+  return fetchJson<Research>(`/api/research/${id}`)
+}
+
+export function createResearch(request: ResearchCreate): Promise<Research> {
+  return fetchJson<Research>('/api/research', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+}
+
+export function updateResearch(id: string, patch: ResearchPatch): Promise<Research> {
+  return fetchJson<Research>(`/api/research/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+}
+
+export function deleteResearch(id: string): Promise<void> {
+  return deleteJson(`/api/research/${id}`)
+}
+
 // ── Бэктест: стратегии, правила, окружения ──────────────────────────────────
 
 async function deleteJson(url: string): Promise<void> {
@@ -164,8 +197,10 @@ async function deleteJson(url: string): Promise<void> {
   }
 }
 
-export function listStrategies(): Promise<Strategy[]> {
-  return fetchJson<Strategy[]>('/api/strategies')
+export function listStrategies(researchId: string, includeCommon = false): Promise<Strategy[]> {
+  const params = new URLSearchParams({ researchId })
+  if (includeCommon) params.set('includeCommon', 'true')
+  return fetchJson<Strategy[]>(`/api/strategies?${params.toString()}`)
 }
 
 export function createStrategy(request: StrategyCreate): Promise<Strategy> {
@@ -188,8 +223,10 @@ export function deleteStrategy(id: string): Promise<void> {
   return deleteJson(`/api/strategies/${id}`)
 }
 
-export function listRules(): Promise<Rule[]> {
-  return fetchJson<Rule[]>('/api/rules')
+export function listRules(researchId: string, includeCommon = false): Promise<Rule[]> {
+  const params = new URLSearchParams({ researchId })
+  if (includeCommon) params.set('includeCommon', 'true')
+  return fetchJson<Rule[]>(`/api/rules?${params.toString()}`)
 }
 
 export function createRule(request: RuleCreate): Promise<Rule> {
@@ -212,8 +249,10 @@ export function deleteRule(id: string): Promise<void> {
   return deleteJson(`/api/rules/${id}`)
 }
 
-export function listEnvironments(): Promise<Environment[]> {
-  return fetchJson<Environment[]>('/api/environments')
+export function listEnvironments(researchId: string, includeCommon = false): Promise<Environment[]> {
+  const params = new URLSearchParams({ researchId })
+  if (includeCommon) params.set('includeCommon', 'true')
+  return fetchJson<Environment[]>(`/api/environments?${params.toString()}`)
 }
 
 export function createEnvironment(request: EnvironmentCreate): Promise<Environment> {
@@ -290,8 +329,9 @@ export function getBacktestRunLog(runId: string, afterByte: number): Promise<Bac
   )
 }
 
-export function listBacktestResults(): Promise<BacktestResultMeta[]> {
-  return fetchJson<BacktestResultMeta[]>('/api/backtest/results')
+export function listBacktestResults(researchId: string): Promise<BacktestResultMeta[]> {
+  const params = new URLSearchParams({ researchId })
+  return fetchJson<BacktestResultMeta[]>(`/api/backtest/results?${params.toString()}`)
 }
 
 export function getBacktestResult(id: string): Promise<BacktestResultDetail> {
