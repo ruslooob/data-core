@@ -30,6 +30,7 @@ class RunHandle:
     run_id: str
     strategy_id: str
     environment_id: str
+    research_id: str
     status: RunStatus = 'running'
     last_progress: dict = field(default_factory=dict)
     final_result: Any = None  # BacktestResult — обнуляется после persist
@@ -66,6 +67,7 @@ class BacktestRunner:
             self,
             strategy: StrategySpec,
             environment: EnvironmentSpec,
+            research_id: str,
     ) -> str:
         run_id = str(uuid.uuid4())
         progress_queue = self._mp_ctx.Queue(maxsize=_QUEUE_MAXSIZE)
@@ -81,6 +83,7 @@ class BacktestRunner:
             run_id=run_id,
             strategy_id=strategy.id,
             environment_id=environment.id,
+            research_id=research_id,
             process=process,
             progress_queue=progress_queue,
             cancel_event=cancel_event,
@@ -178,7 +181,7 @@ class BacktestRunner:
         elif kind == 'done':
             result = msg.get('result')
             try:
-                result_id = self._persist_callback(result)
+                result_id = self._persist_callback(result, handle.research_id)
             except Exception as e:
                 with self._runs_lock:
                     handle.status = 'error'

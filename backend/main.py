@@ -641,6 +641,7 @@ class RuleCreate(CamelModel):
     action_quantity_sql: str
     priority: int
     description: str | None = None
+    research_id: str | None = None
 
 
 class RenameRequest(CamelModel):
@@ -660,13 +661,27 @@ def _row_to_rule(row) -> RuleOut:
 
 
 @app.get('/api/rules', response_model_by_alias=True)
-def list_rules() -> list[RuleOut]:
+def list_rules(
+        research_id: str = Query(..., alias='researchId'),
+        include_shared: bool = Query(False, alias='includeShared'),
+) -> list[RuleOut]:
     con = _pg()
-    rows = con.execute("""
-        SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-               created_at, description
-        FROM rules ORDER BY created_at DESC
-    """).fetchall()
+    if include_shared:
+        rows = con.execute("""
+            SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
+                   created_at, description
+            FROM rules
+            WHERE research_id = %s OR research_id IS NULL
+            ORDER BY created_at DESC
+        """, [research_id]).fetchall()
+    else:
+        rows = con.execute("""
+            SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
+                   created_at, description
+            FROM rules
+            WHERE research_id = %s
+            ORDER BY created_at DESC
+        """, [research_id]).fetchall()
     return [_row_to_rule(r) for r in rows]
 
 
@@ -689,15 +704,24 @@ def create_rule(req: RuleCreate) -> RuleOut:
         raise HTTPException(status_code=400, detail=str(e))
 
     con = _pg()
-    if con.execute('SELECT 1 FROM rules WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
+    if req.research_id is not None and _fetch_research(con, req.research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+    if con.execute(
+            'SELECT 1 FROM rules WHERE name = %s '
+            'AND (research_id = %s OR (research_id IS NULL AND %s::text IS NULL)) LIMIT 1',
+            [name, req.research_id, req.research_id],
+    ).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
 
     rule_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO rules VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+        'INSERT INTO rules '
+        '(id, name, trigger_sql, action_type, action_quantity_sql, priority, '
+        ' created_at, description, research_id) '
+        'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
         [rule_id, name, req.trigger_sql, req.action_type, req.action_quantity_sql,
-         req.priority, created_at, req.description],
+         req.priority, created_at, req.description, req.research_id],
     )
     return RuleOut(
         id=rule_id, name=name, trigger_sql=req.trigger_sql, action_type=req.action_type,
@@ -774,6 +798,7 @@ class StrategyCreate(CamelModel):
     name: str
     rule_ids: list[str]
     description: str | None = None
+    research_id: str | None = None
 
 
 def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
@@ -785,11 +810,25 @@ def _strategy_rule_ids(con, strategy_id: str) -> list[str]:
 
 
 @app.get('/api/strategies', response_model_by_alias=True)
-def list_strategies() -> list[StrategyOut]:
+def list_strategies(
+        research_id: str = Query(..., alias='researchId'),
+        include_shared: bool = Query(False, alias='includeShared'),
+) -> list[StrategyOut]:
     con = _pg()
-    rows = con.execute(
-        'SELECT id, name, created_at, description FROM strategies ORDER BY created_at DESC'
-    ).fetchall()
+    if include_shared:
+        rows = con.execute(
+            'SELECT id, name, created_at, description FROM strategies '
+            'WHERE research_id = %s OR research_id IS NULL '
+            'ORDER BY created_at DESC',
+            [research_id],
+        ).fetchall()
+    else:
+        rows = con.execute(
+            'SELECT id, name, created_at, description FROM strategies '
+            'WHERE research_id = %s '
+            'ORDER BY created_at DESC',
+            [research_id],
+        ).fetchall()
     return [
         StrategyOut(
             id=r[0], name=r[1], rule_ids=_strategy_rule_ids(con, r[0]),
@@ -824,7 +863,13 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
         raise HTTPException(status_code=400, detail='Правила в стратегии должны быть уникальными')
 
     con = _pg()
-    if con.execute('SELECT 1 FROM strategies WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
+    if req.research_id is not None and _fetch_research(con, req.research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+    if con.execute(
+            'SELECT 1 FROM strategies WHERE name = %s '
+            'AND (research_id = %s OR (research_id IS NULL AND %s::text IS NULL)) LIMIT 1',
+            [name, req.research_id, req.research_id],
+    ).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
 
     placeholders = ','.join(['%s'] * len(req.rule_ids))
@@ -839,8 +884,9 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
     strategy_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO strategies VALUES (%s, %s, %s, %s)',
-        [strategy_id, name, created_at, req.description],
+        'INSERT INTO strategies (id, name, created_at, description, research_id) '
+        'VALUES (%s, %s, %s, %s, %s)',
+        [strategy_id, name, created_at, req.description, req.research_id],
     )
     for position, rule_id in enumerate(req.rule_ids):
         con.execute(
@@ -911,6 +957,7 @@ class EnvironmentCreate(CamelModel):
     date_end: str
     starting_capital: float
     description: str | None = None
+    research_id: str | None = None
 
 
 def _row_to_env(row) -> EnvironmentOut:
@@ -924,12 +971,25 @@ def _row_to_env(row) -> EnvironmentOut:
 
 
 @app.get('/api/environments', response_model_by_alias=True)
-def list_environments() -> list[EnvironmentOut]:
+def list_environments(
+        research_id: str = Query(..., alias='researchId'),
+        include_shared: bool = Query(False, alias='includeShared'),
+) -> list[EnvironmentOut]:
     con = _pg()
-    rows = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at, description
-        FROM environments ORDER BY created_at DESC
-    """).fetchall()
+    if include_shared:
+        rows = con.execute("""
+            SELECT id, name, date_start, date_end, starting_capital, created_at, description
+            FROM environments
+            WHERE research_id = %s OR research_id IS NULL
+            ORDER BY created_at DESC
+        """, [research_id]).fetchall()
+    else:
+        rows = con.execute("""
+            SELECT id, name, date_start, date_end, starting_capital, created_at, description
+            FROM environments
+            WHERE research_id = %s
+            ORDER BY created_at DESC
+        """, [research_id]).fetchall()
     return [_row_to_env(r) for r in rows]
 
 
@@ -962,14 +1022,22 @@ def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
         raise HTTPException(status_code=400, detail='starting_capital должен быть положительным')
 
     con = _pg()
-    if con.execute('SELECT 1 FROM environments WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
+    if req.research_id is not None and _fetch_research(con, req.research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+    if con.execute(
+            'SELECT 1 FROM environments WHERE name = %s '
+            'AND (research_id = %s OR (research_id IS NULL AND %s::text IS NULL)) LIMIT 1',
+            [name, req.research_id, req.research_id],
+    ).fetchone() is not None:
         raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
 
     env_id = str(_uuid.uuid4())
     created_at = _now_iso()
     con.execute(
-        'INSERT INTO environments VALUES (%s, %s, %s, %s, %s, %s, %s)',
-        [env_id, name, ds, de, req.starting_capital, created_at, req.description],
+        'INSERT INTO environments '
+        '(id, name, date_start, date_end, starting_capital, created_at, description, research_id) '
+        'VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+        [env_id, name, ds, de, req.starting_capital, created_at, req.description, req.research_id],
     )
     return EnvironmentOut(
         id=env_id, name=name, date_start=ds.isoformat(), date_end=de.isoformat(),
@@ -1018,6 +1086,7 @@ def delete_environment(env_id: str) -> None:
 class BacktestRunRequest(CamelModel):
     strategy_id: str
     environment_id: str
+    research_id: str
 
 
 class TradeRecordOut(CamelModel):
@@ -1074,9 +1143,9 @@ class BacktestProgressOut(CamelModel):
 _backtest_runner = None
 
 
-def _persist_result_callback(result):
+def _persist_result_callback(result, research_id: str):
     from core.backtest_engine import persist_backtest_result
-    return persist_backtest_result(_pg(), result)
+    return persist_backtest_result(_pg(), result, research_id)
 
 
 def _get_backtest_runner():
@@ -1094,6 +1163,8 @@ def run_backtest(req: BacktestRunRequest) -> BacktestRunStartedOut:
     from core.backtest_engine import load_environment_spec, load_strategy_spec
 
     con = _pg()
+    if _fetch_research(con, req.research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
     try:
         strategy = load_strategy_spec(con, req.strategy_id)
         environment = load_environment_spec(con, req.environment_id)
@@ -1101,7 +1172,7 @@ def run_backtest(req: BacktestRunRequest) -> BacktestRunStartedOut:
         raise HTTPException(status_code=404, detail=str(e))
 
     runner = _get_backtest_runner()
-    run_id = runner.start_run(strategy, environment)
+    run_id = runner.start_run(strategy, environment, req.research_id)
     return BacktestRunStartedOut(run_id=run_id, status='running')
 
 
@@ -1148,14 +1219,18 @@ def get_run_log(run_id: str, after_byte: int = 0) -> dict:
 
 
 @app.get('/api/backtest/results', response_model_by_alias=True)
-def list_backtest_results() -> list[BacktestResultOut]:
+def list_backtest_results(
+        research_id: str = Query(..., alias='researchId'),
+) -> list[BacktestResultOut]:
     con = _pg()
     rows = con.execute("""
         SELECT id, strategy_id, environment_id, created_at,
                total_return_pct, annual_return_pct, max_drawdown_pct, sharpe,
                n_trades, profit_factor, win_rate_pct
-        FROM backtest_results ORDER BY created_at DESC
-    """).fetchall()
+        FROM backtest_results
+        WHERE research_id = %s
+        ORDER BY created_at DESC
+    """, [research_id]).fetchall()
     return [
         BacktestResultOut(
             id=r[0], strategy_id=r[1], environment_id=r[2], created_at=r[3],

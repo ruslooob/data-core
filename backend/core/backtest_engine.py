@@ -767,13 +767,19 @@ def reconstruct_equity_curve(con, result_id: str) -> list[tuple[date, float]]:
 def persist_backtest_result(
         con,
         result: BacktestResult,
+        research_id: str,
 ) -> str:
     """Сохраняет BacktestResult в persistent: backtest_results + trade_journal.
+    `research_id` — обязательное поле; прогон всегда принадлежит исследованию.
     Возвращает id новой записи backtest_results."""
     result_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
     con.execute(
-        'INSERT INTO backtest_results VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        'INSERT INTO backtest_results '
+        '(id, strategy_id, environment_id, created_at, total_return_pct, '
+        ' annual_return_pct, max_drawdown_pct, sharpe, n_trades, profit_factor, '
+        ' win_rate_pct, research_id) '
+        'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
         [
             result_id, result.strategy_id, result.environment_id, created_at,
             float(result.total_return_pct), float(result.annual_return_pct),
@@ -781,6 +787,7 @@ def persist_backtest_result(
             int(result.n_trades),
             float(result.profit_factor) if result.profit_factor is not None else None,
             float(result.win_rate_pct) if result.win_rate_pct is not None else None,
+            research_id,
         ],
     )
     for trade in result.trades:
