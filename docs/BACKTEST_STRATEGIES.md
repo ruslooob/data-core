@@ -25,6 +25,31 @@
 
 ---
 
+## Стиль SQL правил
+
+`trigger_sql` и `action_quantity_sql` — **всегда многострочные с отступами**. Никаких однострочников по 200 символов и склеенных через `+` Python-кусков. SQL правила пишется как обычный читаемый SQL: `WHERE`, `AND`, `JOIN`, подзапросы — на отдельных строках с выравниванием. Это нужно и для diff-обзора в редакторе правил, и для будущих ревью.
+
+```sql
+-- ✓ так
+SELECT 'DEPOSIT_RUONIA' AS ticker
+FROM portfolio_state s
+WHERE s.cash < close_price('LKOH', :tick - 1)
+  AND s.cash + COALESCE(
+        (SELECT SUM(p.quantity * close_price('DEPOSIT_RUONIA', :tick - 1))
+         FROM portfolio_positions p
+         WHERE p.ticker = 'DEPOSIT_RUONIA'),
+        0
+      ) >= close_price('LKOH', :tick - 1)
+  AND close_price('LKOH', :tick - 1) IS NOT NULL
+
+-- ✗ не так
+SELECT 'DEPOSIT_RUONIA' AS ticker FROM portfolio_state s WHERE s.cash < close_price('LKOH', :tick - 1) AND s.cash + COALESCE((SELECT SUM(p.quantity * close_price('DEPOSIT_RUONIA', :tick - 1)) FROM portfolio_positions p WHERE p.ticker = 'DEPOSIT_RUONIA'), 0) >= close_price('LKOH', :tick - 1)
+```
+
+При создании новых правил скриптом — использовать triple-quoted строки, не конкатенацию. При правке существующих — отформатировать.
+
+---
+
 ## Антипаттерны (так НЕ писать)
 
 ### A1. `(SELECT index FROM run_context) = 0` + `open_price(:tick)` или `close_price(:tick)` в quantity
@@ -313,6 +338,36 @@ WHERE EXISTS (
 
 ---
 
+### H10 — Take-profit +10% от avg_price поверх LKOH all-in
+
+> Гипотеза: активный take-profit на +10% от средневзвешенной цены входа улучшает риск-скорректированную доходность простого buy-and-hold. Цикл «купил весь cash в LKOH → ждём пока `close(:tick - 1) > avg_price * 1.10` → продали всё → завтра снова купили».
+>
+> Цель — не «обыграть baseline по доходности», а **проверить, как ведёт себя `avg_price`** в реальной стратегии (он динамически пересчитывается после каждой покупки/продажи по FIFO-лотам). Бонус: если на восходящем тренде take-profit-цикл хотя бы не уступает buy-and-hold, у нас есть базис для усложнённых вариаций.
+
+**Стратегия:** `H10: LKOH all-in + тейк-профит +10% от avg_price`. 2 правила:
+- Buy LKOH (priority=10): `cash >= close_LKOH(:tick - 1)` → купить максимум.
+- Sell всю позицию (priority=300): `close_LKOH(:tick - 1) > avg_price('LKOH') * 1.10` → продать всё.
+
+**Окружение:** `LKOH full history 2002-2025`.
+
+| Метрика | H10 | Baseline `H0: весь cash в LKOH ежедневно` |
+|---|---:|---:|
+| Σ доход. | +6201% | **+6346%** |
+| Год.% | 19.14% | 19.30% |
+| MaxDD | 72.2% | 72.0% |
+| Sharpe | 0.686 | 0.690 |
+| Win rate | 100% | — |
+| Сделок | 133 | 71 |
+
+**Вывод H10:** **отвергнута.** Take-profit +10% от `avg_price` **не даёт преимущества** относительно buy-and-hold:
+- Доходность *чуть ниже* baseline (−145 п.п.) при тех же maxDD и Sharpe — slippage между `close(:tick - 1)` и `open(:tick)` накопительно стачивает результат при 133 сделках.
+- Win rate 100% — артефакт триггера: sell вообще срабатывает только когда позиция в плюсе на ≥10%. Это не сигнал качества стратегии, а тавтология.
+- На сильном долгосрочном тренде вверх «продал → завтра купил» не извлекает выгоду — цена редко падает после +10% движения, продажа просто перезапускает счётчик `avg_price`.
+
+**`avg_price` сам работает корректно** — после каждой полной продажи позиции `avg_price → NULL`, при следующей покупке принимает новое значение цены входа. Триггер `close > avg_price * 1.10` срабатывает строго в нужные моменты. Функцию можно использовать в более содержательных стратегиях (например: pyramiding на просадке от средней + take-profit на росте от средней).
+
+---
+
 ## Лидерборд (на момент последнего rerun)
 
 ```
@@ -322,6 +377,7 @@ H7: LKOH 50 / GOLDCB 50 ребаланс + cash на RUONIA   +6684%    19.5%   
 H6: LKOH 70 / GOLDCB 30 ребаланс                    +6679%    19.5%    59%     0.86     376
 H0: весь cash в LKOH ежедневно                      +6346%    19.3%    72%     0.69      71
 H6: LKOH 50 / GOLDCB 50 ребаланс                    +6308%    19.2%    46%     1.00     376
+H10: LKOH all-in + take-profit +10% от avg_price    +6201%    19.1%    72%     0.69     133
 H7: LKOH 30 / GOLDCB 70 ребаланс + cash на RUONIA   +5480%    18.5%    42%     1.04     536
 H6: LKOH 30 / GOLDCB 70 ребаланс                    +5275%    18.3%    41%   1.05 ★    376
 H0: GOLDCB buy-and-hold                             +3268%    16.0%    49%     0.83       1
@@ -354,6 +410,7 @@ H3: LKOH dividend capture                             −29%   −10.6%    30%  
 - **H13.** Вариация H5: trailing 20–25% и/или re-entry по SMA20 — менее агрессивная защита, может вернуть упущенный upside. Но осторожно с подгонкой параметров.
 - **H14.** Сетка ребаланс-периодов для H6 30/70: 1 месяц / 6 месяцев / 1 год — есть ли «оптимум» или 1 квартал случайно попал в sweet spot?
 - **H15.** Out-of-sample: применить H6/H7-логику (ребаланс mix + cash на RUONIA) на других тикерах — SBER, GAZP, NVTK — проверить устойчивость эффекта.
+- **H16.** Pyramiding LKOH на основе `avg_price`: добавить лот при `close < avg_price * 0.92` (просадка от средней), фиксировать половину при `close > avg_price * 1.20`. avg_price плавно опускается на просадках и вытягивает breakeven.
 
 ---
 
