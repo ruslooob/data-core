@@ -1337,3 +1337,117 @@ def delete_backtest_result(result_id: str) -> None:
     # persistent (RunHandle живёт в памяти). Здесь чистить нечего, но если
     # поле появится — добавить unlink. Для текущего MVP лог-файлы остаются
     # в data/logs/backtest/ и убираются вручную.
+
+
+# ---- Перевод между общей/приватной (Research scope) ----
+
+class ResearchScopeRequest(CamelModel):
+    """`null` = сделать общей; UUID = сделать приватной указанного исследования."""
+    research_id: str | None = None
+
+
+def _conflicting_runs_for_strategy(con, strategy_id: str, new_research_id: str | None):
+    if new_research_id is None:
+        return None
+    return con.execute(
+        'SELECT 1 FROM backtest_results br '
+        'WHERE br.strategy_id = %s AND br.research_id <> %s LIMIT 1',
+        [strategy_id, new_research_id],
+    ).fetchone()
+
+
+def _conflicting_runs_for_environment(con, env_id: str, new_research_id: str | None):
+    if new_research_id is None:
+        return None
+    return con.execute(
+        'SELECT 1 FROM backtest_results br '
+        'WHERE br.environment_id = %s AND br.research_id <> %s LIMIT 1',
+        [env_id, new_research_id],
+    ).fetchone()
+
+
+def _conflicting_runs_for_rule(con, rule_id: str, new_research_id: str | None):
+    if new_research_id is None:
+        return None
+    return con.execute(
+        'SELECT 1 FROM backtest_results br '
+        'JOIN strategy_rules sr ON sr.strategy_id = br.strategy_id '
+        'WHERE sr.rule_id = %s AND br.research_id <> %s LIMIT 1',
+        [rule_id, new_research_id],
+    ).fetchone()
+
+
+def _validate_research_scope_target(con, new_research_id: str | None) -> None:
+    if new_research_id is not None and _fetch_research(con, new_research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+
+
+@app.patch('/api/rules/{rule_id}/research', response_model_by_alias=True)
+def update_rule_research(rule_id: str, req: ResearchScopeRequest) -> RuleOut:
+    con = _pg()
+    row = con.execute(
+        'SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority, '
+        'created_at, description, research_id FROM rules WHERE id = %s', [rule_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Правило не найдено')
+    _validate_research_scope_target(con, req.research_id)
+    if _conflicting_runs_for_rule(con, rule_id, req.research_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail='Правило используется в прогонах других исследований — нельзя сделать приватным',
+        )
+    con.execute('UPDATE rules SET research_id = %s WHERE id = %s', [req.research_id, rule_id])
+    return RuleOut(
+        id=row[0], name=row[1], trigger_sql=row[2], action_type=row[3],
+        action_quantity_sql=row[4], priority=row[5], created_at=row[6],
+        description=row[7], research_id=req.research_id,
+    )
+
+
+@app.patch('/api/strategies/{strategy_id}/research', response_model_by_alias=True)
+def update_strategy_research(strategy_id: str, req: ResearchScopeRequest) -> StrategyOut:
+    con = _pg()
+    row = con.execute(
+        'SELECT id, name, created_at, description FROM strategies WHERE id = %s',
+        [strategy_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Стратегия не найдена')
+    _validate_research_scope_target(con, req.research_id)
+    if _conflicting_runs_for_strategy(con, strategy_id, req.research_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail='Стратегия использовалась в прогонах других исследований — нельзя сделать приватной',
+        )
+    con.execute(
+        'UPDATE strategies SET research_id = %s WHERE id = %s',
+        [req.research_id, strategy_id],
+    )
+    return StrategyOut(
+        id=row[0], name=row[1], rule_ids=_strategy_rule_ids(con, row[0]),
+        created_at=row[2], description=row[3], research_id=req.research_id,
+    )
+
+
+@app.patch('/api/environments/{env_id}/research', response_model_by_alias=True)
+def update_environment_research(env_id: str, req: ResearchScopeRequest) -> EnvironmentOut:
+    con = _pg()
+    row = con.execute(
+        'SELECT id, name, date_start, date_end, starting_capital, created_at, description '
+        'FROM environments WHERE id = %s',
+        [env_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Окружение не найдено')
+    _validate_research_scope_target(con, req.research_id)
+    if _conflicting_runs_for_environment(con, env_id, req.research_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail='Окружение использовалось в прогонах других исследований — нельзя сделать приватным',
+        )
+    con.execute(
+        'UPDATE environments SET research_id = %s WHERE id = %s',
+        [req.research_id, env_id],
+    )
+    return _row_to_env((row[0], row[1], row[2], row[3], row[4], row[5], row[6], req.research_id))

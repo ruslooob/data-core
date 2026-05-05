@@ -13,8 +13,11 @@ import {
   renameRule,
   renameStrategy,
   updateEnvironmentDescription,
+  updateEnvironmentResearch,
   updateRuleDescription,
+  updateRuleResearch,
   updateStrategyDescription,
+  updateStrategyResearch,
 } from '../api/client'
 import type { ActionType, Environment, Rule, Strategy } from '../api/types'
 import { useRequiredResearchId } from '../contexts/ActiveResearch'
@@ -103,6 +106,50 @@ function ListLayout<T>(props: ListLayoutProps<T>) {
       <div style={rightPanelStyle}>
         {props.detail}
       </div>
+    </div>
+  )
+}
+
+// ── Visibility scope (общая / приватная) ──────────────────────────────────
+
+function ScopeControls(props: {
+  currentResearchId: string | null | undefined
+  setScope: (researchId: string | null) => Promise<void>
+  onChanged: () => Promise<void> | void
+  onError: (msg: string) => void
+}) {
+  const activeResearchId = useRequiredResearchId()
+  const isCommon = !props.currentResearchId
+  const isPrivateToOther = !isCommon && props.currentResearchId !== activeResearchId
+
+  const apply = async (target: string | null) => {
+    try {
+      await props.setScope(target)
+      await props.onChanged()
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  if (isPrivateToOther) {
+    return (
+      <div style={scopeRowStyle}>
+        <span style={scopeBadgeStyle}>приватная другого исследования</span>
+      </div>
+    )
+  }
+  return (
+    <div style={scopeRowStyle}>
+      <span style={scopeBadgeStyle}>{isCommon ? 'общая' : 'приватная этого исследования'}</span>
+      {isCommon ? (
+        <button style={scopeButtonStyle} onClick={() => void apply(activeResearchId)}>
+          Сделать приватной для этого исследования
+        </button>
+      ) : (
+        <button style={scopeButtonStyle} onClick={() => void apply(null)}>
+          Сделать общей
+        </button>
+      )}
     </div>
   )
 }
@@ -403,6 +450,12 @@ function ExistingStrategyView(props: {
         onDelete={onDelete}
       />
       <div style={mutedStyle}>Создана: {props.strategy.createdAt}</div>
+      <ScopeControls
+        currentResearchId={props.strategy.researchId}
+        setScope={async (rid) => { await updateStrategyResearch(props.strategy.id, rid) }}
+        onChanged={props.onChanged}
+        onError={props.onError}
+      />
       <DescriptionEditor
         value={props.strategy.description}
         placeholder="Описание стратегии"
@@ -595,6 +648,12 @@ function ExistingRuleView(props: {
         onDelete={onDelete}
       />
       <div style={mutedStyle}>Создано: {props.rule.createdAt}</div>
+      <ScopeControls
+        currentResearchId={props.rule.researchId}
+        setScope={async (rid) => { await updateRuleResearch(props.rule.id, rid) }}
+        onChanged={props.onChanged}
+        onError={props.onError}
+      />
       <DescriptionEditor
         value={props.rule.description}
         placeholder="Описание правила"
@@ -753,6 +812,12 @@ function ExistingEnvironmentView(props: {
         onDelete={onDelete}
       />
       <div style={mutedStyle}>Создано: {props.environment.createdAt}</div>
+      <ScopeControls
+        currentResearchId={props.environment.researchId}
+        setScope={async (rid) => { await updateEnvironmentResearch(props.environment.id, rid) }}
+        onChanged={props.onChanged}
+        onError={props.onError}
+      />
       <DescriptionEditor
         value={props.environment.description}
         placeholder="Описание окружения"
@@ -845,6 +910,9 @@ const listItemActiveStyle: React.CSSProperties = { ...listItemStyle, background:
 const emptyHintStyle: React.CSSProperties = { padding: 12, fontSize: 12, color: '#999', fontStyle: 'italic', textAlign: 'center' }
 const commonBadgeStyle: React.CSSProperties = { display: 'inline-block', marginRight: 6, padding: '1px 5px', fontSize: 10, lineHeight: 1.4, color: '#888', background: '#eee', borderRadius: 3, fontWeight: 500 }
 const showCommonToggleStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 4px', fontSize: 12, color: '#555', cursor: 'pointer', userSelect: 'none' }
+const scopeRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }
+const scopeBadgeStyle: React.CSSProperties = { padding: '2px 8px', fontSize: 11, color: '#555', background: '#f0f0f0', borderRadius: 3 }
+const scopeButtonStyle: React.CSSProperties = { padding: '4px 10px', fontSize: 12, background: '#fff', border: '1px solid #bbb', borderRadius: 4, cursor: 'pointer' }
 const mutedStyle: React.CSSProperties = { fontSize: 12, color: '#888' }
 const errorBannerStyle: React.CSSProperties = { padding: '8px 12px', background: '#fdecea', border: '1px solid #f5a8a3', borderRadius: 4, color: '#a01919', fontSize: 12 }
 

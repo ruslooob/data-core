@@ -223,6 +223,14 @@ export function deleteStrategy(id: string): Promise<void> {
   return deleteJson(`/api/strategies/${id}`)
 }
 
+export function updateStrategyResearch(id: string, researchId: string | null): Promise<Strategy> {
+  return fetchJson<Strategy>(`/api/strategies/${id}/research`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ researchId }),
+  })
+}
+
 export function listRules(researchId: string, includeCommon = false): Promise<Rule[]> {
   const params = new URLSearchParams({ researchId })
   if (includeCommon) params.set('includeCommon', 'true')
@@ -249,6 +257,14 @@ export function deleteRule(id: string): Promise<void> {
   return deleteJson(`/api/rules/${id}`)
 }
 
+export function updateRuleResearch(id: string, researchId: string | null): Promise<Rule> {
+  return fetchJson<Rule>(`/api/rules/${id}/research`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ researchId }),
+  })
+}
+
 export function listEnvironments(researchId: string, includeCommon = false): Promise<Environment[]> {
   const params = new URLSearchParams({ researchId })
   if (includeCommon) params.set('includeCommon', 'true')
@@ -273,6 +289,14 @@ export function renameEnvironment(id: string, name: string): Promise<Environment
 
 export function deleteEnvironment(id: string): Promise<void> {
   return deleteJson(`/api/environments/${id}`)
+}
+
+export function updateEnvironmentResearch(id: string, researchId: string | null): Promise<Environment> {
+  return fetchJson<Environment>(`/api/environments/${id}/research`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ researchId }),
+  })
 }
 
 export function updateStrategyDescription(id: string, description: string): Promise<Strategy> {
