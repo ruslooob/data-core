@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Системное исследование Default. Имя и id зашиты в коде
+        (backend/main.py: DEFAULT_RESEARCH_ID), переименование и удаление
+        запрещены на уровне API.
+
+        Precondition: запись с этим id ещё не существует. Если уже сидировано
+        вручную (миграция со старой схемы) — changeset пропускается.
+    -->
+
+    <changeSet id="003-seed-default-research" author="ruslan">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM research
+                WHERE id = '00000000-0000-0000-0000-000000000001'
+            </sqlCheck>
+        </preConditions>
+        <insert tableName="research">
+            <column name="id" value="00000000-0000-0000-0000-000000000001"/>
+            <column name="name" value="Default"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>
