@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        PL/Python UDF: car, vol_ratio, volume_ratio (event-study) +
+        TA-функции бэктеста (close_price, open_price, volume, sma,
+        volume_sma, volatility, return_n_days, avg_price).
+
+        runOnChange="true": Liquibase отслеживает контент 002-udfs.sql и
+        переустанавливает все функции при изменении файла. Безопасно,
+        потому что каждое тело — CREATE OR REPLACE.
+
+        splitStatements="false": внутри PL/Python-тел встречаются `;`,
+        Liquibase не должен резать файл по ним.
+    -->
+
+    <changeSet id="002-udfs" author="ruslan" runOnChange="true">
+        <sqlFile path="002-udfs.sql"
+                 relativeToChangelogFile="true"
+                 splitStatements="false"
+                 stripComments="false"
+                 encoding="UTF-8"/>
+    </changeSet>
+
+</databaseChangeLog>

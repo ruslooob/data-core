@@ -14,5 +14,6 @@
     -->
 
     <include file="changes/001-initial-schema.xml" relativeToChangelogFile="true"/>
+    <include file="changes/002-udfs.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
