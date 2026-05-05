@@ -26,6 +26,13 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest test
 
 # Запуск backend (uvicorn из backend/)
 cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m uvicorn main:app --port 8080 --host 127.0.0.1
+
+# Миграции БД через Liquibase (changelog в db/changelog/, см. docs/SPEC_DATABASE.md)
+docker compose --profile migrate run --rm liquibase update
+docker compose --profile migrate run --rm liquibase status
+
+# Загрузка референсных данных в Postgres после миграций (идемпотентно)
+C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_data_to_postgres.py
 ```
 
 Импорты внутри Python-кода остаются короткими: `from core.event_study import EventStudy`.

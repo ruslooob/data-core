@@ -110,6 +110,7 @@ data/db/data-core.duckdb (event_tags) — тэгирование
 - [SPEC_PRECEDENT_LANGUAGE.md](SPEC_PRECEDENT_LANGUAGE.md) — язык поиска прецедентов (PQL)
 - [SPEC_BACKTEST.md](SPEC_BACKTEST.md) — спецификация бэктеста
 - [SPEC_RESEARCH.md](SPEC_RESEARCH.md) — спецификация исследований
+- [SPEC_DATABASE.md](SPEC_DATABASE.md) — Liquibase-миграции и сценарий «с нуля»
 - [SPEC_DATA_PROVIDERS.md](SPEC_DATA_PROVIDERS.md) — поставщики рыночных данных, отсутствие подглядывания в будущее
 - [ROBUSTNESS_CHECK.md](ROBUSTNESS_CHECK.md) — проверка устойчивости
 - [SPEC_FRONTEND.md](SPEC_FRONTEND.md) — спецификация фронтенда
