@@ -17,5 +17,28 @@ services:
       timeout: 3s
       retries: 10
 
+  # Liquibase запускается только по требованию:
+  #   docker compose --profile migrate run --rm liquibase update
+  #   docker compose --profile migrate run --rm liquibase status
+  #   docker compose --profile migrate run --rm liquibase rollbackCount 1
+  # Параметры подключения и пути читаются из переменных среды
+  # (префикс LIQUIBASE_COMMAND_*), сама команда передаётся аргументом.
+  liquibase:
+    image: liquibase/liquibase:4.29
+    container_name: data-core-liquibase
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: changelog-master.xml
+      LIQUIBASE_COMMAND_URL: jdbc:postgresql://postgres:5432/postgres
+      LIQUIBASE_COMMAND_USERNAME: postgres
+      LIQUIBASE_COMMAND_PASSWORD: postgres
+      LIQUIBASE_SEARCH_PATH: /liquibase/changelog
+    volumes:
+      - ./db/changelog:/liquibase/changelog:ro
+    command: ["update"]
+
 volumes:
   postgres-data:

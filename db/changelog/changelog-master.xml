@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Мастер-changelog для миграций data-core. Каждое изменение схемы или
+        PL/Python-функции добавляется отдельным файлом в каталоге `changes/`
+        и подключается через <include>. Формат имён: NNN-короткое-описание.xml,
+        порядковый префикс задаёт порядок применения. Один changeset =
+        одно атомарное изменение. Запуск см. в docker-compose.yml.
+    -->
+
+</databaseChangeLog>
