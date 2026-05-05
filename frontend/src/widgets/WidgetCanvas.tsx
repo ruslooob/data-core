@@ -6,11 +6,12 @@ import { PrecedentEditorWidget } from './PrecedentEditorWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { BacktestEditorWidget } from './BacktestEditorWidget'
 import { EntityEditorWidget } from './EntityEditorWidget'
+import { ResearchReportWidget } from './research/ResearchReportWidget'
 import { ResearchSelector } from './research/ResearchSelector'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor' | 'entity-editor'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
 
 interface WidgetInstance {
   id: string
@@ -33,6 +34,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'precedent-editor': 'Precedent editor',
   'backtest-editor': 'BacktestEditor',
   'entity-editor': 'EntityEditor',
+  'research-report': 'Отчёт исследования',
 }
 
 const DEFAULT_WIDTH = 640
@@ -43,6 +45,7 @@ const TOOLBAR_OFFSET_Y = 80
 const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }>> = {
   'backtest-editor': { width: 1280, height: 960 },
   'entity-editor': { width: 1280, height: 960 },
+  'research-report': { width: 900, height: 700 },
 }
 
 export function WidgetCanvas() {
@@ -126,6 +129,9 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('entity-editor')} style={menuItemStyle}>
               EntityEditor
             </button>
+            <button onClick={() => addWidget('research-report')} style={menuItemStyle}>
+              Отчёт исследования
+            </button>
           </div>
         )}
       </div>
@@ -159,6 +165,8 @@ export function WidgetCanvas() {
               <BacktestEditorWidget />
             ) : w.type === 'entity-editor' ? (
               <EntityEditorWidget />
+            ) : w.type === 'research-report' ? (
+              <ResearchReportWidget />
             ) : (
               <EventStudyWidget group={w.group} />
             )}
