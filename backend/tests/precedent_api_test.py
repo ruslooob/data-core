@@ -55,7 +55,7 @@ def test_empty_result_returns_columns():
 
 def test_syntax_error_returns_400():
     r = client.post("/api/precedents/search", json={
-        "source": "SELECT FROM events",
+        "source": "SELECT * FORM events",
     })
     assert r.status_code == 400
     body = r.json()

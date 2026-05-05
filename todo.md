@@ -1,5 +1,15 @@
 # Бэклог
 
+## Тесты
+
+### Восстановить покрытие TA-функций (sma, volume_sma, volatility, return_n_days)
+- Старый `backend/tests/backtest_engine_ta_test.py` тестировал приватные методы `BacktestEngine._sma/_volume_sma/_volatility/_return_n_days` через fixture-CSV
+- Эти методы удалены при переезде на Postgres — TA-функции теперь PL/Python UDF в `scripts/init_postgres_backtest_udfs.py`
+- Сейчас семантика «n строк до даты, не включая саму дату» нигде не покрыта тестами — это риск регрессии
+- Написать новый файл, прогоняющий каждую UDF через psycopg на реальных свечах LKOH с проверкой эталонных значений из `StockDataProvider.get_log_returns`
+
+---
+
 ## Рефакторинг
 
 ### Обобщить `DividendEvent` → `Event`
