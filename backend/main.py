@@ -438,70 +438,6 @@ def _validate_name(name: str) -> str:
     return name
 
 
-def _update_with_fk_workaround(
-        con,
-        parent_table: str,
-        parent_id: str,
-        column: str,
-        new_value,
-        child_fk_col: str,
-) -> None:
-    """Обновление колонки в parent_table в обход ограничения DuckDB.
-
-    DuckDB переписывает любой UPDATE на родительской таблице в DELETE+INSERT
-    и падает на FK-проверке от дочерних строк, даже когда меняется только
-    скалярная колонка, не PK. Это «Over-Eager Constraint Checking in
-    Foreign Keys» из документации DuckDB. Прямой UPDATE валится с
-    ConstraintException, как только у записи есть хотя бы одна дочерняя
-    ссылка.
-
-    Обход: снять дочерние строки из strategy_rules, обновить колонку у
-    родителя, вернуть дочерние строки на место. BEGIN/COMMIT не помогает:
-    внутри одной транзакции DuckDB всё равно проверяет FK по
-    pre-transaction-снапшоту и падает, как будто строки не удалены.
-    Поэтому делаем три отдельных команды в режиме автокоммита.
-
-    Параметры:
-        parent_table:  'strategies' или 'rules'.
-        parent_id:     id обновляемой записи.
-        column:        имя колонки ('name' или 'description'). Не пользовательский
-                       вход, прямой interpolation в SQL безопасен.
-        new_value:     новое значение колонки.
-        child_fk_col:  колонка в strategy_rules, ссылающаяся на parent_table.
-                       'strategy_id' для strategies, 'rule_id' для rules.
-    """
-    backup = con.execute(
-        f'SELECT strategy_id, rule_id, position FROM strategy_rules '
-        f'WHERE {child_fk_col} = %s',
-        [parent_id],
-    ).fetchall()
-    con.execute(
-        f'DELETE FROM strategy_rules WHERE {child_fk_col} = %s', [parent_id],
-    )
-    try:
-        con.execute(
-            f'UPDATE {parent_table} SET {column} = %s WHERE id = %s',
-            [new_value, parent_id],
-        )
-    except Exception:
-        for s_id, r_id, position in backup:
-            con.execute(
-                'INSERT INTO strategy_rules VALUES (%s, %s, %s)',
-                [s_id, r_id, position],
-            )
-        raise
-    for s_id, r_id, position in backup:
-        con.execute(
-            'INSERT INTO strategy_rules VALUES (%s, %s, %s)',
-            [s_id, r_id, position],
-        )
-
-
-def _rename_with_fk_workaround(con, parent_table, parent_id, new_name, child_fk_col):
-    """Совместимая обёртка над `_update_with_fk_workaround` для кейса rename."""
-    _update_with_fk_workaround(con, parent_table, parent_id, 'name', new_name, child_fk_col)
-
-
 # ---- Research ----
 
 DEFAULT_RESEARCH_ID = '00000000-0000-0000-0000-000000000001'
@@ -839,7 +775,7 @@ def update_rule_description(rule_id: str, req: DescriptionRequest) -> RuleOut:
     con = _pg()
     if con.execute('SELECT 1 FROM rules WHERE id = %s LIMIT 1', [rule_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Правило не найдено')
-    _update_with_fk_workaround(con, 'rules', rule_id, 'description', req.description, 'rule_id')
+    con.execute('UPDATE rules SET description = %s WHERE id = %s', [req.description, rule_id])
     row = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
                created_at, description, research_id FROM rules WHERE id = %s
@@ -861,7 +797,7 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     dup = con.execute('SELECT 1 FROM rules WHERE name = %s AND id <> %s LIMIT 1', [name, rule_id]).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
-    _rename_with_fk_workaround(con, 'rules', rule_id, name, 'rule_id')
+    con.execute('UPDATE rules SET name = %s WHERE id = %s', [name, rule_id])
     return RuleOut(
         id=row[0], name=name, trigger_sql=row[2], action_type=row[3],
         action_quantity_sql=row[4], priority=row[5], created_at=row[6],
@@ -951,7 +887,7 @@ def update_strategy_description(strategy_id: str, req: DescriptionRequest) -> St
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
-    _update_with_fk_workaround(con, 'strategies', strategy_id, 'description', req.description, 'strategy_id')
+    con.execute('UPDATE strategies SET description = %s WHERE id = %s', [req.description, strategy_id])
     return StrategyOut(
         id=row[0], name=row[1],
         rule_ids=_strategy_rule_ids(con, row[0]),
@@ -1020,7 +956,7 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     ).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
-    _rename_with_fk_workaround(con, 'strategies', strategy_id, name, 'strategy_id')
+    con.execute('UPDATE strategies SET name = %s WHERE id = %s', [name, strategy_id])
     return StrategyOut(
         id=row[0], name=name, rule_ids=_strategy_rule_ids(con, row[0]),
         created_at=row[2], description=row[3], research_id=row[4],
