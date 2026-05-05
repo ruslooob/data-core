@@ -502,6 +502,125 @@ def _rename_with_fk_workaround(con, parent_table, parent_id, new_name, child_fk_
     _update_with_fk_workaround(con, parent_table, parent_id, 'name', new_name, child_fk_col)
 
 
+# ---- Research ----
+
+DEFAULT_RESEARCH_ID = '00000000-0000-0000-0000-000000000001'
+
+
+class ResearchOut(CamelModel):
+    id: str
+    name: str
+    description: str | None = None
+    conclusion: str | None = None
+    created_at: str
+    is_default: bool
+
+
+class ResearchCreate(CamelModel):
+    name: str
+    description: str | None = None
+
+
+class ResearchPatch(CamelModel):
+    name: str | None = None
+    description: str | None = None
+    conclusion: str | None = None
+
+
+def _row_to_research(row) -> ResearchOut:
+    rid, name, description, conclusion, created_at = row
+    return ResearchOut(
+        id=rid, name=name, description=description, conclusion=conclusion,
+        created_at=created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at),
+        is_default=(rid == DEFAULT_RESEARCH_ID),
+    )
+
+
+def _fetch_research(con, research_id: str):
+    return con.execute(
+        'SELECT id, name, description, conclusion, created_at '
+        'FROM research WHERE id = %s', [research_id],
+    ).fetchone()
+
+
+@app.get('/api/research', response_model_by_alias=True)
+def list_research() -> list[ResearchOut]:
+    con = _pg()
+    rows = con.execute(
+        'SELECT id, name, description, conclusion, created_at '
+        'FROM research ORDER BY created_at ASC'
+    ).fetchall()
+    return [_row_to_research(r) for r in rows]
+
+
+@app.get('/api/research/{research_id}', response_model_by_alias=True)
+def get_research(research_id: str) -> ResearchOut:
+    con = _pg()
+    row = _fetch_research(con, research_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+    return _row_to_research(row)
+
+
+@app.post('/api/research', response_model_by_alias=True, status_code=201)
+def create_research(req: ResearchCreate) -> ResearchOut:
+    name = _validate_name(req.name)
+    con = _pg()
+    if con.execute('SELECT 1 FROM research WHERE name = %s LIMIT 1', [name]).fetchone() is not None:
+        raise HTTPException(status_code=409, detail=f'Исследование с именем "{name}" уже существует')
+    rid = str(_uuid.uuid4())
+    con.execute(
+        'INSERT INTO research (id, name, description) VALUES (%s, %s, %s)',
+        [rid, name, req.description],
+    )
+    return _row_to_research(_fetch_research(con, rid))
+
+
+@app.patch('/api/research/{research_id}', response_model_by_alias=True)
+def update_research(research_id: str, req: ResearchPatch) -> ResearchOut:
+    con = _pg()
+    row = _fetch_research(con, research_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+
+    is_default = research_id == DEFAULT_RESEARCH_ID
+    new_name = _validate_name(req.name) if req.name is not None else None
+    if new_name is not None and is_default:
+        raise HTTPException(status_code=400, detail='Системное исследование Default нельзя переименовывать')
+
+    if new_name is not None and new_name != row[1]:
+        dup = con.execute(
+            'SELECT 1 FROM research WHERE name = %s AND id <> %s LIMIT 1',
+            [new_name, research_id],
+        ).fetchone()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail=f'Исследование с именем "{new_name}" уже существует')
+
+    sets, vals = [], []
+    if new_name is not None:
+        sets.append('name = %s'); vals.append(new_name)
+    if req.description is not None:
+        sets.append('description = %s'); vals.append(req.description)
+    if req.conclusion is not None:
+        sets.append('conclusion = %s'); vals.append(req.conclusion)
+
+    if sets:
+        vals.append(research_id)
+        con.execute(f'UPDATE research SET {", ".join(sets)} WHERE id = %s', vals)
+
+    return _row_to_research(_fetch_research(con, research_id))
+
+
+@app.delete('/api/research/{research_id}', status_code=204)
+def delete_research(research_id: str) -> None:
+    if research_id == DEFAULT_RESEARCH_ID:
+        raise HTTPException(status_code=400, detail='Системное исследование Default нельзя удалять')
+    con = _pg()
+    if _fetch_research(con, research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+    con.execute('DELETE FROM research WHERE id = %s', [research_id])
+
+
 # ---- Rule ----
 
 class RuleOut(CamelModel):
