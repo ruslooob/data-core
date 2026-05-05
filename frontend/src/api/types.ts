@@ -101,6 +101,7 @@ export interface Rule {
   priority: number
   createdAt: string
   description?: string | null
+  researchId?: string | null
 }
 
 export interface RuleCreate {
@@ -119,6 +120,7 @@ export interface Strategy {
   ruleIds: string[]
   createdAt: string
   description?: string | null
+  researchId?: string | null
 }
 
 export interface StrategyCreate {
@@ -136,6 +138,7 @@ export interface Environment {
   startingCapital: number
   createdAt: string
   description?: string | null
+  researchId?: string | null
 }
 
 export interface EnvironmentCreate {

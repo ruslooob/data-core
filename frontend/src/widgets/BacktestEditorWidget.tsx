@@ -18,6 +18,7 @@ import type {
   Strategy,
 } from '../api/types'
 import { useRequiredResearchId } from '../contexts/ActiveResearch'
+import { useLocalToggle } from '../contexts/useLocalToggle'
 import { EquityCurveChart } from './EquityCurveChart'
 import { SearchablePicker } from './SearchablePicker'
 
@@ -53,6 +54,7 @@ export function BacktestEditorWidget() {
 
 function LaunchTab() {
   const researchId = useRequiredResearchId()
+  const [showCommon, setShowCommon] = useLocalToggle('backtest.launch.showCommon', false)
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
@@ -65,15 +67,15 @@ function LaunchTab() {
     void (async () => {
       try {
         const [s, e] = await Promise.all([
-          listStrategies(researchId, true),
-          listEnvironments(researchId, true),
+          listStrategies(researchId, showCommon),
+          listEnvironments(researchId, showCommon),
         ])
         setStrategies(s); setEnvironments(e)
       } catch (err) {
         setRunError(err instanceof Error ? err.message : String(err))
       }
     })()
-  }, [researchId])
+  }, [researchId, showCommon])
 
   const running = activeRun?.status === 'running'
 
@@ -144,6 +146,14 @@ function LaunchTab() {
   return (
     <div style={tabBodyStyle}>
       <Section title="Запуск прогона">
+        <label style={launchToggleStyle}>
+          <input
+            type="checkbox"
+            checked={showCommon}
+            onChange={(e) => setShowCommon(e.target.checked)}
+          />
+          Показать общие стратегии и окружения
+        </label>
         <div style={launchRowStyle}>
           <SelectorRow
             label="Стратегия"
@@ -738,6 +748,7 @@ const sectionHeaderStyle: React.CSSProperties = { padding: '8px 12px', fontSize:
 const sectionBodyStyle: React.CSSProperties = { padding: 12, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }
 
 const launchRowStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 }
+const launchToggleStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#555', marginBottom: 8, cursor: 'pointer', userSelect: 'none' }
 const selectorRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 }
 const selectorLabelStyle: React.CSSProperties = { fontSize: 12, color: '#555', fontWeight: 600, minWidth: 88 }
 const selectorValueStyle: React.CSSProperties = { flex: 1, fontSize: 13 }

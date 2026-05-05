@@ -18,6 +18,7 @@ import {
 } from '../api/client'
 import type { ActionType, Environment, Rule, Strategy } from '../api/types'
 import { useRequiredResearchId } from '../contexts/ActiveResearch'
+import { useLocalToggle } from '../contexts/useLocalToggle'
 import { SearchablePicker } from './SearchablePicker'
 import { SqlEditor } from './SqlEditor'
 
@@ -59,8 +60,10 @@ interface ListLayoutProps<T> {
   onSelect: (id: string | 'new' | null) => void
   getKey: (x: T) => string
   getLabel: (x: T) => string
+  isCommon?: (x: T) => boolean
   newButtonLabel: string
   detail: React.ReactNode
+  headerExtras?: React.ReactNode
 }
 
 function ListLayout<T>(props: ListLayoutProps<T>) {
@@ -74,18 +77,22 @@ function ListLayout<T>(props: ListLayoutProps<T>) {
         >
           {props.newButtonLabel}
         </button>
+        {props.headerExtras}
         <div style={listStyle}>
           {props.items.length === 0 ? (
             <div style={emptyHintStyle}>Пока нет записей</div>
           ) : (
             props.items.map((it) => {
               const id = props.getKey(it)
+              const common = props.isCommon?.(it) ?? false
               return (
                 <div
                   key={id}
                   onClick={() => props.onSelect(id)}
                   style={id === props.selectedId ? listItemActiveStyle : listItemStyle}
+                  title={common ? 'Общая сущность (видна во всех исследованиях)' : undefined}
                 >
+                  {common && <span style={commonBadgeStyle}>общ.</span>}
                   {props.getLabel(it)}
                 </div>
               )
@@ -203,6 +210,7 @@ function DescriptionEditor(props: DescriptionEditorProps) {
 
 function StrategiesTab() {
   const researchId = useRequiredResearchId()
+  const [showCommon, setShowCommon] = useLocalToggle('entity.strategies.showCommon', false)
   const [items, setItems] = useState<Strategy[]>([])
   const [rules, setRules] = useState<Rule[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
@@ -211,12 +219,12 @@ function StrategiesTab() {
   const refresh = useCallback(async () => {
     try {
       const [s, r] = await Promise.all([
-        listStrategies(researchId, true),
+        listStrategies(researchId, showCommon),
         listRules(researchId, true),
       ])
       setItems(s); setRules(r)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [researchId])
+  }, [researchId, showCommon])
   useEffect(() => { void refresh() }, [refresh])
 
   const ruleById = useMemo(() => {
@@ -236,7 +244,18 @@ function StrategiesTab() {
       onSelect={(id) => { setError(null); setSelected(id) }}
       getKey={(x) => x.id}
       getLabel={(x) => x.name}
+      isCommon={(x) => !x.researchId}
       newButtonLabel="+ Новая стратегия"
+      headerExtras={
+        <label style={showCommonToggleStyle}>
+          <input
+            type="checkbox"
+            checked={showCommon}
+            onChange={(e) => setShowCommon(e.target.checked)}
+          />
+          Показать общие
+        </label>
+      }
       detail={
         <div style={detailWrapStyle}>
           {error && <div style={errorBannerStyle}>{error}</div>}
@@ -417,14 +436,15 @@ function ExistingStrategyView(props: {
 
 function RulesTab() {
   const researchId = useRequiredResearchId()
+  const [showCommon, setShowCommon] = useLocalToggle('entity.rules.showCommon', false)
   const [items, setItems] = useState<Rule[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try { setItems(await listRules(researchId, true)) }
+    try { setItems(await listRules(researchId, showCommon)) }
     catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [researchId])
+  }, [researchId, showCommon])
   useEffect(() => { void refresh() }, [refresh])
 
   const current = selected && selected !== 'new'
@@ -438,7 +458,18 @@ function RulesTab() {
       onSelect={(id) => { setError(null); setSelected(id) }}
       getKey={(x) => x.id}
       getLabel={(x) => x.name}
+      isCommon={(x) => !x.researchId}
       newButtonLabel="+ Новое правило"
+      headerExtras={
+        <label style={showCommonToggleStyle}>
+          <input
+            type="checkbox"
+            checked={showCommon}
+            onChange={(e) => setShowCommon(e.target.checked)}
+          />
+          Показать общие
+        </label>
+      }
       detail={
         <div style={detailWrapStyle}>
           {error && <div style={errorBannerStyle}>{error}</div>}
@@ -585,14 +616,15 @@ function ExistingRuleView(props: {
 
 function EnvironmentsTab() {
   const researchId = useRequiredResearchId()
+  const [showCommon, setShowCommon] = useLocalToggle('entity.environments.showCommon', false)
   const [items, setItems] = useState<Environment[]>([])
   const [selected, setSelected] = useState<string | 'new' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try { setItems(await listEnvironments(researchId, true)) }
+    try { setItems(await listEnvironments(researchId, showCommon)) }
     catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-  }, [researchId])
+  }, [researchId, showCommon])
   useEffect(() => { void refresh() }, [refresh])
 
   const current = selected && selected !== 'new'
@@ -606,7 +638,18 @@ function EnvironmentsTab() {
       onSelect={(id) => { setError(null); setSelected(id) }}
       getKey={(x) => x.id}
       getLabel={(x) => x.name}
+      isCommon={(x) => !x.researchId}
       newButtonLabel="+ Новое окружение"
+      headerExtras={
+        <label style={showCommonToggleStyle}>
+          <input
+            type="checkbox"
+            checked={showCommon}
+            onChange={(e) => setShowCommon(e.target.checked)}
+          />
+          Показать общие
+        </label>
+      }
       detail={
         <div style={detailWrapStyle}>
           {error && <div style={errorBannerStyle}>{error}</div>}
@@ -800,6 +843,8 @@ const listStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column
 const listItemStyle: React.CSSProperties = { padding: '6px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid #f5f5f5' }
 const listItemActiveStyle: React.CSSProperties = { ...listItemStyle, background: '#eaf2ff', fontWeight: 600 }
 const emptyHintStyle: React.CSSProperties = { padding: 12, fontSize: 12, color: '#999', fontStyle: 'italic', textAlign: 'center' }
+const commonBadgeStyle: React.CSSProperties = { display: 'inline-block', marginRight: 6, padding: '1px 5px', fontSize: 10, lineHeight: 1.4, color: '#888', background: '#eee', borderRadius: 3, fontWeight: 500 }
+const showCommonToggleStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 4px', fontSize: 12, color: '#555', cursor: 'pointer', userSelect: 'none' }
 const mutedStyle: React.CSSProperties = { fontSize: 12, color: '#888' }
 const errorBannerStyle: React.CSSProperties = { padding: '8px 12px', background: '#fdecea', border: '1px solid #f5a8a3', borderRadius: 4, color: '#a01919', fontSize: 12 }
 

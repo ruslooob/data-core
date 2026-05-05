@@ -632,6 +632,7 @@ class RuleOut(CamelModel):
     priority: int
     created_at: str
     description: str | None = None
+    research_id: str | None = None
 
 
 class RuleCreate(CamelModel):
@@ -657,6 +658,7 @@ def _row_to_rule(row) -> RuleOut:
         id=row[0], name=row[1], trigger_sql=row[2], action_type=row[3],
         action_quantity_sql=row[4], priority=row[5], created_at=row[6],
         description=row[7] if len(row) > 7 else None,
+        research_id=row[8] if len(row) > 8 else None,
     )
 
 
@@ -669,7 +671,7 @@ def list_rules(
     if include_common:
         rows = con.execute("""
             SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-                   created_at, description
+                   created_at, description, research_id
             FROM rules
             WHERE research_id = %s OR research_id IS NULL
             ORDER BY created_at DESC
@@ -677,7 +679,7 @@ def list_rules(
     else:
         rows = con.execute("""
             SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-                   created_at, description
+                   created_at, description, research_id
             FROM rules
             WHERE research_id = %s
             ORDER BY created_at DESC
@@ -727,6 +729,7 @@ def create_rule(req: RuleCreate) -> RuleOut:
         id=rule_id, name=name, trigger_sql=req.trigger_sql, action_type=req.action_type,
         action_quantity_sql=req.action_quantity_sql, priority=req.priority,
         created_at=created_at, description=req.description,
+        research_id=req.research_id,
     )
 
 
@@ -738,7 +741,7 @@ def update_rule_description(rule_id: str, req: DescriptionRequest) -> RuleOut:
     _update_with_fk_workaround(con, 'rules', rule_id, 'description', req.description, 'rule_id')
     row = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-               created_at, description FROM rules WHERE id = %s
+               created_at, description, research_id FROM rules WHERE id = %s
     """, [rule_id]).fetchone()
     return _row_to_rule(row)
 
@@ -749,7 +752,7 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     con = _pg()
     row = con.execute("""
         SELECT id, name, trigger_sql, action_type, action_quantity_sql, priority,
-               created_at, description
+               created_at, description, research_id
         FROM rules WHERE id = %s
     """, [rule_id]).fetchone()
     if row is None:
@@ -761,7 +764,7 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     return RuleOut(
         id=row[0], name=name, trigger_sql=row[2], action_type=row[3],
         action_quantity_sql=row[4], priority=row[5], created_at=row[6],
-        description=row[7],
+        description=row[7], research_id=row[8],
     )
 
 
@@ -792,6 +795,7 @@ class StrategyOut(CamelModel):
     rule_ids: list[str]
     created_at: str
     description: str | None = None
+    research_id: str | None = None
 
 
 class StrategyCreate(CamelModel):
@@ -817,14 +821,14 @@ def list_strategies(
     con = _pg()
     if include_common:
         rows = con.execute(
-            'SELECT id, name, created_at, description FROM strategies '
+            'SELECT id, name, created_at, description, research_id FROM strategies '
             'WHERE research_id = %s OR research_id IS NULL '
             'ORDER BY created_at DESC',
             [research_id],
         ).fetchall()
     else:
         rows = con.execute(
-            'SELECT id, name, created_at, description FROM strategies '
+            'SELECT id, name, created_at, description, research_id FROM strategies '
             'WHERE research_id = %s '
             'ORDER BY created_at DESC',
             [research_id],
@@ -832,7 +836,7 @@ def list_strategies(
     return [
         StrategyOut(
             id=r[0], name=r[1], rule_ids=_strategy_rule_ids(con, r[0]),
-            created_at=r[2], description=r[3],
+            created_at=r[2], description=r[3], research_id=r[4],
         )
         for r in rows
     ]
@@ -842,7 +846,7 @@ def list_strategies(
 def update_strategy_description(strategy_id: str, req: DescriptionRequest) -> StrategyOut:
     con = _pg()
     row = con.execute(
-        'SELECT id, name, created_at FROM strategies WHERE id = %s', [strategy_id],
+        'SELECT id, name, created_at, research_id FROM strategies WHERE id = %s', [strategy_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
@@ -850,7 +854,7 @@ def update_strategy_description(strategy_id: str, req: DescriptionRequest) -> St
     return StrategyOut(
         id=row[0], name=row[1],
         rule_ids=_strategy_rule_ids(con, row[0]),
-        created_at=row[2], description=req.description,
+        created_at=row[2], description=req.description, research_id=row[3],
     )
 
 
@@ -896,6 +900,7 @@ def create_strategy(req: StrategyCreate) -> StrategyOut:
     return StrategyOut(
         id=strategy_id, name=name, rule_ids=list(req.rule_ids),
         created_at=created_at, description=req.description,
+        research_id=req.research_id,
     )
 
 
@@ -904,7 +909,8 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     name = _validate_name(req.name)
     con = _pg()
     row = con.execute(
-        'SELECT id, name, created_at, description FROM strategies WHERE id = %s', [strategy_id],
+        'SELECT id, name, created_at, description, research_id FROM strategies WHERE id = %s',
+        [strategy_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
@@ -916,7 +922,7 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     _rename_with_fk_workaround(con, 'strategies', strategy_id, name, 'strategy_id')
     return StrategyOut(
         id=row[0], name=name, rule_ids=_strategy_rule_ids(con, row[0]),
-        created_at=row[2], description=row[3],
+        created_at=row[2], description=row[3], research_id=row[4],
     )
 
 
@@ -949,6 +955,7 @@ class EnvironmentOut(CamelModel):
     starting_capital: float
     created_at: str
     description: str | None = None
+    research_id: str | None = None
 
 
 class EnvironmentCreate(CamelModel):
@@ -967,6 +974,7 @@ def _row_to_env(row) -> EnvironmentOut:
         date_end=row[3].isoformat() if hasattr(row[3], 'isoformat') else str(row[3]),
         starting_capital=float(row[4]), created_at=row[5],
         description=row[6] if len(row) > 6 else None,
+        research_id=row[7] if len(row) > 7 else None,
     )
 
 
@@ -978,14 +986,14 @@ def list_environments(
     con = _pg()
     if include_common:
         rows = con.execute("""
-            SELECT id, name, date_start, date_end, starting_capital, created_at, description
+            SELECT id, name, date_start, date_end, starting_capital, created_at, description, research_id
             FROM environments
             WHERE research_id = %s OR research_id IS NULL
             ORDER BY created_at DESC
         """, [research_id]).fetchall()
     else:
         rows = con.execute("""
-            SELECT id, name, date_start, date_end, starting_capital, created_at, description
+            SELECT id, name, date_start, date_end, starting_capital, created_at, description, research_id
             FROM environments
             WHERE research_id = %s
             ORDER BY created_at DESC
@@ -997,7 +1005,7 @@ def list_environments(
 def update_environment_description(env_id: str, req: DescriptionRequest) -> EnvironmentOut:
     con = _pg()
     row = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at, description
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description, research_id
         FROM environments WHERE id = %s
     """, [env_id]).fetchone()
     if row is None:
@@ -1005,7 +1013,7 @@ def update_environment_description(env_id: str, req: DescriptionRequest) -> Envi
     # У environments нет дочерних строк в strategy_rules, FK-проблема DuckDB
     # к нему не относится — обычный UPDATE работает.
     con.execute('UPDATE environments SET description = %s WHERE id = %s', [req.description, env_id])
-    return _row_to_env((row[0], row[1], row[2], row[3], row[4], row[5], req.description))
+    return _row_to_env((row[0], row[1], row[2], row[3], row[4], row[5], req.description, row[7]))
 
 
 @app.post('/api/environments', response_model_by_alias=True, status_code=201)
@@ -1042,7 +1050,7 @@ def create_environment(req: EnvironmentCreate) -> EnvironmentOut:
     return EnvironmentOut(
         id=env_id, name=name, date_start=ds.isoformat(), date_end=de.isoformat(),
         starting_capital=req.starting_capital, created_at=created_at,
-        description=req.description,
+        description=req.description, research_id=req.research_id,
     )
 
 
@@ -1051,7 +1059,7 @@ def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
     name = _validate_name(req.name)
     con = _pg()
     row = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at, description
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description, research_id
         FROM environments WHERE id = %s
     """, [env_id]).fetchone()
     if row is None:
@@ -1062,7 +1070,7 @@ def rename_environment(env_id: str, req: RenameRequest) -> EnvironmentOut:
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Окружение с именем "{name}" уже существует')
     con.execute('UPDATE environments SET name = %s WHERE id = %s', [name, env_id])
-    return _row_to_env((row[0], name, row[2], row[3], row[4], row[5], row[6]))
+    return _row_to_env((row[0], name, row[2], row[3], row[4], row[5], row[6], row[7]))
 
 
 @app.delete('/api/environments/{env_id}', status_code=204)
@@ -1284,7 +1292,7 @@ def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
     # Подгружаем имя стратегии и окружения, чтобы UI показывал контекст
     # прогона без отдельных запросов.
     strategy_row = con.execute(
-        'SELECT id, name, created_at, description FROM strategies WHERE id = %s',
+        'SELECT id, name, created_at, description, research_id FROM strategies WHERE id = %s',
         [row[1]],
     ).fetchone()
     strategy_out = None
@@ -1293,9 +1301,10 @@ def get_backtest_result(result_id: str) -> BacktestResultDetailOut:
             id=strategy_row[0], name=strategy_row[1],
             rule_ids=_strategy_rule_ids(con, strategy_row[0]),
             created_at=strategy_row[2], description=strategy_row[3],
+            research_id=strategy_row[4],
         )
     env_row = con.execute("""
-        SELECT id, name, date_start, date_end, starting_capital, created_at, description
+        SELECT id, name, date_start, date_end, starting_capital, created_at, description, research_id
         FROM environments WHERE id = %s
     """, [row[2]]).fetchone()
     env_out = _row_to_env(env_row) if env_row is not None else None
