@@ -7,8 +7,9 @@
 Основные инструменты:
 - **Событийный анализ (event study)** — точечная оценка влияния одного события на цену актива
 - **Редактор прецедентных запросов (PQL editor)** — SQL-эдитор для поиска событий по тегам и метрикам с подсветкой синтаксиса и сохранением запросов; поиск аномалий — один из сценариев его использования (см. [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md))
+- **Бэктест** — прогон торговых стратегий на исторических данных, журнал прогонов с метриками (см. [SPEC_BACKTEST.md](SPEC_BACKTEST.md))
+- **Исследования (Research)** — организационный слой над бэктестом: группировка стратегий, правил, окружений и прогонов под одну тему с автогенерируемым отчётом (см. [SPEC_RESEARCH.md](SPEC_RESEARCH.md))
 - **Проверка устойчивости (robustness check)** — проверка, сохраняется ли эффект при вариациях параметров *(запланирован)*
-- **Бэктест** — прогон торговых стратегий на исторических данных *(запланирован)*
 
 ---
 
@@ -107,6 +108,8 @@ data/db/data-core.duckdb (event_tags) — тэгирование
 - [EXPECTED_RETURN_MODELS.md](EXPECTED_RETURN_MODELS.md) — модели ожидаемой доходности
 - [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md) — поиск аномалий
 - [SPEC_PRECEDENT_LANGUAGE.md](SPEC_PRECEDENT_LANGUAGE.md) — язык поиска прецедентов (PQL)
+- [SPEC_BACKTEST.md](SPEC_BACKTEST.md) — спецификация бэктеста
+- [SPEC_RESEARCH.md](SPEC_RESEARCH.md) — спецификация исследований
 - [SPEC_DATA_PROVIDERS.md](SPEC_DATA_PROVIDERS.md) — поставщики рыночных данных, отсутствие подглядывания в будущее
 - [ROBUSTNESS_CHECK.md](ROBUSTNESS_CHECK.md) — проверка устойчивости
 - [SPEC_FRONTEND.md](SPEC_FRONTEND.md) — спецификация фронтенда
