@@ -19,7 +19,7 @@ conda create -n data-core python=3.11
 conda activate data-core
 
 conda install -c conda-forge pandas numpy gensim plotly dash matplotlib nltk scikit-learn umap-learn hdbscan
-conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb
+conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb psycopg
 
 python -m spacy download ru_core_news_lg
 python -m spacy download en_core_web_sm
@@ -38,11 +38,51 @@ cd frontend
 npm install
 ```
 
+### 3. Docker (для Postgres)
+
+Нужен Docker Desktop.
+
 ---
 
-## Запуск
+## Запуск с нуля на новом ноутбуке
 
-Два терминала: backend и frontend.
+После клонирования репозитория и установки Python/Node/Docker (см. выше):
+
+```bash
+# 1. Поднять Postgres
+docker compose up -d postgres
+
+# 2. Применить схему и UDF (Liquibase)
+docker compose --profile migrate run --rm liquibase update
+
+# 3. Залить референсные данные (тикеры, котировки, RUONIA, дивиденды, теги, события, PQL)
+python scripts/load_data_to_postgres.py
+
+# 4. Восстановить пользовательские данные (стратегии, правила, окружения, прогоны бэктеста, исследования) из снапшота
+#    Default-исследование удаляем — оно есть в дампе (Liquibase создал свою копию на шаге 2)
+docker exec data-core-postgres psql -U postgres -d postgres \
+    -c "DELETE FROM research WHERE id = '00000000-0000-0000-0000-000000000001';"
+docker cp data/db/snapshot.dump data-core-postgres:/tmp/snapshot.dump
+docker exec data-core-postgres pg_restore -U postgres -d postgres \
+    --data-only --disable-triggers --single-transaction /tmp/snapshot.dump
+
+# 5. Проверка
+cd backend && pytest tests/ -v
+```
+
+Снапшот `data/db/snapshot.dump` обновляется командой:
+
+```bash
+docker exec data-core-postgres pg_dump -U postgres -d postgres \
+    --format=custom --file=/tmp/snapshot.dump
+docker cp data-core-postgres:/tmp/snapshot.dump data/db/snapshot.dump
+```
+
+---
+
+## Запуск приложения
+
+Два терминала: backend и frontend (Postgres уже должен быть поднят).
 
 ### Backend (порт 8080)
 
