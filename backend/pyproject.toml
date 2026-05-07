@@ -5,6 +5,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "duckdb",
+    "psycopg[binary,pool]",
 ]
 
 [tool.setuptools.packages.find]

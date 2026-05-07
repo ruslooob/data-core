@@ -19,7 +19,7 @@ conda create -n data-core python=3.11
 conda activate data-core
 
 conda install -c conda-forge pandas numpy gensim plotly dash matplotlib nltk scikit-learn umap-learn hdbscan
-conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb psycopg
+conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb
 
 python -m spacy download ru_core_news_lg
 python -m spacy download en_core_web_sm
