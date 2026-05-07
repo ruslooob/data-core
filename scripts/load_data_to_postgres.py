@@ -3,9 +3,6 @@
 Схема и UDF создаются Liquibase-миграцией (`docker compose --profile migrate
 run liquibase update`). Этот скрипт льёт **только данные**:
 
-- `tags`, `events`, `event_tags`, `precedent_queries` — из DuckDB-источника
-  (`data/db/data-core.duckdb`), который остался от прежней эпохи как файл
-  с разметкой и сохранёнными PQL-запросами.
 - `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day_*.txt`,
   с нормализацией по сплитам (`splits.json`).
 - `risk_free_rate` — из `data/stocks/RUONIA_*.xlsx`.
@@ -13,9 +10,9 @@ run liquibase update`). Этот скрипт льёт **только данны
 
 Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен.
 
-Пользовательские данные (research, strategies, rules, environments,
-backtest_results, trade_journal) НЕ заливаются — восстанавливаются отдельно
-из pg_dump.
+Пользовательские данные (tags, events, event_tags, precedent_queries,
+research, strategies, rules, environments, backtest_results, trade_journal)
+НЕ заливаются — восстанавливаются из pg_dump снапшота.
 
 Запуск:
     python scripts/load_data_to_postgres.py
@@ -27,7 +24,6 @@ import os
 import sys
 from glob import glob
 
-import duckdb
 import pandas as pd
 import psycopg
 
@@ -37,48 +33,12 @@ if hasattr(sys.stdout, 'reconfigure'):
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STOCKS_DIR = os.path.join(ROOT, 'data', 'stocks')
 SPLITS_PATH = os.path.join(STOCKS_DIR, 'splits.json')
-DUCKDB_PATH = os.path.join(ROOT, 'data', 'db', 'data-core.duckdb')
 
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
 CANDLE_COLS_RAW = ['<TICKER>', '<PER>', '<DATE>', '<TIME>',
                    '<OPEN>', '<HIGH>', '<LOW>', '<CLOSE>',
                    '<VOL>', '<OPENINT>']
-
-# Таблицы с разметкой событий и сохранёнными запросами PQL — копируются
-# из DuckDB-снапшота. Порядок учитывает FK (parent → child).
-DUCK_TABLES = ('tags', 'events', 'event_tags', 'precedent_queries')
-
-
-# ── DuckDB → Postgres: разметка и PQL ──────────────────────────────────────
-
-def _copy_duck_table(duck: duckdb.DuckDBPyConnection, pg, table: str) -> int:
-    rows = duck.execute(f'SELECT * FROM {table}').fetchall()
-    if not rows:
-        return 0
-    columns = [c[0] for c in duck.execute(f'DESCRIBE {table}').fetchall()]
-    placeholders = ', '.join(['%s'] * len(columns))
-    cols_sql = ', '.join(columns)
-    with pg.cursor() as cur:
-        cur.executemany(
-            f'INSERT INTO {table} ({cols_sql}) VALUES ({placeholders}) '
-            f'ON CONFLICT DO NOTHING',
-            rows,
-        )
-    return len(rows)
-
-
-def _load_from_duckdb(pg) -> None:
-    if not os.path.exists(DUCKDB_PATH):
-        print(f'  DuckDB-снапшот {DUCKDB_PATH} не найден — пропускаем разметку и PQL')
-        return
-    duck = duckdb.connect(DUCKDB_PATH, read_only=True)
-    try:
-        for table in DUCK_TABLES:
-            n = _copy_duck_table(duck, pg, table)
-            print(f'  {table}: {n} rows attempted')
-    finally:
-        duck.close()
 
 
 # ── Котировки и сплиты ─────────────────────────────────────────────────────
@@ -94,17 +54,29 @@ def _parse_ticker_and_name(filename: str, file_path: str) -> tuple[str, str]:
     with open(file_path, 'r', encoding='utf-8') as fh:
         fh.readline()  # заголовок
         first = fh.readline()
-    ticker = first.split(';', 1)[0].strip().upper()
+    ticker_from_data = first.split(';', 1)[0].strip().upper()
     base = os.path.splitext(filename)[0]
     if '_1day_' in base:
         prefix = base.split('_1day_', 1)[0]
-        if prefix.upper().startswith(ticker + '_'):
-            name = prefix[len(ticker) + 1:]
+        # Тикер из имени файла: ведущие ASCII-сегменты до первого кириллического
+        parts = prefix.split('_')
+        ascii_parts: list[str] = []
+        for part in parts:
+            if part.isascii() and part:
+                ascii_parts.append(part)
+            else:
+                break
+        ticker_from_filename = '_'.join(ascii_parts)
+        # CSV-тикер берём только если имя файла его подтверждает (DEPOSIT_RUONIA_RUONIA → DEPOSIT_RUONIA)
+        if prefix.upper().startswith(ticker_from_data + '_'):
+            ticker = ticker_from_data
         else:
-            name = prefix
+            ticker = ticker_from_filename
+        name = prefix[len(ticker) + 1:] if prefix.upper().startswith(ticker + '_') else prefix
     else:
         parts = base.split('_')
         name = parts[1] if len(parts) >= 2 else ''
+        ticker = ticker_from_data
     return ticker, name
 
 
@@ -228,25 +200,21 @@ def _load_dividends(pg) -> None:
 def main() -> None:
     pg = psycopg.connect(PG_DSN, autocommit=False)
     try:
-        print('1. tags / events / event_tags / precedent_queries (DuckDB → Postgres)')
-        _load_from_duckdb(pg)
-        pg.commit()
-
-        print('2. stocks + stock_candles (CSV → Postgres)')
+        print('1. stocks + stock_candles (CSV → Postgres)')
         _load_stocks_and_candles(pg)
         pg.commit()
 
-        print('3. risk_free_rate (RUONIA xlsx → Postgres)')
+        print('2. risk_free_rate (RUONIA xlsx → Postgres)')
         _load_ruonia(pg)
         pg.commit()
 
-        print('4. dividends (CSV → Postgres)')
+        print('3. dividends (CSV → Postgres)')
         _load_dividends(pg)
         pg.commit()
 
         with pg.cursor() as cur:
             print('\nfinal counts:')
-            for tbl in (*DUCK_TABLES, 'stocks', 'stock_candles', 'risk_free_rate', 'dividends'):
+            for tbl in ('stocks', 'stock_candles', 'risk_free_rate', 'dividends'):
                 cur.execute(f'SELECT COUNT(*) FROM {tbl}')
                 print(f'  {tbl:24s} {cur.fetchone()[0]}')
     finally:

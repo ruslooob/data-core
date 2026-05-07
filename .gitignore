@@ -14,8 +14,10 @@ frontend/dist/
 backend/notebooks/outputs/*
 !backend/notebooks/outputs/.gitkeep
 data/db/backup_*/
+data/db/*.duckdb
 data/db/*.duckdb.wal
 data/db/*.duckdb.tmp/
+data/db/*.dump
 /data/logs/
 tmp_*
 .tmp_*
