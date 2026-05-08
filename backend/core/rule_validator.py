@@ -22,11 +22,27 @@ Q27 драфта бэктеста:
 """
 from __future__ import annotations
 
-from datetime import date
+import re
 
 import duckdb
 
-from core.backtest_engine import _filter_params, _normalize_named_params
+
+# Названные параметры в правилах — `:tick`, `:ticker`. Для валидации в
+# DuckDB заменяем их литералами (валидируется только синтаксис и
+# контракт, конкретные значения не важны).
+_NAMED_PARAM_RE = re.compile(r':([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def _substitute_validation_params(sql: str) -> str:
+    """Подставляет литералы вместо `:tick`, `:ticker` для DuckDB-валидации."""
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        if name == 'tick':
+            return "DATE '2020-01-02'"
+        if name == 'ticker':
+            return "'TEST'"
+        return m.group(0)
+    return _NAMED_PARAM_RE.sub(_sub, sql)
 
 
 def _make_stub(n_args: int):
@@ -53,7 +69,8 @@ _RUNTIME_DDL = [
         pnl_realized DOUBLE
     )""",
     """CREATE TABLE events (
-        id VARCHAR PRIMARY KEY, date_start DATE NOT NULL, date_end DATE, event TEXT
+        id VARCHAR PRIMARY KEY, date_start DATE NOT NULL, date_end DATE,
+        announce_date DATE NOT NULL, event TEXT, payload JSON
     )""",
     """CREATE TABLE tags (code VARCHAR PRIMARY KEY, name VARCHAR, type VARCHAR)""",
     """CREATE TABLE event_tags (
@@ -61,7 +78,8 @@ _RUNTIME_DDL = [
         PRIMARY KEY (event_id, tag_code)
     )""",
     """CREATE VIEW tagged_events AS
-        SELECT e.id AS event_id, e.date_start, e.date_end, e.event,
+        SELECT e.id AS event_id, e.date_start, e.date_end, e.announce_date,
+               e.event, e.payload,
                t.code AS tag, t.name AS tag_name, t.type AS tag_type
         FROM events e
         JOIN event_tags et ON et.event_id = e.id
@@ -130,14 +148,11 @@ def _build_validation_con() -> duckdb.DuckDBPyConnection:
 
 def validate_trigger_sql(trigger_sql: str) -> None:
     """Бросает RuleSqlError, если SQL триггера невалиден."""
-    sql = _normalize_named_params(trigger_sql)
+    sql = _substitute_validation_params(trigger_sql)
     con = _build_validation_con()
     try:
         try:
-            con.execute(
-                f'EXPLAIN {sql}',
-                _filter_params(sql, {'tick': date(2020, 1, 2)}),
-            )
+            con.execute(f'EXPLAIN {sql}')
         except duckdb.Error as e:
             raise RuleSqlError(f'Trigger SQL невалиден: {e}') from e
     finally:
@@ -147,12 +162,11 @@ def validate_trigger_sql(trigger_sql: str) -> None:
 def validate_quantity_sql(quantity_sql: str) -> None:
     """Бросает RuleSqlError, если Action.quantity SQL невалиден или нарушает
     контракт «ровно одна строка × одна колонка, целое ≥ 0 либо NULL»."""
-    sql = _normalize_named_params(quantity_sql)
+    sql = _substitute_validation_params(quantity_sql)
     con = _build_validation_con()
     try:
-        params = _filter_params(sql, {'tick': date(2020, 1, 2), 'ticker': 'TEST'})
         try:
-            cur = con.execute(sql, params)
+            cur = con.execute(sql)
             description = cur.description or []
             rows = cur.fetchall()
         except duckdb.Error as e:

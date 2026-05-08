@@ -1,6 +1,12 @@
-"""Поставщик дивидендных событий из Postgres-таблицы `dividends`.
+"""Поставщик дивидендных событий из таблицы `events`.
 
-Контракт публичных методов сохранён по сравнению с CSV-версией.
+Дивиденды живут в общей таблице `events` как два события на каждый
+платёж: «Объявление дивидендов TICK: X.XX ₽ за YYYY год» (date_start =
+announce_date = announcement_date) и «Выплата дивидендов TICK: ...»
+(date_start = payment_date, announce_date = announcement_date).
+Специфика (ticker, dividend_per_share, year) лежит в `events.payload`.
+
+Контракт публичных методов сохранён по сравнению с CSV/dividends-версией.
 """
 from __future__ import annotations
 
@@ -17,7 +23,7 @@ class DividendDataProvider:
 
     Параметры:
         max_date: последняя видимая дата (включительно). По умолчанию None —
-                  без ограничений. События с announcement_date > max_date
+                  без ограничений. События с announce_date > max_date
                   отбрасываются.
     """
 
@@ -25,16 +31,21 @@ class DividendDataProvider:
         self._max_date = pd.Timestamp(max_date).date() if max_date is not None else None
 
     def load_dividends(self) -> list[DividendEvent]:
-        """Дивидендные события: ticker, announcement_date, dividend, year."""
+        """Дивидендные события (объявление): ticker, announcement_date,
+        dividend, year."""
         sql = (
-            'SELECT ticker, announcement_date, dividend_per_share, year '
-            'FROM dividends'
+            "SELECT payload->>'ticker' AS ticker, "
+            "date_start, "
+            "(payload->>'dividend_per_share')::float AS div, "
+            "(payload->>'year')::int AS year "
+            "FROM events "
+            "WHERE event LIKE 'Объявление дивидендов %%'"
         )
         params: list = []
         if self._max_date is not None:
-            sql += ' WHERE announcement_date <= %s'
+            sql += ' AND announce_date <= %s'
             params.append(self._max_date)
-        sql += ' ORDER BY announcement_date'
+        sql += ' ORDER BY date_start'
         with get_pool().connection() as con:
             rows = con.execute(sql, params).fetchall()
         return [
@@ -50,17 +61,20 @@ class DividendDataProvider:
     def load_payments_by_date(self) -> dict[tuple[date, str], float]:
         """Карта `(payment_date, ticker) → dividend_per_share`.
 
-        Использует payment_date (не announcement_date). Записи без
-        payment_date пропускаются. При коллизии (две выплаты в один день
-        для одного тикера) суммируются.
+        Использует payment_date (= date_start события «Выплата
+        дивидендов»), не announcement_date. При коллизии (две выплаты
+        в один день для одного тикера) суммируются.
         """
         sql = (
-            'SELECT payment_date, ticker, dividend_per_share '
-            'FROM dividends WHERE payment_date IS NOT NULL'
+            "SELECT date_start AS payment_date, "
+            "payload->>'ticker' AS ticker, "
+            "(payload->>'dividend_per_share')::float AS div "
+            "FROM events "
+            "WHERE event LIKE 'Выплата дивидендов %%'"
         )
         params: list = []
         if self._max_date is not None:
-            sql += ' AND payment_date <= %s'
+            sql += ' AND date_start <= %s'
             params.append(self._max_date)
         with get_pool().connection() as con:
             rows = con.execute(sql, params).fetchall()

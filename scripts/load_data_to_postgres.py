@@ -6,7 +6,16 @@ run liquibase update`). Этот скрипт льёт **только данны
 - `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day_*.txt`,
   с нормализацией по сплитам (`splits.json`).
 - `risk_free_rate` — из `data/stocks/RUONIA_*.xlsx`.
-- `dividends` — из `data/stocks/dividends_all.csv`.
+- Овернайт-ставки межбанка (MIBID_1D, MIBOR_1D, MIACR_1D) — из
+  `data/stocks/mfd_rates.csv` в `stocks` + `stock_candles` как
+  синтетические тикеры (open=high=low=close=value, volume=0).
+  Используются для backfill безрисковой ставки до 2010 года, когда
+  RUONIA ещё не публиковалась.
+- Дивиденды — из `data/stocks/dividends_all.csv` напрямую в `events`.
+  На каждую строку CSV создаётся два события: «Объявление…» (date_start
+  = announce_date = announcement_date) и «Выплата…» (date_start =
+  payment_date, announce_date = announcement_date). Специфика
+  (ticker, dividend_per_share, year) кладётся в events.payload.
 
 Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен.
 
@@ -22,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from glob import glob
 
 import pandas as pd
@@ -158,7 +168,68 @@ def _load_ruonia(pg) -> None:
     print(f'  risk_free_rate: {len(rows)} rows attempted')
 
 
+# ── MFD overnight ставки (MIBID/MIBOR/MIACR на 1 день) ─────────────────────
+
+_MFD_OVERNIGHT_TICKERS = {
+    'MIBID_1D': ('mibid_1', 'Межбанк MIBID 1 день'),
+    'MIBOR_1D': ('mibor_1', 'Межбанк MIBOR 1 день'),
+    'MIACR_1D': ('miacr_1', 'Межбанк MIACR 1 день'),
+}
+
+
+def _load_mfd_overnight_rates(pg) -> None:
+    """Грузит овернайт-ставки межбанка (MIBID/MIBOR/MIACR на 1 день) из
+    `mfd_rates.csv` в stocks + stock_candles как синтетические тикеры.
+
+    open=high=low=close=value (одно значение на день), volume=0.
+    Из 18 колонок CSV (6 теноров × 3 типа) берутся только овернайт —
+    остальные тенноры в БД пока не нужны.
+    """
+    csv_path = os.path.join(STOCKS_DIR, 'mfd_rates.csv')
+    if not os.path.exists(csv_path):
+        print(f'  {csv_path} не найден — пропускаем MFD overnight')
+        return
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        print(f'  {csv_path} пуст — пропускаем')
+        return
+    df['date'] = pd.to_datetime(df['date']).dt.date
+
+    with pg.cursor() as cur:
+        for ticker, (col, name) in _MFD_OVERNIGHT_TICKERS.items():
+            cur.execute(
+                'INSERT INTO stocks (ticker, name, splits) '
+                'VALUES (%s, %s, %s) ON CONFLICT (ticker) DO NOTHING',
+                [ticker, name, json.dumps([])],
+            )
+            rows: list[tuple] = []
+            for _, r in df.iterrows():
+                v = r[col]
+                if pd.isna(v):
+                    continue
+                v = float(v)
+                rows.append((ticker, r['date'], v, v, v, v, 0.0, None))
+            cur.executemany(
+                'INSERT INTO stock_candles '
+                '(ticker, candle_date, open, high, low, close, volume, open_interest) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
+                'ON CONFLICT (ticker, candle_date) DO NOTHING',
+                rows,
+            )
+            print(f'  {ticker:<10} {len(rows):6d} rows attempted  ({name})')
+
+
 # ── Дивиденды ──────────────────────────────────────────────────────────────
+
+# Стабильный namespace для UUID5-идентификаторов событий: один и тот же
+# (kind, ticker, date) → один и тот же UUID, ON CONFLICT DO NOTHING на
+# повторных запусках.
+_DIVIDEND_EVENT_NAMESPACE = uuid.UUID('00dc6acf-fc00-4000-8000-000000000000')
+
+
+def _make_dividend_event_id(kind: str, ticker: str, date_iso: str) -> str:
+    return str(uuid.uuid5(_DIVIDEND_EVENT_NAMESPACE, f'{kind}_{ticker}_{date_iso}'))
+
 
 def _load_dividends(pg) -> None:
     csv_path = os.path.join(STOCKS_DIR, 'dividends_all.csv')
@@ -168,7 +239,7 @@ def _load_dividends(pg) -> None:
     df = pd.read_csv(csv_path, dtype={'ticker': str, 'year': str})
     df['announcement_date'] = pd.to_datetime(df['announcement_date'], dayfirst=True).dt.date
     df['payment_date'] = pd.to_datetime(df['payment_date'], dayfirst=True, errors='coerce').dt.date
-    rows = []
+    rows: list[tuple] = []
     for _, r in df.iterrows():
         if pd.isna(r['ticker']) or not r['ticker']:
             continue
@@ -177,22 +248,36 @@ def _load_dividends(pg) -> None:
             year = int(r['year'])
         except (TypeError, ValueError):
             continue
+        ticker = str(r['ticker']).upper()
+        announce = r['announcement_date']
+        payment = r['payment_date'] if pd.notna(r['payment_date']) else None
+        payload = json.dumps({'ticker': ticker, 'dividend_per_share': div, 'year': year})
+
+        announce_iso = announce.isoformat()
         rows.append((
-            str(r['ticker']).upper(),
-            r['announcement_date'],
-            r['payment_date'] if pd.notna(r['payment_date']) else None,
-            div,
-            year,
+            _make_dividend_event_id('DIVIDEND_ANNOUNCEMENT', ticker, announce_iso),
+            announce, announce, None,
+            f'Объявление дивидендов {ticker}: {div:.2f} ₽ за {year} год',
+            payload,
         ))
+        if payment is not None:
+            payment_iso = payment.isoformat()
+            rows.append((
+                _make_dividend_event_id('DIVIDEND_PAYMENT', ticker, payment_iso),
+                payment, announce, None,
+                f'Выплата дивидендов {ticker}: {div:.2f} ₽ за {year} год',
+                payload,
+            ))
+
     with pg.cursor() as cur:
         cur.executemany(
-            'INSERT INTO dividends '
-            '(ticker, announcement_date, payment_date, dividend_per_share, year) '
-            'VALUES (%s, %s, %s, %s, %s) '
-            'ON CONFLICT (ticker, announcement_date, year) DO NOTHING',
+            'INSERT INTO events '
+            '(id, date_start, announce_date, date_end, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            'ON CONFLICT (id) DO NOTHING',
             rows,
         )
-    print(f'  dividends: {len(rows)} rows attempted')
+    print(f'  events (дивиденды): {len(rows)} rows attempted')
 
 
 # ── Главный сценарий ───────────────────────────────────────────────────────
@@ -208,15 +293,24 @@ def main() -> None:
         _load_ruonia(pg)
         pg.commit()
 
-        print('3. dividends (CSV → Postgres)')
+        print('3. mfd overnight rates (CSV → stocks + stock_candles)')
+        _load_mfd_overnight_rates(pg)
+        pg.commit()
+
+        print('4. dividends (CSV → Postgres)')
         _load_dividends(pg)
         pg.commit()
 
         with pg.cursor() as cur:
             print('\nfinal counts:')
-            for tbl in ('stocks', 'stock_candles', 'risk_free_rate', 'dividends'):
+            for tbl in ('stocks', 'stock_candles', 'risk_free_rate'):
                 cur.execute(f'SELECT COUNT(*) FROM {tbl}')
                 print(f'  {tbl:24s} {cur.fetchone()[0]}')
+            cur.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE event LIKE 'Объявление дивидендов %%' OR event LIKE 'Выплата дивидендов %%'"
+            )
+            print(f'  events (дивиденды)       {cur.fetchone()[0]}')
     finally:
         pg.close()
 
