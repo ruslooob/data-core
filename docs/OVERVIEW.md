@@ -20,11 +20,11 @@
         ↓
    ETL-конвейер (скрипты тэгирования, парсеры)
         ↓
-  Структурированная БД (CSV-файлы)
+  Структурированная БД (Postgres, схема через Liquibase)
         ↓
   Аналитические модули (backend/core/)
         ↓
-  FastAPI-сервер (backend/main.py)
+  FastAPI-сервер (backend/main.py + backend/routers/*)
         ↓
   React-фронтенд (виджеты на полотне)
 ```
@@ -41,19 +41,20 @@
 
 ## Структура базы данных
 
-БД реализована единым DuckDB-файлом `data/db/data-core.duckdb` с нативными таблицами и FK-ограничениями. Просматривать содержимое можно через DuckDB CLI, DBeaver или вкладку Database в PyCharm. Архивные CSV (исходники до миграции) сохранены в `data/db/archive_csv/`.
+БД реализована в **Postgres** (docker-compose), схема и PL/Python-функции управляются Liquibase (см. [SPEC_DATABASE.md](SPEC_DATABASE.md)). Просматривать содержимое можно через `psql`, DBeaver или вкладку Database в PyCharm.
 
-### Таблицы (`data/db/data-core.duckdb`)
+### Основные таблицы
 
 | Таблица | Содержимое |
 |------|-----------|
-| `events` | Все события: `id` (PK), `date_start`, `date_end`, `event` |
+| `events` | Все события: `id` (PK), `announce_date`, `payload_date`, `event`, `event_type` |
 | `tags` | Справочник тегов: `code` (PK), `name`, `type` |
 | `event_tags` | Связь событий и тегов: `event_id` (FK), `tag_code` (FK), составной PK |
 | `precedent_queries` | Сохранённые прецедентные запросы PQL: `id` (PK), `name` (UNIQUE), `source`, `created_at` |
-| `tagged_events` | Представление поверх трёх таблиц для удобства запросов по тегам |
+| `stock_candles` | OHLCV-котировки тикеров (включая синтетический `SAVINGS_MIACR`) |
+| `research`, `strategies`, `rules`, `strategy_rules`, `environments`, `backtest_results`, `trade_journal` | Бэктест и исследования |
 
-Дивидендные события импортируются из `data/stocks/dividends_all.csv` в таблицу `events` через `scripts/import_dividends_to_db.py` (идемпотентен): на каждую запись создаются два события — объявление и выплата — с тегами тикера компании (type=company) и топиком (`DIVIDEND_ANNOUNCEMENT` / `DIVIDEND_PAYMENT`).
+Дивидендные события импортируются вместе с остальными референсными данными скриптом `scripts/load_data_to_postgres.py` (идемпотентен): на каждую запись создаются два события — объявление и выплата — с тегами тикера компании (type=company) и топиком (`DIVIDEND_ANNOUNCEMENT` / `DIVIDEND_PAYMENT`).
 
 При первом старте `precedent_engine` засевает в `precedent_queries` несколько системных рецептов с префиксом `★` — типовые шаблоны анализа.
 
@@ -68,13 +69,13 @@
 Конвейер превращает неструктурированные данные в размеченную базу событий.
 
 ```
-data/events/1_raw/                — сырые данные (Wikipedia и др.)
+data/events/1_raw/      — сырые данные (Wikipedia и др.)
         ↓
-data/events/2_struct/             — структурированные CSV
+data/events/2_struct/   — структурированные CSV
         ↓
-data/db/data-core.duckdb (events) — финальная БД событий
+Postgres (events)       — финальная БД событий (загрузка через scripts/load_data_to_postgres.py)
         ↓
-data/db/data-core.duckdb (event_tags) — тэгирование
+Postgres (event_tags)   — тэгирование
 ```
 
 Скрипты тэгирования: `spacy_country_recognition` (страны), `air_plane_crash_classification` (авиакатастрофы).
@@ -88,7 +89,7 @@ data/db/data-core.duckdb (event_tags) — тэгирование
 | Модуль | Назначение |
 |--------|-----------|
 | `event_study.py` | Событийный анализ: AR, CAR, агрегированный анализ, фильтрация выбросов |
-| `precedent_engine.py` | Класс `PrecedentEngine` — соединение с DuckDB-базой и регистрация UDF (`car`, `vol_ratio`, `volume_ratio`) поверх поставщиков данных |
+| `precedent_engine.py` | Поставщики данных для UDF `car` / `vol_ratio` / `volume_ratio` (сами UDF — PL/Python в Postgres, см. `db/changelog/changes/002-udfs.sql`) |
 | `expected_return_models.py` | Модели ожидаемой доходности: mean adjusted, market model, CAPM |
 | `stock_data_provider.py` | Класс `StockDataProvider` — котировки, дневные доходности, объёмы; `vol_ratio` и `volume_ratio` |
 | `market_data_provider.py` | Класс `MarketDataProvider` — индекс рынка (IMOEX), безрисковая ставка (дневная доходность SAVINGS_MIACR) |
