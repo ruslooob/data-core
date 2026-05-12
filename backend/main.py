@@ -1376,6 +1376,22 @@ def delete_backtest_result(result_id: str) -> None:
     # в data/logs/backtest/ и убираются вручную.
 
 
+@app.post('/api/backtest/results/{result_id}/recompute', response_model_by_alias=True)
+def recompute_backtest_result(result_id: str) -> BacktestResultDetailOut:
+    """Пересчитывает все 7 метрик прогона из persistent trade_journal +
+    актуальных цен/R_f. Применять после изменения формул метрик
+    (Sharpe → R_f) или цен в `stock_candles`, когда сделки прежнего
+    прогона остаются валидными."""
+    con = _pg()
+    if con.execute(
+        'SELECT 1 FROM backtest_results WHERE id = %s LIMIT 1', [result_id],
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail='Прогон не найден')
+    from core.backtest_engine import recompute_metrics
+    recompute_metrics(con, result_id)
+    return get_backtest_result(result_id)
+
+
 # ---- Перевод между общей/приватной (Research scope) ----
 
 class ResearchScopeRequest(CamelModel):
