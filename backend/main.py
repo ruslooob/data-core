@@ -5,9 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import date, datetime, timezone
 import uuid as _uuid
 
-from core.event_study import EventStudy, AggregateStudyResult
 from core.postgres_db import get_pool
-from routers import market as market_router
+from routers import event_study as event_study_router, market as market_router
 from routers._common import (
     DEFAULT_RESEARCH_ID,
     dividends as _dividends,
@@ -37,115 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(market_router.router)
-
-
-class EventStudyRequest(CamelModel):
-    ticker: str
-    event_date: str  # ISO format: YYYY-MM-DD
-    model: str  # 'mean_adjusted', 'market_model', 'capm'
-    event_window: tuple[int, int]  # (-10, 10)
-    estimation_window: int  # 200
-    outlier_threshold: float | None = None  # σ-порог фильтрации выбросов
-
-
-class EventStudyResponse(CamelModel):
-    event_date: str
-    ar: list[float]
-    car: float
-    n_days: int
-    estimation_std: float
-    outliers_removed: int
-
-
-@app.post("/api/event-study", response_model_by_alias=True)
-def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
-    """Рассчитывает AR и CAR для одного события."""
-    stock_log_returns = _stocks.get_log_returns(req.ticker)
-    market = _market.load_market_index_log_returns()
-    rf = _market.load_daily_risk_free_rate()
-
-    study = EventStudy(stock_log_returns=stock_log_returns)
-    result = study.analyze(
-        event_date=date.fromisoformat(req.event_date),
-        model=req.model,
-        event_window=req.event_window,
-        estimation_window=req.estimation_window,
-        market=market,
-        rf=rf,
-        outlier_threshold=req.outlier_threshold,
-    )
-
-    if result is None:
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=400,
-            detail="Недостаточно данных для анализа (слишком ранняя дата или короткая история котировок)",
-        )
-
-    return EventStudyResponse(
-        event_date=result.event_date.isoformat(),
-        ar=result.ar,
-        car=result.car,
-        n_days=result.n_days,
-        estimation_std=result.estimation_std,
-        outliers_removed=result.outliers_removed,
-    )
-
-
-# ── Агрегированный event study ──────────────────────────────────────────────
-
-class AggregateStudyRequest(CamelModel):
-    ticker: str
-    model: str
-    event_window: tuple[int, int]
-    estimation_window: int
-    outlier_threshold: float | None = None
-
-
-class AggregateStudyResponse(CamelModel):
-    n_events: int
-    mean_car: list[float]
-    cumulative_mean_car: float
-    t_stat: float
-    p_value: float
-    individual_cars: list[float]
-    event_dates: list[str]
-
-
-@app.post("/api/event-study/aggregate", response_model_by_alias=True)
-def run_aggregate_study(req: AggregateStudyRequest) -> AggregateStudyResponse:
-    """Агрегированный event study: средний CAR по всем событиям тикера."""
-    stock_log_returns = _stocks.get_log_returns(req.ticker)
-    market = _market.load_market_index_log_returns()
-    rf = _market.load_daily_risk_free_rate()
-
-    events = _dividends.load_dividends()
-    event_dates = [e.event_date for e in events if e.ticker == req.ticker.upper()]
-
-    study = EventStudy(stock_log_returns=stock_log_returns)
-    result = study.analyze_aggregate(
-        event_dates=event_dates,
-        model=req.model,
-        event_window=req.event_window,
-        estimation_window=req.estimation_window,
-        market=market,
-        rf=rf,
-        outlier_threshold=req.outlier_threshold,
-    )
-
-    if result is None:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Не удалось проанализировать ни одно событие")
-
-    return AggregateStudyResponse(
-        n_events=result.n_events,
-        mean_car=result.mean_car,
-        cumulative_mean_car=result.cumulative_mean_car,
-        t_stat=result.t_stat,
-        p_value=result.p_value,
-        individual_cars=result.individual_cars,
-        event_dates=result.event_dates,
-    )
+app.include_router(event_study_router.router)
 
 
 # ── Поиск прецедентов (PQL) ─────────────────────────────────────────────────
