@@ -1,8 +1,10 @@
-"""Поставщик рыночных данных: безрисковая ставка (RUONIA), индекс рынка (IMOEX).
+"""Поставщик рыночных данных: безрисковая ставка, индекс рынка (IMOEX).
 
 Источники в Postgres:
 - IMOEX — `stock_candles WHERE ticker = 'IMOEX'`.
-- RUONIA — `risk_free_rate (rate_date, annual_rate_pct)`.
+- Безрисковая ставка (дневная) — `stock_candles WHERE ticker = 'SAVINGS_MIACR'`,
+  накопительный счёт под MIACR overnight; R_f[t] = SAVINGS_MIACR.pct_change().
+- RUONIA (для UI/графиков) — `risk_free_rate (rate_date, annual_rate_pct)`.
 """
 from __future__ import annotations
 
@@ -13,9 +15,11 @@ import pandas as pd
 
 from core.postgres_db import get_pool
 
+SAVINGS_TICKER = 'SAVINGS_MIACR'
+
 
 class MarketDataProvider:
-    """Поставщик данных рынка: индекс IMOEX и безрисковая ставка RUONIA."""
+    """Поставщик данных рынка: индекс IMOEX и безрисковая ставка."""
 
     def __init__(self, max_date: date | None = None):
         self._max_date = pd.Timestamp(max_date) if max_date is not None else None
@@ -27,6 +31,7 @@ class MarketDataProvider:
             start_date: date | None = None,
             end_date: date | None = None,
     ) -> pd.Series:
+        """RUONIA в % годовых — для отображения в UI как тикер."""
         return self._load_ruonia(start_date, end_date)
 
     def load_daily_risk_free_rate(
@@ -34,7 +39,17 @@ class MarketDataProvider:
             start_date: date | None = None,
             end_date: date | None = None,
     ) -> pd.Series:
-        return self._load_ruonia(start_date, end_date) / 100.0 / 252.0
+        """Дневная безрисковая доходность = pct_change(SAVINGS_MIACR).
+
+        Покрывает весь период 2000-08-01..сегодня (без пропуска до 2010,
+        как было у RUONIA). Капитализация ACT/365 уже зашита в цены тикера.
+        """
+        prices = self._load_savings_prices(start_date, end_date)
+        if prices.empty:
+            return pd.Series(dtype=float, name='rf_daily')
+        rf = prices.pct_change().dropna()
+        rf.name = 'rf_daily'
+        return rf
 
     # ---- индекс рынка ------------------------------------------------------
 
@@ -56,6 +71,28 @@ class MarketDataProvider:
         return log_returns
 
     # ---- внутренние загрузчики --------------------------------------------
+
+    def _load_savings_prices(self, start_date, end_date) -> pd.Series:
+        sql = "SELECT candle_date, close FROM stock_candles WHERE ticker = %s"
+        params: list = [SAVINGS_TICKER]
+        if start_date is not None:
+            sql += ' AND candle_date >= %s'
+            params.append(pd.Timestamp(start_date).date())
+        if end_date is not None:
+            sql += ' AND candle_date <= %s'
+            params.append(pd.Timestamp(end_date).date())
+        if self._max_date is not None:
+            sql += ' AND candle_date <= %s'
+            params.append(self._max_date.date())
+        sql += ' ORDER BY candle_date'
+        with get_pool().connection() as con:
+            rows = con.execute(sql, params).fetchall()
+        if not rows:
+            return pd.Series(dtype=float)
+        idx = pd.DatetimeIndex([r[0] for r in rows])
+        s = pd.Series([float(r[1]) for r in rows], index=idx, name='savings_miacr')
+        s.index.name = 'date'
+        return s
 
     def _load_ruonia(self, start_date, end_date) -> pd.Series:
         sql = 'SELECT rate_date, annual_rate_pct FROM risk_free_rate'

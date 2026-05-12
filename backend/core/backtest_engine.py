@@ -62,6 +62,73 @@ def _annualize_return(total_return_pct: float, date_start: date, date_end: date)
     return (growth_factor ** (1.0 / years) - 1.0) * 100.0
 
 
+def _compute_metrics(
+        equity_curve: list[tuple[date, float]],
+        trades: list['TradeRecord'],
+        *,
+        starting: float,
+        env_start: date,
+        env_end: date,
+) -> dict:
+    """Чистая функция расчёта 7 метрик из equity-кривой и журнала сделок.
+
+    Используется как из движка при первом прогоне (TEMP-таблицы), так и
+    при пересчёте метрик существующего прогона (`recompute_metrics`)
+    после реконструкции equity из persistent trade_journal.
+    """
+    final_equity = equity_curve[-1][1] if equity_curve else starting
+    total_return_pct = (final_equity - starting) / starting * 100.0
+    annual_return_pct = _annualize_return(total_return_pct, env_start, env_end)
+
+    peak = starting
+    max_dd = 0.0
+    for _, eq in equity_curve:
+        if eq > peak:
+            peak = eq
+        if peak > 0:
+            dd = (peak - eq) / peak
+            if dd > max_dd:
+                max_dd = dd
+    max_drawdown_pct = max_dd * 100.0
+
+    if len(equity_curve) > 1:
+        dates = pd.DatetimeIndex([pd.Timestamp(d) for d, _ in equity_curve])
+        eq_series = pd.Series([e for _, e in equity_curve], index=dates)
+        daily_ret = eq_series.pct_change().dropna()
+        rf_daily = MarketDataProvider().load_daily_risk_free_rate(
+            start_date=dates[0].date(), end_date=dates[-1].date(),
+        )
+        rf_aligned = rf_daily.reindex(daily_ret.index).ffill().fillna(0.0)
+        excess = daily_ret - rf_aligned
+        if len(excess) > 1 and excess.std(ddof=1) > 0:
+            sharpe = float(excess.mean() / excess.std(ddof=1) * (252.0 ** 0.5))
+        else:
+            sharpe = 0.0
+    else:
+        sharpe = 0.0
+
+    sells = [t for t in trades if t.type == 'sell' and t.pnl_realized is not None]
+    if sells:
+        wins = sum(1 for t in sells if t.pnl_realized > 0)
+        win_rate_pct = wins / len(sells) * 100.0
+        gains = sum(t.pnl_realized for t in sells if t.pnl_realized > 0)
+        losses = -sum(t.pnl_realized for t in sells if t.pnl_realized < 0)
+        profit_factor = gains / losses if losses > 0 else None
+    else:
+        win_rate_pct = None
+        profit_factor = None
+
+    return {
+        'total_return_pct': total_return_pct,
+        'annual_return_pct': annual_return_pct,
+        'max_drawdown_pct': max_drawdown_pct,
+        'sharpe': sharpe,
+        'n_trades': len(trades),
+        'profit_factor': profit_factor,
+        'win_rate_pct': win_rate_pct,
+    }
+
+
 @dataclass
 class RuleSpec:
     id: str
@@ -549,43 +616,10 @@ class BacktestEngine:
     # ── Расчёт метрик и формирование результата ────────────────────────────
 
     def _compute_result(self) -> BacktestResult:
-        starting = float(self.environment.starting_capital)
         equity_rows = self.con.execute(
             'SELECT tick_date, equity FROM equity_curve ORDER BY tick_date',
         ).fetchall()
         equity_curve = [(d, float(e)) for d, e in equity_rows]
-
-        if not equity_curve:
-            final_equity = starting
-        else:
-            final_equity = equity_curve[-1][1]
-
-        total_return_pct = (final_equity - starting) / starting * 100.0
-        annual_return_pct = _annualize_return(
-            total_return_pct, self.environment.date_start, self.environment.date_end,
-        )
-
-        peak = starting
-        max_dd = 0.0
-        for _, eq in equity_curve:
-            if eq > peak:
-                peak = eq
-            if peak > 0:
-                dd = (peak - eq) / peak
-                if dd > max_dd:
-                    max_dd = dd
-        max_drawdown_pct = max_dd * 100.0
-
-        if len(equity_curve) > 1:
-            eq_series = pd.Series([e for _, e in equity_curve])
-            daily_ret = eq_series.pct_change().dropna()
-            if len(daily_ret) > 1 and daily_ret.std(ddof=1) > 0:
-                sharpe = float(daily_ret.mean() / daily_ret.std(ddof=1) * (252.0 ** 0.5))
-            else:
-                sharpe = 0.0
-        else:
-            sharpe = 0.0
-
         trade_rows = self.con.execute(
             'SELECT trade_date, ticker, type, quantity, price, rule_name, pnl_realized '
             'FROM trade_journal ORDER BY trade_date, trade_id',
@@ -598,28 +632,22 @@ class BacktestEngine:
             )
             for r in trade_rows
         ]
-        n_trades = len(trades)
-        sells = [t for t in trades if t.type == 'sell' and t.pnl_realized is not None]
-        if sells:
-            wins = sum(1 for t in sells if t.pnl_realized > 0)
-            win_rate_pct = wins / len(sells) * 100.0
-            gains = sum(t.pnl_realized for t in sells if t.pnl_realized > 0)
-            losses = -sum(t.pnl_realized for t in sells if t.pnl_realized < 0)
-            profit_factor = gains / losses if losses > 0 else None
-        else:
-            win_rate_pct = None
-            profit_factor = None
-
+        metrics = _compute_metrics(
+            equity_curve, trades,
+            starting=float(self.environment.starting_capital),
+            env_start=self.environment.date_start,
+            env_end=self.environment.date_end,
+        )
         return BacktestResult(
             strategy_id=self.strategy.id,
             environment_id=self.environment.id,
-            total_return_pct=total_return_pct,
-            annual_return_pct=annual_return_pct,
-            max_drawdown_pct=max_drawdown_pct,
-            sharpe=sharpe,
-            n_trades=n_trades,
-            profit_factor=profit_factor,
-            win_rate_pct=win_rate_pct,
+            total_return_pct=metrics['total_return_pct'],
+            annual_return_pct=metrics['annual_return_pct'],
+            max_drawdown_pct=metrics['max_drawdown_pct'],
+            sharpe=metrics['sharpe'],
+            n_trades=metrics['n_trades'],
+            profit_factor=metrics['profit_factor'],
+            win_rate_pct=metrics['win_rate_pct'],
             trades=trades,
             equity_curve=equity_curve,
         )
@@ -801,3 +829,60 @@ def persist_backtest_result(
             ],
         )
     return result_id
+
+
+def recompute_metrics(con, result_id: str) -> dict:
+    """Пересчитывает 7 метрик существующего прогона из persistent
+    `trade_journal` + актуальных цен/R_f и UPDATE'ит `backtest_results`.
+
+    Полного перепрогона не делает — equity-кривая реконструируется
+    `reconstruct_equity_curve`. Применять, когда изменилась формула
+    метрик (например, R_f для Sharpe) или цены в `stock_candles`,
+    а сделки прежнего прогона остаются валидными.
+    """
+    env_row = con.execute("""
+        SELECT e.date_start, e.date_end, e.starting_capital
+        FROM environments e
+        JOIN backtest_results br ON br.environment_id = e.id
+        WHERE br.id = %s
+    """, [result_id]).fetchone()
+    if env_row is None:
+        raise ValueError(f'backtest_result {result_id} не найден')
+    env_start, env_end, starting = env_row
+
+    equity_curve = reconstruct_equity_curve(con, result_id)
+    trade_rows = con.execute("""
+        SELECT trade_date, ticker, type, quantity, price, rule_name, pnl_realized
+        FROM trade_journal
+        WHERE backtest_result_id = %s
+        ORDER BY trade_date, id
+    """, [result_id]).fetchall()
+    trades = [
+        TradeRecord(
+            trade_date=r[0], ticker=r[1], type=r[2], quantity=int(r[3]),
+            price=float(r[4]), rule_name=r[5],
+            pnl_realized=float(r[6]) if r[6] is not None else None,
+        )
+        for r in trade_rows
+    ]
+    metrics = _compute_metrics(
+        equity_curve, trades,
+        starting=float(starting), env_start=env_start, env_end=env_end,
+    )
+    con.execute("""
+        UPDATE backtest_results
+        SET total_return_pct = %s,
+            annual_return_pct = %s,
+            max_drawdown_pct = %s,
+            sharpe = %s,
+            n_trades = %s,
+            profit_factor = %s,
+            win_rate_pct = %s
+        WHERE id = %s
+    """, [
+        metrics['total_return_pct'], metrics['annual_return_pct'],
+        metrics['max_drawdown_pct'], metrics['sharpe'],
+        metrics['n_trades'], metrics['profit_factor'], metrics['win_rate_pct'],
+        result_id,
+    ])
+    return metrics
