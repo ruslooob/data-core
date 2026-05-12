@@ -183,19 +183,6 @@ export function deleteResearch(id: string): Promise<void> {
   return deleteJson(`/api/research/${id}`)
 }
 
-export async function getResearchReport(id: string): Promise<string> {
-  const r = await fetch(`/api/research/${id}/report`)
-  if (!r.ok) {
-    let detail = `${r.status} ${r.statusText}`
-    try {
-      const body = await r.json()
-      if (body.detail) detail = body.detail
-    } catch { /* not JSON */ }
-    throw new Error(detail)
-  }
-  return r.text()
-}
-
 // ── Бэктест: стратегии, правила, окружения ──────────────────────────────────
 
 async function deleteJson(url: string): Promise<void> {

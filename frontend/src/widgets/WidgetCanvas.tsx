@@ -34,7 +34,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'precedent-editor': 'Precedent editor',
   'backtest-editor': 'BacktestEditor',
   'entity-editor': 'EntityEditor',
-  'research-report': 'Отчёт исследования',
+  'research-report': 'Research Journal',
 }
 
 const DEFAULT_WIDTH = 640
@@ -106,11 +106,12 @@ export function WidgetCanvas() {
     <>
       <div style={toolbarStyle}>
         <ResearchSelector />
-        <button onClick={() => setMenuOpen(!menuOpen)} style={addWidgetButtonStyle}>
-          + Добавить виджет
-        </button>
-        {menuOpen && (
-          <div style={dropdownMenuStyle}>
+        <div style={addWidgetWrapStyle}>
+          <button onClick={() => setMenuOpen(!menuOpen)} style={addWidgetButtonStyle}>
+            + Добавить виджет
+          </button>
+          {menuOpen && (
+            <div style={dropdownMenuStyle}>
             <button onClick={() => addWidget('price-chart')} style={menuItemStyle}>
               Price chart
             </button>
@@ -130,10 +131,11 @@ export function WidgetCanvas() {
               EntityEditor
             </button>
             <button onClick={() => addWidget('research-report')} style={menuItemStyle}>
-              Отчёт исследования
+              Research Journal
             </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={canvasStyle}>
@@ -200,10 +202,14 @@ const addWidgetButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 }
 
+const addWidgetWrapStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
 const dropdownMenuStyle: React.CSSProperties = {
   position: 'absolute',
   top: '100%',
-  left: 20,
+  left: 0,
   marginTop: 4,
   backgroundColor: 'white',
   border: '1px solid #ddd',

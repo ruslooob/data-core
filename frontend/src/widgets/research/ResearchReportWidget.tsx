@@ -1,56 +1,48 @@
-import { useCallback, useEffect, useState } from 'react'
-import { getResearchReport } from '../../api/client'
+import { useState } from 'react'
 import { useActiveResearch } from '../../contexts/ActiveResearch'
 
 /**
  * Виджет отчёта по активному исследованию.
- * Показывает markdown как preformatted-текст и кнопку «Скачать .md».
+ * Сейчас — только дропдаун экспорта (CSV работает, PDF — заглушка).
+ * Полноценный журнал исследования с заметками появится позже.
  */
 export function ResearchReportWidget() {
-  const { activeResearch, activeResearchId } = useActiveResearch()
-  const [text, setText] = useState<string>('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const { activeResearchId } = useActiveResearch()
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
-  const refresh = useCallback(async () => {
+  const onExportCsv = () => {
     if (!activeResearchId) return
-    setLoading(true)
-    setError(null)
-    try {
-      setText(await getResearchReport(activeResearchId))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [activeResearchId])
+    setExportMenuOpen(false)
+    window.location.href = `/api/research/${activeResearchId}/export?format=csv`
+  }
 
-  useEffect(() => { void refresh() }, [refresh])
-
-  const onDownload = () => {
-    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const safeName = (activeResearch?.name ?? 'research')
-      .toLowerCase().replace(/[^a-z0-9_-]+/gi, '-')
-    a.download = `${safeName || 'research'}.md`
-    a.click()
-    URL.revokeObjectURL(url)
+  const onExportPdf = () => {
+    setExportMenuOpen(false)
+    alert('PDF-экспорт пока не реализован')
   }
 
   return (
     <div style={rootStyle}>
       <div style={toolbarStyle}>
-        <button onClick={() => void refresh()} style={refreshButtonStyle} disabled={loading}>
-          {loading ? 'Обновление…' : 'Обновить'}
-        </button>
-        <button onClick={onDownload} style={downloadButtonStyle} disabled={!text}>
-          Скачать .md
-        </button>
+        <div style={exportWrapStyle}>
+          <button
+            onClick={() => setExportMenuOpen((v) => !v)}
+            style={downloadButtonStyle}
+            disabled={!activeResearchId}
+          >
+            Скачать ▾
+          </button>
+          {exportMenuOpen && (
+            <div style={dropdownMenuStyle}>
+              <button onClick={onExportCsv} style={menuItemStyle}>CSV</button>
+              <button onClick={onExportPdf} style={menuItemStyle}>PDF</button>
+            </div>
+          )}
+        </div>
       </div>
-      {error && <div style={errorStyle}>{error}</div>}
-      <pre style={previewStyle}>{text}</pre>
+      <div style={placeholderStyle}>
+        Полноценный журнал исследования появится позже.
+      </div>
     </div>
   )
 }
@@ -66,15 +58,35 @@ const rootStyle: React.CSSProperties = {
 const toolbarStyle: React.CSSProperties = {
   display: 'flex',
   gap: 8,
+  position: 'relative',
 }
 
-const refreshButtonStyle: React.CSSProperties = {
-  padding: '6px 12px',
-  fontSize: 13,
-  background: '#fff',
-  border: '1px solid #bbb',
-  borderRadius: 4,
+const exportWrapStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
+const dropdownMenuStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  marginTop: 4,
+  backgroundColor: 'white',
+  border: '1px solid #ddd',
+  borderRadius: 6,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  minWidth: 140,
+  zIndex: 100,
+}
+
+const menuItemStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: '8px 14px',
+  textAlign: 'left',
+  background: 'none',
+  border: 'none',
   cursor: 'pointer',
+  fontSize: 13,
 }
 
 const downloadButtonStyle: React.CSSProperties = {
@@ -87,25 +99,12 @@ const downloadButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-const errorStyle: React.CSSProperties = {
-  color: '#c62828',
-  fontSize: 13,
-  padding: '6px 10px',
-  background: '#fde6e6',
-  borderRadius: 4,
-}
-
-const previewStyle: React.CSSProperties = {
+const placeholderStyle: React.CSSProperties = {
   flex: 1,
-  margin: 0,
-  padding: 12,
-  background: '#fafafa',
-  border: '1px solid #eee',
-  borderRadius: 4,
-  fontFamily: '"Consolas", "Monaco", monospace',
-  fontSize: 12,
-  lineHeight: 1.5,
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-  overflow: 'auto',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#999',
+  fontSize: 13,
+  fontStyle: 'italic',
 }
