@@ -12,8 +12,7 @@ from core.market_data_provider import MarketDataProvider
 from core.postgres_db import PG_DSN
 from core.stock_data_provider import StockDataProvider
 
-# Дефолтные провайдеры без max_date — для эндпоинтов API, где режим
-# отсутствия подглядывания в будущее не требуется.
+# Дефолтные провайдеры, где режим отсутствия подглядывания в будущее не требуется.
 stocks = StockDataProvider()
 market = MarketDataProvider()
 dividends = DividendDataProvider()
@@ -55,6 +54,15 @@ def validate_name(name: str) -> str:
 def pg_type_name(type_code: int) -> str:
     """Сопоставление OID типа Postgres → читаемое имя."""
     return _PG_TYPE_NAMES.get(type_code, f'OID:{type_code}')
+
+
+def fetch_research(con, research_id: str):
+    """Возвращает строку исследования или None. Используется и роутером research,
+    и роутерами стратегий/правил/окружений для валидации существования."""
+    return con.execute(
+        'SELECT id, name, description, conclusion, created_at '
+        'FROM research WHERE id = %s', [research_id],
+    ).fetchone()
 
 
 def to_json_safe(value):
