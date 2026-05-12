@@ -65,6 +65,11 @@ def fetch_research(con, research_id: str):
     ).fetchone()
 
 
+def validate_research_scope_target(con, new_research_id: str | None) -> None:
+    if new_research_id is not None and fetch_research(con, new_research_id) is None:
+        raise HTTPException(status_code=404, detail='Исследование не найдено')
+
+
 def to_json_safe(value):
     """Конвертирует значение из БД в JSON-сериализуемое."""
     if value is None:
