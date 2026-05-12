@@ -6,11 +6,10 @@ run liquibase update`). Этот скрипт льёт **только данны
 - `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day_*.txt`,
   с нормализацией по сплитам (`splits.json`).
 - `risk_free_rate` — из `data/stocks/RUONIA_*.xlsx`.
-- Овернайт-ставки межбанка (MIBID_1D, MIBOR_1D, MIACR_1D) — из
-  `data/stocks/mfd_rates.csv` в `stocks` + `stock_candles` как
-  синтетические тикеры (open=high=low=close=value, volume=0).
-  Используются для backfill безрисковой ставки до 2010 года, когда
-  RUONIA ещё не публиковалась.
+- Накопительный счёт `SAVINGS_MIACR` — капитализованный индекс
+  (start=1000) под овернайт-ставку MIACR из `mfd_rates.csv`.
+  Покрывает 2000-08-01 .. сегодня, используется как безрисковый
+  benchmark и источник R_f для Sharpe.
 - Дивиденды — из `data/stocks/dividends_all.csv` напрямую в `events`.
   На каждую строку CSV создаётся два события: «Объявление…» (date_start
   = announce_date = announcement_date) и «Выплата…» (date_start =
@@ -168,55 +167,60 @@ def _load_ruonia(pg) -> None:
     print(f'  risk_free_rate: {len(rows)} rows attempted')
 
 
-# ── MFD overnight ставки (MIBID/MIBOR/MIACR на 1 день) ─────────────────────
+# ── Накопительный счёт SAVINGS_MIACR ──────────────────────────────────────
 
-_MFD_OVERNIGHT_TICKERS = {
-    'MIBID_1D': ('mibid_1', 'Межбанк MIBID 1 день'),
-    'MIBOR_1D': ('mibor_1', 'Межбанк MIBOR 1 день'),
-    'MIACR_1D': ('miacr_1', 'Межбанк MIACR 1 день'),
-}
+_SAVINGS_TICKER = 'SAVINGS_MIACR'
+_SAVINGS_NAME = 'Накопительный счёт MIACR'
+_SAVINGS_INITIAL_PRICE = 1000.0
+_DAYS_IN_YEAR = 365
 
 
-def _load_mfd_overnight_rates(pg) -> None:
-    """Грузит овернайт-ставки межбанка (MIBID/MIBOR/MIACR на 1 день) из
-    `mfd_rates.csv` в stocks + stock_candles как синтетические тикеры.
+def _load_savings_miacr(pg) -> None:
+    """Капитализованный индекс под овернайт-ставку MIACR.
 
-    open=high=low=close=value (одно значение на день), volume=0.
-    Из 18 колонок CSV (6 теноров × 3 типа) берутся только овернайт —
-    остальные тенноры в БД пока не нужны.
+    Цена начинается с 1000 и растёт по формуле сложного процента между
+    соседними торговыми днями `mfd_rates.csv`: за выходные применяется
+    ставка предыдущего рабочего дня за фактическое число календарных
+    дней. ACT/365.
     """
     csv_path = os.path.join(STOCKS_DIR, 'mfd_rates.csv')
     if not os.path.exists(csv_path):
-        print(f'  {csv_path} не найден — пропускаем MFD overnight')
+        print(f'  {csv_path} не найден — пропускаем SAVINGS_MIACR')
         return
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path)[['date', 'miacr_1']].dropna()
     if df.empty:
-        print(f'  {csv_path} пуст — пропускаем')
+        print(f'  {csv_path}: miacr_1 пуст — пропускаем SAVINGS_MIACR')
         return
     df['date'] = pd.to_datetime(df['date']).dt.date
+    df = df.sort_values('date').reset_index(drop=True)
+
+    prices = [_SAVINGS_INITIAL_PRICE]
+    for i in range(1, len(df)):
+        prev_rate = float(df.miacr_1.iloc[i - 1])
+        days = (df.date.iloc[i] - df.date.iloc[i - 1]).days
+        prices.append(prices[-1] * (1 + prev_rate / 100 * days / _DAYS_IN_YEAR))
 
     with pg.cursor() as cur:
-        for ticker, (col, name) in _MFD_OVERNIGHT_TICKERS.items():
-            cur.execute(
-                'INSERT INTO stocks (ticker, name, splits) '
-                'VALUES (%s, %s, %s) ON CONFLICT (ticker) DO NOTHING',
-                [ticker, name, json.dumps([])],
-            )
-            rows: list[tuple] = []
-            for _, r in df.iterrows():
-                v = r[col]
-                if pd.isna(v):
-                    continue
-                v = float(v)
-                rows.append((ticker, r['date'], v, v, v, v, 0.0, None))
-            cur.executemany(
-                'INSERT INTO stock_candles '
-                '(ticker, candle_date, open, high, low, close, volume, open_interest) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
-                'ON CONFLICT (ticker, candle_date) DO NOTHING',
-                rows,
-            )
-            print(f'  {ticker:<10} {len(rows):6d} rows attempted  ({name})')
+        cur.execute(
+            'INSERT INTO stocks (ticker, name, splits) '
+            'VALUES (%s, %s, %s) ON CONFLICT (ticker) DO NOTHING',
+            [_SAVINGS_TICKER, _SAVINGS_NAME, json.dumps([])],
+        )
+        rows = [
+            (_SAVINGS_TICKER, df.date.iloc[i], p, p, p, p, 0.0, None)
+            for i, p in enumerate(prices)
+        ]
+        cur.executemany(
+            'INSERT INTO stock_candles '
+            '(ticker, candle_date, open, high, low, close, volume, open_interest) '
+            'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
+            'ON CONFLICT (ticker, candle_date) DO NOTHING',
+            rows,
+        )
+    print(
+        f'  {_SAVINGS_TICKER:<14} {len(rows):6d} candles  '
+        f'({_SAVINGS_NAME}, P[0]={_SAVINGS_INITIAL_PRICE:.0f} → P[-1]={prices[-1]:.2f})'
+    )
 
 
 # ── Дивиденды ──────────────────────────────────────────────────────────────
@@ -293,8 +297,8 @@ def main() -> None:
         _load_ruonia(pg)
         pg.commit()
 
-        print('3. mfd overnight rates (CSV → stocks + stock_candles)')
-        _load_mfd_overnight_rates(pg)
+        print('3. SAVINGS_MIACR — накопительный счёт под MIACR (CSV → stock_candles)')
+        _load_savings_miacr(pg)
         pg.commit()
 
         print('4. dividends (CSV → Postgres)')

@@ -60,28 +60,33 @@ def _log_returns_for(t, mx):
     return lr
 
 def _rf_for(mx):
+    # Дневная безрисковая ставка = pct_change(SAVINGS_MIACR), накопительный
+    # счёт под MIACR overnight. Один источник истины, синхронен с Python
+    # `MarketDataProvider.load_daily_risk_free_rate()`.
     cache_key = ('rf', mx)
     if cache_key in SD:
         return SD[cache_key]
     if mx is not None:
         plan = plpy.prepare(
-            'SELECT rate_date, annual_rate_pct FROM risk_free_rate '
-            'WHERE rate_date <= $1 ORDER BY rate_date',
+            "SELECT candle_date, close FROM stock_candles "
+            "WHERE ticker = 'SAVINGS_MIACR' AND candle_date <= $1 "
+            "ORDER BY candle_date",
             ['date'],
         )
         rows = plpy.execute(plan, [mx])
     else:
         plan = plpy.prepare(
-            'SELECT rate_date, annual_rate_pct FROM risk_free_rate ORDER BY rate_date',
+            "SELECT candle_date, close FROM stock_candles "
+            "WHERE ticker = 'SAVINGS_MIACR' ORDER BY candle_date",
             [],
         )
         rows = plpy.execute(plan, [])
-    if len(rows) < 1:
+    if len(rows) < 2:
         SD[cache_key] = None
         return None
-    ridx = pd.DatetimeIndex([r['rate_date'] for r in rows])
-    rf_annual = pd.Series([float(r['annual_rate_pct']) for r in rows], index=ridx)
-    rf = rf_annual / 100.0 / 252.0
+    ridx = pd.DatetimeIndex([r['candle_date'] for r in rows])
+    prices = pd.Series([float(r['close']) for r in rows], index=ridx)
+    rf = prices.pct_change().dropna()
     rf.index.name = 'date'
     SD[cache_key] = rf
     return rf
