@@ -91,7 +91,7 @@ data/db/data-core.duckdb (event_tags) — тэгирование
 | `precedent_engine.py` | Класс `PrecedentEngine` — соединение с DuckDB-базой и регистрация UDF (`car`, `vol_ratio`, `volume_ratio`) поверх поставщиков данных |
 | `expected_return_models.py` | Модели ожидаемой доходности: mean adjusted, market model, CAPM |
 | `stock_data_provider.py` | Класс `StockDataProvider` — котировки, дневные доходности, объёмы; `vol_ratio` и `volume_ratio` |
-| `market_data_provider.py` | Класс `MarketDataProvider` — индекс рынка (IMOEX), безрисковая ставка (RUONIA) |
+| `market_data_provider.py` | Класс `MarketDataProvider` — индекс рынка (IMOEX), безрисковая ставка (дневная доходность SAVINGS_MIACR) |
 | `dividend_data_provider.py` | Класс `DividendDataProvider` — дивидендные события из CSV (легаси-источник для эндпоинта `/api/events`) |
 | `cpi_data_provider.py` | Инфляционная нормализация (ИПЦ) |
 | `plot_utils.py` | Визуализация для ноутбуков (Plotly / Dash) |

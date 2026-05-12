@@ -76,7 +76,7 @@ docker compose --profile migrate run --rm \
 
 ## Загрузка данных
 
-После создания схемы данные грузит отдельный скрипт `scripts/load_data_to_postgres.py` — котировки, RUONIA, дивиденды, теги, события, сохранённые PQL-запросы. Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен. Пользовательские данные (research, strategies, rules, backtest_results, trade_journal) этим скриптом **не** заливаются — они восстанавливаются отдельно из `pg_dump`-снапшота при необходимости.
+После создания схемы данные грузит отдельный скрипт `scripts/load_data_to_postgres.py` — котировки, RUONIA, накопительный счёт SAVINGS_MIACR (синтетический индекс под овернайт-ставку MIACR), дивиденды, теги, события, сохранённые PQL-запросы. Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен. Пользовательские данные (research, strategies, rules, backtest_results, trade_journal) этим скриптом **не** заливаются — они восстанавливаются отдельно из `pg_dump`-снапшота при необходимости.
 
 ## End-to-end сценарий «с нуля»
 
