@@ -1,33 +1,29 @@
 """FastAPI backend для data-core."""
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
 
 from datetime import date, datetime, timezone
 import uuid as _uuid
 
-
-class CamelModel(BaseModel):
-    """Базовый Pydantic-класс с camelCase-сериализацией для JSON DTO.
-
-    Поля внутри Python-класса остаются snake_case (Python-конвенция),
-    а в JSON попадают как camelCase через alias_generator.
-    populate_by_name=True позволяет принимать и snake_case, и camelCase на входе.
-    """
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
-from core.dividend_data_provider import DividendDataProvider
 from core.event_study import EventStudy, AggregateStudyResult
-from core.market_data_provider import MarketDataProvider
 from core.postgres_db import get_pool
-from core.stock_data_provider import StockDataProvider
-
-# Дефолтные провайдеры без max_date — для эндпоинтов API, где режим
-# отсутствия подглядывания в будущее не требуется.
-_stocks = StockDataProvider()
-_market = MarketDataProvider()
-_dividends = DividendDataProvider()
+from routers._common import (
+    DEFAULT_RESEARCH_ID,
+    dividends as _dividends,
+    get_pg as _pg,
+    market as _market,
+    now_iso as _now_iso,
+    pg_type_name as _pg_type_name,
+    stocks as _stocks,
+    to_json_safe as _to_json_safe,
+    validate_name as _validate_name,
+)
+from schemas._common import (
+    CamelModel,
+    DescriptionRequest,
+    RenameRequest,
+    ResearchScopeRequest,
+)
 
 # Служебные тикеры/пути, которые не являются акциями
 _NON_TICKER_FILES = {"DIVIDENDS", "IMOEX", "RUONIA", "SPLITS"}
@@ -266,51 +262,6 @@ def run_aggregate_study(req: AggregateStudyRequest) -> AggregateStudyResponse:
 
 PRECEDENT_MAX_ROWS = 1000
 
-def _to_json_safe(value):
-    """Конвертирует значение из БД в JSON-сериализуемое."""
-    from datetime import date as _date, datetime as _dt
-    from decimal import Decimal
-    if value is None:
-        return None
-    if isinstance(value, _dt):
-        return value.isoformat()
-    if isinstance(value, _date):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return float(value)
-    return value
-
-
-def _pg():
-    """Открывает psycopg-коннект для одного HTTP-запроса.
-
-    autocommit=True снимает необходимость явного commit() для
-    INSERT/UPDATE/DELETE. Коннект закрывается автоматически по выходу
-    из scope handler-функции (CPython ref-counting).
-
-    На больших нагрузках лучше переехать на pool — `core.postgres_db.get_pool()`
-    уже доступен. Сейчас минимальная инвазивность важнее.
-    """
-    import psycopg
-    from core.postgres_db import PG_DSN
-    return psycopg.connect(PG_DSN, autocommit=True)
-
-
-_PG_TYPE_NAMES = {
-    23: 'INTEGER',  20: 'BIGINT', 21: 'SMALLINT',
-    700: 'REAL', 701: 'DOUBLE',
-    1700: 'NUMERIC',
-    25: 'TEXT', 1043: 'VARCHAR',
-    16: 'BOOLEAN',
-    1082: 'DATE', 1114: 'TIMESTAMP', 1184: 'TIMESTAMPTZ',
-    114: 'JSON', 3802: 'JSONB',
-}
-
-
-def _pg_type_name(type_code: int) -> str:
-    """Сопоставление OID типа Postgres → читаемое имя."""
-    return _PG_TYPE_NAMES.get(type_code, f'OID:{type_code}')
-
 
 class PrecedentSearchRequest(CamelModel):
     source: str
@@ -427,20 +378,7 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
 
 # ── Бэктест: стратегии, правила, окружения ─────────────────────────────────
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec='seconds')
-
-
-def _validate_name(name: str) -> str:
-    name = name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail='Имя не может быть пустым')
-    return name
-
-
 # ---- Research ----
-
-DEFAULT_RESEARCH_ID = '00000000-0000-0000-0000-000000000001'
 
 
 class ResearchOut(CamelModel):
@@ -680,14 +618,6 @@ class RuleCreate(CamelModel):
     priority: int
     description: str | None = None
     research_id: str | None = None
-
-
-class RenameRequest(CamelModel):
-    name: str
-
-
-class DescriptionRequest(CamelModel):
-    description: str | None = None
 
 
 def _row_to_rule(row) -> RuleOut:
@@ -1393,11 +1323,6 @@ def recompute_backtest_result(result_id: str) -> BacktestResultDetailOut:
 
 
 # ---- Перевод между общей/приватной (Research scope) ----
-
-class ResearchScopeRequest(CamelModel):
-    """`null` = сделать общей; UUID = сделать приватной указанного исследования."""
-    research_id: str | None = None
-
 
 def _conflicting_runs_for_strategy(con, strategy_id: str, new_research_id: str | None):
     if new_research_id is None:
