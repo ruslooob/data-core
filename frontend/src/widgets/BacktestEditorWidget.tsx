@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  type ColumnDef,
+  type ColumnFiltersState,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
+import {
   cancelBacktestRun,
   deleteBacktestResult,
   getBacktestResult,
@@ -230,67 +240,6 @@ function SelectorRow(props: { label: string; current: string | null; picker: Rea
 
 // ── Вкладка «Архив» ──────────────────────────────────────────────────────
 
-// ── Сортировка таблицы Архива ─────────────────────────────────────────────
-
-type ArchiveSortKey =
-  | 'strategy' | 'environment' | 'period'
-  | 'totalReturnPct' | 'annualReturnPct' | 'maxDrawdownPct' | 'sharpe'
-  | 'nTrades' | 'profitFactor' | 'winRatePct'
-  | 'createdAt'
-
-function compareByKey(
-  a: BacktestResultMeta,
-  b: BacktestResultMeta,
-  key: ArchiveSortKey,
-  strategyById: Map<string, Strategy>,
-  envById: Map<string, Environment>,
-): number {
-  const cmpStr = (x: string, y: string) => x.localeCompare(y, 'ru')
-  // null трактуем как «меньше любого числа» при desc — то есть в самом конце
-  // при «по убыванию». Реализуем как очень маленькое число.
-  const num = (v: number | null | undefined) => v == null ? Number.NEGATIVE_INFINITY : v
-  switch (key) {
-    case 'strategy': return cmpStr(strategyById.get(a.strategyId)?.name ?? '', strategyById.get(b.strategyId)?.name ?? '')
-    case 'environment': return cmpStr(envById.get(a.environmentId)?.name ?? '', envById.get(b.environmentId)?.name ?? '')
-    case 'period': {
-      const pa = envById.get(a.environmentId)
-      const pb = envById.get(b.environmentId)
-      return cmpStr(pa ? `${pa.dateStart}…${pa.dateEnd}` : '', pb ? `${pb.dateStart}…${pb.dateEnd}` : '')
-    }
-    case 'totalReturnPct': return num(a.totalReturnPct) - num(b.totalReturnPct)
-    case 'annualReturnPct': return num(a.annualReturnPct) - num(b.annualReturnPct)
-    case 'maxDrawdownPct': return num(a.maxDrawdownPct) - num(b.maxDrawdownPct)
-    case 'sharpe': return num(a.sharpe) - num(b.sharpe)
-    case 'nTrades': return num(a.nTrades) - num(b.nTrades)
-    case 'profitFactor': return num(a.profitFactor) - num(b.profitFactor)
-    case 'winRatePct': return num(a.winRatePct) - num(b.winRatePct)
-    case 'createdAt': return cmpStr(a.createdAt, b.createdAt)
-  }
-}
-
-function SortableTh(props: {
-  label: string
-  thKey: ArchiveSortKey
-  sortKey: ArchiveSortKey
-  sortDir: 'asc' | 'desc'
-  onClick: (key: ArchiveSortKey) => void
-  numeric?: boolean
-}) {
-  const active = props.sortKey === props.thKey
-  const indicator = active ? (props.sortDir === 'asc' ? ' ↑' : ' ↓') : ''
-  const style: React.CSSProperties = {
-    ...(props.numeric ? archiveThStyleNum : archiveThStyle),
-    cursor: 'pointer',
-    userSelect: 'none',
-    color: active ? '#2962FF' : (archiveThStyle.color as string | undefined),
-  }
-  return (
-    <th style={style} onClick={() => props.onClick(props.thKey)} title="Сортировать">
-      {props.label}{indicator}
-    </th>
-  )
-}
-
 function ArchiveTab() {
   const researchId = useRequiredResearchId()
   const [results, setResults] = useState<BacktestResultMeta[]>([])
@@ -299,12 +248,8 @@ function ArchiveTab() {
   const [selectedDetail, setSelectedDetail] = useState<BacktestResultDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
-  // Сортировка
-  const [sortKey, setSortKey] = useState<ArchiveSortKey>('createdAt')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  // Фильтры
-  const [filterStrategyId, setFilterStrategyId] = useState<string | null>(null)
-  const [filterEnvironmentId, setFilterEnvironmentId] = useState<string | null>(null)
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }])
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
 
   const refresh = useCallback(async () => {
     try {
@@ -353,119 +298,231 @@ function ArchiveTab() {
     }
   }
 
-  // Применяем фильтры и сортировку.
-  const visibleResults = useMemo(() => {
-    let rs = results
-    if (filterStrategyId) rs = rs.filter((r) => r.strategyId === filterStrategyId)
-    if (filterEnvironmentId) rs = rs.filter((r) => r.environmentId === filterEnvironmentId)
-    return [...rs].sort((a, b) => compareByKey(a, b, sortKey, strategyById, envById) * (sortDir === 'asc' ? 1 : -1))
-  }, [results, filterStrategyId, filterEnvironmentId, sortKey, sortDir, strategyById, envById])
+  const columns = useMemo<ColumnDef<BacktestResultMeta>[]>(() => [
+    {
+      id: 'strategy',
+      header: 'Стратегия',
+      accessorFn: (row) => strategyById.get(row.strategyId)?.name ?? '(удалена)',
+      filterFn: 'includesString',
+    },
+    {
+      id: 'environment',
+      header: 'Окружение',
+      accessorFn: (row) => envById.get(row.environmentId)?.name ?? '(удалено)',
+      filterFn: 'includesString',
+    },
+    {
+      id: 'period',
+      header: 'Период',
+      accessorFn: (row) => {
+        const e = envById.get(row.environmentId)
+        return e ? `${e.dateStart}…${e.dateEnd}` : '—'
+      },
+      filterFn: 'includesString',
+    },
+    {
+      id: 'totalReturnPct',
+      header: 'Σ доход.',
+      accessorFn: (row) => row.totalReturnPct,
+      cell: ({ getValue }) => `${(getValue<number>()).toFixed(2)}%`,
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'annualReturnPct',
+      header: 'Год. доход.',
+      accessorFn: (row) => row.annualReturnPct,
+      cell: ({ getValue }) => `${(getValue<number>()).toFixed(2)}%`,
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'maxDrawdownPct',
+      header: 'Просадка',
+      accessorFn: (row) => row.maxDrawdownPct,
+      cell: ({ getValue }) => `${(getValue<number>()).toFixed(2)}%`,
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'sharpe',
+      header: 'Sharpe',
+      accessorFn: (row) => row.sharpe,
+      cell: ({ getValue }) => (getValue<number>()).toFixed(2),
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'nTrades',
+      header: 'Сделок',
+      accessorFn: (row) => row.nTrades,
+      cell: ({ getValue }) => String(getValue<number>()),
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'profitFactor',
+      header: 'Profit factor',
+      accessorFn: (row) => row.profitFactor,
+      cell: ({ getValue }) => {
+        const v = getValue<number | null>()
+        return v == null ? '—' : v.toFixed(2)
+      },
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'winRatePct',
+      header: 'Win rate',
+      accessorFn: (row) => row.winRatePct,
+      cell: ({ getValue }) => {
+        const v = getValue<number | null>()
+        return v == null ? '—' : `${v.toFixed(1)}%`
+      },
+      filterFn: numericFilterFn,
+      meta: { numeric: true },
+    },
+    {
+      id: 'createdAt',
+      header: 'Создан',
+      accessorFn: (row) => row.createdAt,
+      cell: ({ getValue }) => {
+        const v = getValue<string>()
+        return v.replace('T', ' ').slice(0, 19)
+      },
+      filterFn: dateFilterFn,
+    },
+    {
+      id: 'actions',
+      header: '',
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => (
+        <IconButton title="Удалить" hoverColor="#a01919"
+          onClick={(ev) => { ev?.stopPropagation(); void onDelete(row.original.id) }}>
+          <TrashIcon />
+        </IconButton>
+      ),
+    },
+  ], [strategyById, envById])
 
-  const onSortClick = (key: ArchiveSortKey) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortKey(key)
-      // Для метрик дефолт desc (большие сверху), для текста — asc.
-      setSortDir(key === 'strategy' || key === 'environment' || key === 'period' ? 'asc' : 'desc')
-    }
-  }
+  const table = useReactTable({
+    data: results,
+    columns,
+    state: { sorting, columnFilters },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    enableColumnResizing: true,
+    columnResizeMode: 'onChange',
+    defaultColumn: {
+      minSize: 50,
+      maxSize: 800,
+    },
+  })
 
-  const filterStrategy = filterStrategyId ? strategyById.get(filterStrategyId) ?? null : null
-  const filterEnv = filterEnvironmentId ? envById.get(filterEnvironmentId) ?? null : null
+  const columnSizing = table.getState().columnSizing
+
+  const filteredCount = table.getRowModel().rows.length
 
   return (
     <div style={tabBodyStyle}>
       {error && <div style={errorBannerStyle}>{error}</div>}
-      <Section title={`Все прогоны (${visibleResults.length} из ${results.length})`}>
-        <div style={filterRowStyle}>
-          <span style={selectorLabelStyle}>Фильтры:</span>
-          <span style={selectorValueStyle}>
-            стратегия: {filterStrategy
-              ? <span><b>{filterStrategy.name}</b> <button style={inlineLinkStyle} onClick={() => setFilterStrategyId(null)}>×</button></span>
-              : <span style={mutedStyle}>все</span>}
-          </span>
-          <SearchablePicker<Strategy>
-            items={strategies}
-            getKey={(s) => s.id}
-            getName={(s) => s.name}
-            onPick={(s) => setFilterStrategyId(s.id)}
-            title="Фильтровать по стратегии"
-          />
-          <span style={selectorValueStyle}>
-            окружение: {filterEnv
-              ? <span><b>{filterEnv.name}</b> <button style={inlineLinkStyle} onClick={() => setFilterEnvironmentId(null)}>×</button></span>
-              : <span style={mutedStyle}>все</span>}
-          </span>
-          <SearchablePicker<Environment>
-            items={environments}
-            getKey={(e) => e.id}
-            getName={(e) => e.name}
-            renderMeta={(e) => `${e.dateStart}…${e.dateEnd}`}
-            onPick={(e) => setFilterEnvironmentId(e.id)}
-            title="Фильтровать по окружению"
-          />
-          {(filterStrategyId || filterEnvironmentId) && (
-            <button
-              style={inlineLinkStyle}
-              onClick={() => { setFilterStrategyId(null); setFilterEnvironmentId(null) }}
-            >
-              сбросить
-            </button>
-          )}
-        </div>
-        {visibleResults.length === 0 ? (
-          <div style={emptyHintStyle}>{results.length === 0 ? 'Прогонов ещё нет' : 'Под фильтр ничего не попало'}</div>
+      <Section title={`Все прогоны (${filteredCount} из ${results.length})`}>
+        {results.length === 0 ? (
+          <div style={emptyHintStyle}>Прогонов ещё нет</div>
         ) : (
           <div style={archiveTableWrapStyle}>
             <table style={archiveTableStyle}>
               <thead>
-                <tr>
-                  <SortableTh label="Стратегия" thKey="strategy" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
-                  <SortableTh label="Окружение" thKey="environment" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
-                  <SortableTh label="Период" thKey="period" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
-                  <SortableTh label="Σ доход." thKey="totalReturnPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Год. доход." thKey="annualReturnPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Просадка" thKey="maxDrawdownPct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Sharpe" thKey="sharpe" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Сделок" thKey="nTrades" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Profit factor" thKey="profitFactor" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Win rate" thKey="winRatePct" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} numeric />
-                  <SortableTh label="Создан" thKey="createdAt" sortKey={sortKey} sortDir={sortDir} onClick={onSortClick} />
-                  <th style={archiveThStyle}></th>
-                </tr>
+                {table.getHeaderGroups().map((hg) => (
+                  <tr key={hg.id}>
+                    {hg.headers.map((header) => {
+                      const isNumeric = (header.column.columnDef.meta as { numeric?: boolean } | undefined)?.numeric
+                      const canSort = header.column.getCanSort()
+                      const canFilter = header.column.getCanFilter()
+                      const sorted = header.column.getIsSorted()
+                      const userSized = columnSizing[header.column.id] !== undefined
+                      const thStyle: React.CSSProperties = {
+                        ...(isNumeric ? archiveThStyleNum : archiveThStyle),
+                        cursor: canSort ? 'pointer' : 'default',
+                        userSelect: 'none',
+                        color: sorted ? '#2962FF' : (archiveThStyle.color as string | undefined),
+                        width: userSized ? header.getSize() : undefined,
+                        position: 'relative',
+                      }
+                      return (
+                        <th key={header.id} style={thStyle}>
+                          <div onClick={canSort ? header.column.getToggleSortingHandler() : undefined}>
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {sorted === 'asc' ? ' ↑' : sorted === 'desc' ? ' ↓' : ''}
+                          </div>
+                          {canFilter && (
+                            <input
+                              type="text"
+                              value={(header.column.getFilterValue() as string) ?? ''}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => header.column.setFilterValue(e.target.value)}
+                              style={isNumeric ? filterInputNumStyle : filterInputStyle}
+                            />
+                          )}
+                          {header.column.getCanResize() && (
+                            <div
+                              onMouseDown={header.getResizeHandler()}
+                              onTouchStart={header.getResizeHandler()}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                ...resizeHandleStyle,
+                                background: header.column.getIsResizing() ? '#2962FF' : 'transparent',
+                              }}
+                            />
+                          )}
+                        </th>
+                      )
+                    })}
+                  </tr>
+                ))}
               </thead>
               <tbody>
-                {visibleResults.map((r) => {
-                  const s = strategyById.get(r.strategyId)
-                  const e = envById.get(r.environmentId)
-                  const isSelected = selectedDetail?.id === r.id
-                  return (
-                    <tr
-                      key={r.id}
-                      onClick={() => void onOpen(r.id)}
-                      style={isSelected ? archiveTrSelectedStyle : archiveTrStyle}
-                    >
-                      <td style={archiveTdStyle}>{s?.name ?? '(удалена)'}</td>
-                      <td style={archiveTdStyle}>{e?.name ?? '(удалено)'}</td>
-                      <td style={archiveTdStyle}>{e ? `${e.dateStart}…${e.dateEnd}` : '—'}</td>
-                      <td style={archiveTdStyleNum}>{r.totalReturnPct.toFixed(2)}%</td>
-                      <td style={archiveTdStyleNum}>{r.annualReturnPct.toFixed(2)}%</td>
-                      <td style={archiveTdStyleNum}>{r.maxDrawdownPct.toFixed(2)}%</td>
-                      <td style={archiveTdStyleNum}>{r.sharpe.toFixed(2)}</td>
-                      <td style={archiveTdStyleNum}>{r.nTrades}</td>
-                      <td style={archiveTdStyleNum}>{r.profitFactor == null ? '—' : r.profitFactor.toFixed(2)}</td>
-                      <td style={archiveTdStyleNum}>{r.winRatePct == null ? '—' : `${r.winRatePct.toFixed(1)}%`}</td>
-                      <td style={archiveTdStyle}>{r.createdAt}</td>
-                      <td style={archiveTdStyle}>
-                        <IconButton title="Удалить" hoverColor="#a01919"
-                          onClick={(ev) => { ev?.stopPropagation(); void onDelete(r.id) }}>
-                          <TrashIcon />
-                        </IconButton>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {filteredCount === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length} style={emptyHintStyle}>
+                      Под фильтр ничего не попало
+                    </td>
+                  </tr>
+                ) : (
+                  table.getRowModel().rows.map((row) => {
+                    const isSelected = selectedDetail?.id === row.original.id
+                    return (
+                      <tr
+                        key={row.id}
+                        onClick={() => void onOpen(row.original.id)}
+                        style={isSelected ? archiveTrSelectedStyle : archiveTrStyle}
+                      >
+                        {row.getVisibleCells().map((cell) => {
+                          const isNumeric = (cell.column.columnDef.meta as { numeric?: boolean } | undefined)?.numeric
+                          const userSized = columnSizing[cell.column.id] !== undefined
+                          const tdStyle: React.CSSProperties = {
+                            ...(isNumeric ? archiveTdStyleNum : archiveTdStyle),
+                            ...(userSized && {
+                              width: cell.column.getSize(),
+                              maxWidth: cell.column.getSize(),
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }),
+                          }
+                          return (
+                            <td key={cell.id} style={tdStyle}>
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -479,6 +536,73 @@ function ArchiveTab() {
       )}
     </div>
   )
+}
+
+// Парсит фильтр-выражение для числовых колонок:
+//   ">=10" / ">10" / "<=10" / "<10" / "=10" / "10..20" / "10"
+function parseNumericFilter(input: string): ((v: number | null) => boolean) | null {
+  const s = input.trim()
+  if (!s) return null
+  const range = s.match(/^(-?\d+\.?\d*)\.\.(-?\d+\.?\d*)$/)
+  if (range) {
+    const lo = parseFloat(range[1]); const hi = parseFloat(range[2])
+    return (v) => v != null && v >= lo && v <= hi
+  }
+  const op = s.match(/^(>=|<=|>|<|=)?\s*(-?\d+\.?\d*)$/)
+  if (!op) return null
+  const opStr = op[1] ?? '='
+  const num = parseFloat(op[2])
+  switch (opStr) {
+    case '>=': return (v) => v != null && v >= num
+    case '<=': return (v) => v != null && v <= num
+    case '>':  return (v) => v != null && v >  num
+    case '<':  return (v) => v != null && v <  num
+    case '=':  return (v) => v != null && v === num
+  }
+  return null
+}
+
+const numericFilterFn = (row: { getValue: (id: string) => unknown }, columnId: string, filterValue: string): boolean => {
+  const pred = parseNumericFilter(filterValue)
+  if (!pred) return true
+  const v = row.getValue(columnId)
+  return pred(typeof v === 'number' ? v : null)
+}
+
+// Парсит фильтр-выражение для дат (ISO YYYY-MM-DD):
+//   ">=2025-09-01" / ">2025-09-01" / "<=..." / "<..." / "=..." / "..-..." / "2025-09-01" (= =)
+// Если не парсится как date-выражение — fallback на substring match
+// (даёт «2025-09» → все сентябри 2025).
+function parseDateFilter(input: string): ((v: string | null) => boolean) | null {
+  const s = input.trim()
+  if (!s) return null
+  const iso = /\d{4}-\d{2}-\d{2}/
+  const range = s.match(new RegExp(`^(${iso.source})\\.\\.(${iso.source})$`))
+  if (range) {
+    const lo = range[1]; const hi = range[2]
+    return (v) => v != null && v.slice(0, 10) >= lo && v.slice(0, 10) <= hi
+  }
+  const op = s.match(new RegExp(`^(>=|<=|>|<|=)?\\s*(${iso.source})$`))
+  if (!op) return null
+  const opStr = op[1] ?? '='
+  const date = op[2]
+  switch (opStr) {
+    case '>=': return (v) => v != null && v.slice(0, 10) >= date
+    case '<=': return (v) => v != null && v.slice(0, 10) <= date
+    case '>':  return (v) => v != null && v.slice(0, 10) >  date
+    case '<':  return (v) => v != null && v.slice(0, 10) <  date
+    case '=':  return (v) => v != null && v.slice(0, 10) === date
+  }
+  return null
+}
+
+const dateFilterFn = (row: { getValue: (id: string) => unknown }, columnId: string, filterValue: string): boolean => {
+  const v = row.getValue(columnId)
+  const str = typeof v === 'string' ? v : null
+  const pred = parseDateFilter(filterValue)
+  if (pred) return pred(str)
+  // fallback: substring match (для "2025-09", "сентябрь" и т.п.)
+  return str != null && str.toLowerCase().includes(filterValue.trim().toLowerCase())
 }
 
 // ── ResultCard (общая для Launch и Archive) ──────────────────────────────
@@ -776,25 +900,36 @@ const archiveTableWrapStyle: React.CSSProperties = { overflowX: 'auto', maxHeigh
 const archiveTableStyle: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 12 }
 const archiveThStyle: React.CSSProperties = { textAlign: 'left', padding: '6px 10px', background: '#f5f5f5', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, fontWeight: 600 }
 const archiveThStyleNum: React.CSSProperties = { ...archiveThStyle, textAlign: 'right' }
-const filterRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-  gap: 8,
-  padding: '4px 0',
-}
-const inlineLinkStyle: React.CSSProperties = {
-  background: 'transparent',
-  border: 'none',
-  color: '#2962FF',
+const filterInputStyle: React.CSSProperties = {
+  width: '100%',
+  marginTop: 4,
+  padding: '4px 8px',
   fontSize: 12,
-  cursor: 'pointer',
-  padding: '0 4px',
+  fontWeight: 400,
+  border: '1px solid #d0d0d0',
+  borderRadius: 3,
+  background: '#fff',
+  boxSizing: 'border-box',
+}
+const filterInputNumStyle: React.CSSProperties = {
+  ...filterInputStyle,
+  textAlign: 'right',
+  fontFamily: 'Consolas, Menlo, monospace',
 }
 const archiveTrStyle: React.CSSProperties = { cursor: 'pointer' }
 const archiveTrSelectedStyle: React.CSSProperties = { ...archiveTrStyle, background: '#eaf2ff' }
 const archiveTdStyle: React.CSSProperties = { padding: '4px 10px', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }
 const archiveTdStyleNum: React.CSSProperties = { ...archiveTdStyle, textAlign: 'right', fontFamily: 'Consolas, Menlo, monospace' }
+const resizeHandleStyle: React.CSSProperties = {
+  position: 'absolute',
+  right: 0,
+  top: 0,
+  height: '100%',
+  width: 5,
+  cursor: 'col-resize',
+  userSelect: 'none',
+  touchAction: 'none',
+}
 
 const resultCardStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10 }
 const contextGridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }
