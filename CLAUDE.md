@@ -24,8 +24,10 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pip install
 # Тесты
 cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest tests/ -v
 
-# Запуск backend (uvicorn из backend/)
-cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m uvicorn main:app --port 8080 --host 127.0.0.1
+# Запуск сервисов в фоне (идемпотентно, с ротацией логов)
+C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py             # оба
+C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py --backend   # только бек
+C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py --frontend  # только фронт
 
 # Миграции БД через Liquibase (changelog в db/changelog/, см. docs/SPEC_DATABASE.md)
 docker compose --profile migrate run --rm liquibase update
