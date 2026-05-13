@@ -69,7 +69,7 @@ FINAM_HEADER = (
     '<TICKER>;<PER>;<DATE>;<TIME>;<OPEN>;<HIGH>;<LOW>;<CLOSE>;<VOL>;<OPENINT>'
 )
 
-ISS_FIELDS = ('TRADEDATE', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME', 'NUMTRADES')
+ISS_FIELDS = ('TRADEDATE', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME', 'NUMTRADES', 'SHORTNAME')
 
 PAGE_LIMIT = 100
 REQUEST_TIMEOUT_SEC = 30
@@ -106,10 +106,11 @@ def _request(url: str, params: dict) -> dict:
     raise RuntimeError(f'ISS unreachable: {last_err}')
 
 
-def fetch_iss_shares(ticker: str, from_date: date | None) -> list[dict]:
-    """Скачивает котировки акции из ISS. Возвращает список словарей по
-    нужным полям."""
+def fetch_iss_shares(ticker: str, from_date: date | None) -> tuple[list[dict], str | None]:
+    """Скачивает котировки акции из ISS. Возвращает (rows, shortname).
+    shortname — короткое русское имя из ISS (для имени файла нового тикера)."""
     rows: list[dict] = []
+    shortname: str | None = None
     start = 0
     params_base = {'iss.meta': 'off'}
     if from_date is not None:
@@ -128,9 +129,11 @@ def fetch_iss_shares(ticker: str, from_date: date | None) -> list[dict]:
             raise RuntimeError(f'{ticker}: ISS вернул колонки без поля: {e}') from e
         for r in data:
             rows.append({f: r[idx[f]] for f in ISS_FIELDS})
+        if shortname is None and data[0][idx['SHORTNAME']]:
+            shortname = data[0][idx['SHORTNAME']]
         start += PAGE_LIMIT
         time.sleep(0.1)
-    return rows
+    return rows, shortname
 
 
 def dedupe_by_max_numtrades(rows: list[dict]) -> list[dict]:
@@ -233,10 +236,19 @@ def _read_ticker_file(path: Path) -> dict[str, list[str]]:
     return by_date
 
 
-def write_ticker_file(ticker: str, rows: list[dict]) -> tuple[Path, int]:
+def _safe_filename_part(s: str) -> str:
+    """Превращает SHORTNAME в часть имени файла: пробелы → _, отбрасываем
+    только символы, ломающие имена файлов. Кириллицу оставляем —
+    `_parse_ticker_and_name` её корректно обрабатывает."""
+    s = s.replace(' ', '_')
+    bad = '<>:"/\\|?*'
+    return ''.join(c for c in s if c not in bad)
+
+
+def write_ticker_file(ticker: str, rows: list[dict], shortname: str | None = None) -> tuple[Path, int]:
     """Пополняет единый файл тикера новой дельтой ISS. Имя файла
-    стабильное: `<TICKER>_<имя>_1day.txt` (или `<TICKER>_1day.txt` для
-    новых тикеров без cyrillic-имени)."""
+    стабильное: `<TICKER>_<имя>_1day.txt`. Для нового тикера имя
+    берётся из ISS-SHORTNAME; если его нет — только из тикера."""
     if not rows:
         raise ValueError(f'{ticker}: пустая выдача')
 
@@ -249,7 +261,8 @@ def write_ticker_file(ticker: str, rows: list[dict]) -> tuple[Path, int]:
         prefix = existing_path.name[:-len('_1day.txt')]
     else:
         by_date = {}
-        prefix = ticker
+        name_part = _safe_filename_part(shortname) if shortname else ''
+        prefix = f'{ticker}_{name_part}' if name_part else ticker
 
     for r in rows:
         iso = r['TRADEDATE'].replace('-', '')
@@ -320,7 +333,7 @@ def update_ticker(con, ticker: str) -> None:
             f'(в файле {len(existing_rows)} строк до {last_file_date})'
         )
 
-    rows = fetch_iss_shares(ticker, from_date)
+    rows, shortname = fetch_iss_shares(ticker, from_date)
     if not rows:
         print(f'  {ticker}: ISS не отдал ни одной строки — пропуск')
         return
@@ -341,7 +354,7 @@ def update_ticker(con, ticker: str) -> None:
             print(f'  {ticker}: OVERLAP FAIL — {e}', file=sys.stderr)
             raise
 
-    path, total_in_file = write_ticker_file(ticker, rows)
+    path, total_in_file = write_ticker_file(ticker, rows, shortname=shortname)
     new_dates_vs_db = [
         r['TRADEDATE'] for r in rows
         if last_db_date is None or date.fromisoformat(r['TRADEDATE']) > last_db_date
