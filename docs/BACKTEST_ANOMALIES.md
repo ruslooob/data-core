@@ -267,7 +267,7 @@ Top-5 — компании 2-эшелона (NKNCP, TRMK, RASP) с экстре�
 ## Связанные документы
 
 - [BACKTEST_STRATEGIES.md](BACKTEST_STRATEGIES.md) — журнал стратегий (куда трансформируются подтверждённые аномалии).
-- [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md) — концепция «аномалия = результат запроса», три масштаба анализа.
+- [ANOMALY_DETECTION.md](ANOMALY_DETECTION.md) — методология цикла «аномалия → бэктест».
 - [SPEC_PRECEDENT_LANGUAGE.md](SPEC_PRECEDENT_LANGUAGE.md) — синтаксис и контракт PQL.
 - [TAGS.md](TAGS.md) — система тегов событий.
-- [METRICS.md](METRICS.md) — что значат CAR, vol_ratio, volume_ratio.
+- [GLOSSARY.md](GLOSSARY.md) — определения CAR, vol_ratio, volume_ratio и других терминов.

@@ -450,4 +450,4 @@ H3 v2: LKOH dividend capture (announce-aware)             +23%     7.0%    26%  
 
 - [SPEC_BACKTEST.md](SPEC_BACKTEST.md) — спецификация движка.
 - [SPEC_DATA_PROVIDERS.md](SPEC_DATA_PROVIDERS.md) — контракт TA-функций и поставщиков данных.
-- [METRICS.md](METRICS.md) — что значат Sharpe, max drawdown, profit factor.
+- [GLOSSARY.md](GLOSSARY.md) — определения метрик бэктеста (Sharpe, max drawdown, profit factor и др.).

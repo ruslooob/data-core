@@ -1,12 +1,22 @@
 # data-core
 
-Рабочее место финансового аналитика: событийный анализ, поиск аномалий, исследование влияния событий на котировки акций. Магистерская дипломная работа.
+Рабочее место финансового аналитика: бэктест стратегий, событийный анализ, поиск прецедентов на языке PQL, журнал исследований. Магистерская дипломная работа.
 
-Состоит из трёх частей:
+## Стек
 
-- **`backend/`** — Python-часть: `core/` (доменная логика), `main.py` (FastAPI), `notebooks/`, `tests/`.
-- **`frontend/`** — React-приложение с плавающими виджетами.
-- **`data/`**, **`docs/`**, **`scripts/`** — данные, документация, скрипты загрузки.
+- **Backend:** Python 3.11, FastAPI.
+- **БД:** Postgres + PL/Python + самописные postgres-функции; Liquibase для миграций.
+- **Frontend:** React, TypeScript, Vite, lightweight-charts, TanStack Table, CodeMirror.
+- **Инфраструктура:** Docker Compose (Postgres + Liquibase).
+
+Структура проекта:
+- **`docs/`**  — документация по проекту
+- **`backend/`** — Python: `main.py` (точка входа), `routers/` (REST по доменам), `schemas/` (DTO), `core/` (доменная логика), `tests/`, `notebooks/` (для прототипирования).
+- **`frontend/`** — React + Vite + lightweight-charts + TanStack Table. Плавающие виджеты на полотне.
+- **`db/changelog/`** — Liquibase-changelog схемы Postgres.
+- **`docker/`** — Dockerfile Postgres с включённым PL/Python и init-скрипт.
+- **`data/`** - сырые данные, скачаны из внешних источников
+- **`scripts/`** — Служебные скрипты: запуск проекта, загрузка данных и т д.
 
 ---
 
@@ -18,12 +28,10 @@
 conda create -n data-core python=3.11
 conda activate data-core
 
-conda install -c conda-forge pandas numpy gensim plotly dash matplotlib nltk scikit-learn umap-learn hdbscan
-conda install -c conda-forge spacy pymorphy3 ipywidgets notebook openpyxl duckdb
+# Базовые научные пакеты для ноутбуков
+conda install -c conda-forge pandas numpy plotly matplotlib jupyter ipywidgets openpyxl
 
-python -m spacy download ru_core_news_lg
-python -m spacy download en_core_web_sm
-
+# Runtime-зависимости бэкенда (fastapi, uvicorn, duckdb, psycopg)
 cd backend
 pip install -e .
 cd ..
@@ -38,95 +46,72 @@ cd frontend
 npm install
 ```
 
-### 3. Docker (для Postgres)
+## Запуск проекта с нуля
 
-Нужен Docker Desktop.
-
----
-
-## Запуск с нуля на новом ноутбуке
-
-После клонирования репозитория и установки Python/Node/Docker (см. выше):
+После клонирования репозитория и установки Python/Node/Docker:
 
 ```bash
 # 1. Поднять Postgres
 docker compose up -d postgres
 
-# 2. Восстановить БД из снапшота (схема + UDF + все данные разом)
-#    snapshot.dump передаётся отдельно (не в репозитории)
-docker cp data/db/snapshot.dump data-core-postgres:/tmp/snapshot.dump
-docker exec data-core-postgres pg_restore -U postgres -d postgres \
-    --single-transaction /tmp/snapshot.dump
+# 2. Накатить схему через Liquibase
+docker compose --profile migrate run --rm liquibase update
 
-# 3. Залить референсные данные из файлов (идемпотентно, ON CONFLICT DO NOTHING)
-#    котировки, RUONIA, дивиденды
+# 3. Залить данные из папки `data`
 python scripts/load_data_to_postgres.py
 
-# 4. Убедиться, что схема актуальна (должно быть 0 pending changesets)
-docker compose --profile migrate run --rm liquibase status
-
-# 5. Проверка
+# 4. Проверка
+docker compose --profile migrate run --rm liquibase status   # должно быть 0 pending changesets
 cd backend && pytest tests/ -v
 ```
 
-Снапшот `data/db/snapshot.dump` обновляется командой:
+### Альтернатива: восстановление из дампа бд
+
+Дампы лежат в `data/db/backup_<YYYYMMDD_HHMMSS>/full.dump`. Восстановление из выбранного бэкапа:
 
 ```bash
-docker exec data-core-postgres pg_dump -U postgres -d postgres \
-    --format=custom --file=/tmp/snapshot.dump
-docker cp data-core-postgres:/tmp/snapshot.dump data/db/snapshot.dump
+docker cp data/db/backup_20260513_154704/full.dump data-core-postgres:/tmp/full.dump
+docker exec data-core-postgres pg_restore -U postgres -d postgres \
+    --single-transaction /tmp/full.dump
 ```
 
+Новый дамп создаётся скриптом:
+
+```bash
+python scripts/backup_postgres.py
+```
 ---
 
 ## Запуск приложения
 
-Два терминала: backend и frontend (Postgres уже должен быть поднят).
-
-### Backend (порт 8080)
+Postgres должен быть поднят. Дальше — backend + frontend.
 
 ```bash
-cd backend
-python -m uvicorn main:app --reload --port 8080 --host 127.0.0.1
+python scripts/run_services.py             # оба сервиса
+python scripts/run_services.py --backend   # только бэкенд
+python scripts/run_services.py --frontend  # только фронт
 ```
 
-Проверка: http://127.0.0.1:8080/docs
-
-### Frontend (порт 5173)
-
-```bash
-cd frontend
-npm run dev
-```
-
-Открыть: **http://127.0.0.1:5173**
-
-> **Windows:** обязательно `127.0.0.1`, не `localhost`.
+- Backend: `http://127.0.0.1:8080/docs` (Swagger).
+- Frontend: `http://127.0.0.1:5173`.
 
 ---
 
-## Как пользоваться
+## Что есть в приложении
 
-В тулбаре сверху — кнопка «+ Добавить виджет». Доступны четыре типа:
+В тулбаре сверху — переключатель активного исследования и кнопка «+ Добавить виджет». Доступные виджеты:
 
-- **Price chart** — график цены акции с маркерами дивидендов.
-- **Index chart** — IMOEX или RUONIA.
-- **Event study** — расчёт CAR для выбранного события с фильтрацией выбросов в оценочном окне.
-- **Anomaly detector** — автоматический поиск аномалий по набору тикеров и событий.
+| Виджет | Назначение                                    | Спецификация |
+|---|-----------------------------------------------|---|
+| **Price chart** | График цены акции с маркерами дивидендов и событий | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md) |
+| **Index chart** | IMOEX, RUONIA и другие индексы                | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md) |
+| **Event study** | Расчёт CAR для события с фильтрацией выбросов | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md), [EXPECTED_RETURN_MODELS.md](docs/EXPECTED_RETURN_MODELS.md) |
+| **Precedent editor** | PQL-запросы к базе событий                    | [SPEC_PRECEDENT_LANGUAGE.md](docs/SPEC_PRECEDENT_LANGUAGE.md) |
+| **EntityEditor** | Редактор стратегий, правил и окружений бэктеста | [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) |
+| **BacktestEditor** | Запуск прогонов, результаты прогона | [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) |
+| **Research Journal** | Экспорт прогонов исследования                 | [SPEC_RESEARCH.md](docs/SPEC_RESEARCH.md) |
 
-Виджеты можно перетаскивать, менять размер, закрывать.
-
-### Логические группы и ведущий график
-
-Слева в заголовке виджета — кружок цвета. Виджеты одного цвета — одна **логическая группа**.
-
-В группе можно назначить **ведущий график** — кнопкой рядом с дропдауном тикера:
-
-- **Есть ведущий** — остальные графики повторяют за ним зум и crosshair. Event study привязывается к тикеру ведущего.
-- **Нет ведущего** — графики независимы.
-- Группа `none` = виджет автономен.
-
-Контекст исследования (подсветка события, hover-sync, авто-зум) работает в любой непустой группе независимо от наличия ведущего.
+Концепция исследования как контейнера приватных стратегий/правил/окружений и прогонов — в [SPEC_RESEARCH.md](docs/SPEC_RESEARCH.md). Логические группы виджетов и ведущий график — в [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md).
 
 ---
 
@@ -137,37 +122,31 @@ cd backend
 pytest tests/ -v
 ```
 
+План покрытия — [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
+
 ---
 
 ## Документация
 
-- `docs/GLOSSARY.md` — единый словарь проекта
-- `docs/OVERVIEW.md` — обзор системы и архитектура
-- `docs/SPEC_FRONTEND.md` — спецификация фронтенда
-- `docs/SPEC_EVENT_FILTER.md` — спецификация виджета фильтра событий
-- `docs/ANOMALY_DETECTION.md` — поиск аномалий
-- `docs/ANOMALY_DSL.md` — язык запросов для аномалий
-- `docs/ROBUSTNESS_CHECK.md` — проверка устойчивости
-- `docs/TAGS.md` — система тегов событий
-- `docs/METRICS.md` — интерпретация метрик
-- `docs/TEST_PLAN.md` — план тестов
+**Общее**
+- [GLOSSARY.md](docs/GLOSSARY.md) — единый словарь проекта
 
----
+**Подсистемы**
+- [SPEC_DATABASE.md](docs/SPEC_DATABASE.md) — схема Postgres и миграции
+- [SPEC_DATA_PROVIDERS.md](docs/SPEC_DATA_PROVIDERS.md) — провайдеры котировок, дивидендов, ставок
+- [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md) — фронтенд, виджеты, синхронизация графиков
+- [SPEC_PRECEDENT_LANGUAGE.md](docs/SPEC_PRECEDENT_LANGUAGE.md) — Спецификация запроса поиска прецендентов
+- [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) — движок бэктеста, стратегии, правила, окружения, прогоны
+- [SPEC_RESEARCH.md](docs/SPEC_RESEARCH.md) — исследование как контекст работы
+- [SPEC_EVENT_FILTER.md](docs/SPEC_EVENT_FILTER.md) — фильтр событий
 
-## Структура
+**Методология**
+- [EXPECTED_RETURN_MODELS.md](docs/EXPECTED_RETURN_MODELS.md) — модели ожидаемой доходности. Используются в методологии событийного анализа.
+- [ROBUSTNESS_CHECK.md](docs/ROBUSTNESS_CHECK.md) — проверка устойчивости результатов
+- [TAGS.md](docs/TAGS.md) — система тегов событий
 
-```
-data-core/
-├── backend/            # Python-часть
-│   ├── pyproject.toml
-│   ├── main.py         # FastAPI-сервер
-│   ├── core/           # доменная логика: event study, anomaly detector, провайдеры данных
-│   ├── notebooks/      # Jupyter-ноутбуки для research
-│   └── tests/
-├── frontend/           # React + Vite + Lightweight Charts
-│   └── src/widgets/    # PriceChart, IndexChart, EventStudy, AnomalyWidget + sync
-├── data/               # котировки, дивиденды, IMOEX, RUONIA, ИПЦ, БД событий
-├── docs/               # спецификации, глоссарий, планы
-├── scripts/            # загрузка данных (mfd.ru, dohod.ru)
-└── models/             # артефакты ML-моделей
-```
+**Прикладное**
+- [BACKTEST_STRATEGIES.md](docs/BACKTEST_STRATEGIES.md) — каталог реализованных стратегий и их результатов
+- [BACKTEST_ANOMALIES.md](docs/BACKTEST_ANOMALIES.md) — стратегии на аномалиях
+- [BACKTEST_RUNNER_AGENT.md](docs/BACKTEST_RUNNER_AGENT.md) — инструкции для агента для прогона стратегий
+- [TEST_PLAN.md](docs/TEST_PLAN.md) — план тестов
