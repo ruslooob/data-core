@@ -3,7 +3,7 @@
 Схема и UDF создаются Liquibase-миграцией (`docker compose --profile migrate
 run liquibase update`). Этот скрипт льёт **только данные**:
 
-- `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day_*.txt`,
+- `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day.txt`,
   с нормализацией по сплитам (`splits.json`).
 - `risk_free_rate` — из `data/stocks/RUONIA_*.xlsx`.
 - Накопительный счёт `SAVINGS_MIACR` — капитализованный индекс
@@ -65,27 +65,34 @@ def _parse_ticker_and_name(filename: str, file_path: str) -> tuple[str, str]:
         first = fh.readline()
     ticker_from_data = first.split(';', 1)[0].strip().upper()
     base = os.path.splitext(filename)[0]
-    if '_1day_' in base:
-        prefix = base.split('_1day_', 1)[0]
-        # Тикер из имени файла: ведущие ASCII-сегменты до первого кириллического
-        parts = prefix.split('_')
-        ascii_parts: list[str] = []
-        for part in parts:
-            if part.isascii() and part:
-                ascii_parts.append(part)
-            else:
-                break
-        ticker_from_filename = '_'.join(ascii_parts)
-        # CSV-тикер берём только если имя файла его подтверждает (DEPOSIT_RUONIA_RUONIA → DEPOSIT_RUONIA)
-        if prefix.upper().startswith(ticker_from_data + '_'):
-            ticker = ticker_from_data
-        else:
-            ticker = ticker_from_filename
-        name = prefix[len(ticker) + 1:] if prefix.upper().startswith(ticker + '_') else prefix
+
+    # Канонический формат имени: <prefix>_1day.txt.
+    # Файлы без `_1day` — это тестовые фикстуры (TEST.txt, TEST_SPLIT.txt),
+    # из них берём тикер из данных, name пустой.
+    if base.endswith('_1day'):
+        prefix = base[:-len('_1day')]
     else:
-        parts = base.split('_')
-        name = parts[1] if len(parts) >= 2 else ''
+        return ticker_from_data, ''
+
+    # Тикер из имени файла: ведущие ASCII-сегменты до первого кириллического.
+    parts = prefix.split('_')
+    ascii_parts: list[str] = []
+    for part in parts:
+        if part.isascii() and part:
+            ascii_parts.append(part)
+        else:
+            break
+    ticker_from_filename = '_'.join(ascii_parts)
+    if prefix.upper().startswith(ticker_from_data + '_') or prefix.upper() == ticker_from_data:
         ticker = ticker_from_data
+    else:
+        ticker = ticker_from_filename or ticker_from_data
+    if prefix.upper().startswith(ticker.upper() + '_'):
+        name = prefix[len(ticker) + 1:]
+    elif prefix.upper() == ticker.upper():
+        name = ''
+    else:
+        name = prefix
     return ticker, name
 
 
@@ -117,7 +124,7 @@ def _load_normalized_candles(path: str, splits: list[dict]) -> pd.DataFrame:
 def _load_stocks_and_candles(pg) -> None:
     splits = _load_splits()
     files = sorted(glob(os.path.join(STOCKS_DIR, '*.txt')))
-    total = 0
+    total_new = 0
     with pg.cursor() as cur:
         for path in files:
             filename = os.path.basename(path)
@@ -128,22 +135,40 @@ def _load_stocks_and_candles(pg) -> None:
                 'ON CONFLICT (ticker) DO NOTHING',
                 [ticker, name, json.dumps(ticker_splits)],
             )
+            cur.execute(
+                'SELECT MAX(candle_date) FROM stock_candles WHERE ticker = %s',
+                [ticker],
+            )
+            last_date_row = cur.fetchone()
+            last_date = last_date_row[0] if last_date_row else None
+
             df = _load_normalized_candles(path, ticker_splits)
+            # В БД уже есть всё до last_date включительно — отправляем только дельту.
+            # Конфликты по (ticker, date) с этим фильтром невозможны, ON CONFLICT
+            # оставлен как страховка от гонок.
+            if last_date is not None:
+                df_new = df[df['candle_date'] > last_date]
+            else:
+                df_new = df
             rows = [
                 (ticker, r.candle_date, r.open, r.high, r.low, r.close,
                  r.volume, r.open_interest)
-                for r in df.itertuples(index=False)
+                for r in df_new.itertuples(index=False)
             ]
-            cur.executemany(
-                'INSERT INTO stock_candles '
-                '(ticker, candle_date, open, high, low, close, volume, open_interest) '
-                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
-                'ON CONFLICT (ticker, candle_date) DO NOTHING',
-                rows,
+            if rows:
+                cur.executemany(
+                    'INSERT INTO stock_candles '
+                    '(ticker, candle_date, open, high, low, close, volume, open_interest) '
+                    'VALUES (%s, %s, %s, %s, %s, %s, %s, %s) '
+                    'ON CONFLICT (ticker, candle_date) DO NOTHING',
+                    rows,
+                )
+            total_new += len(rows)
+            print(
+                f'  {ticker:14s} {len(rows):6d} new candles '
+                f'(in file: {len(df)}, in DB up to: {last_date}) ({name})'
             )
-            total += len(rows)
-            print(f'  {ticker:14s} {len(rows):6d} candles  ({name})')
-    print(f'  total candles attempted: {total}')
+    print(f'  total new candles inserted: {total_new}')
 
 
 # ── RUONIA ─────────────────────────────────────────────────────────────────
