@@ -1,8 +1,8 @@
 """Тесты UDF в Postgres: vol_ratio, volume_ratio + расширенный car().
 
-После миграции с DuckDB на Postgres движок прецедентов исполняет SQL
-через REST-эндпоинт `POST /api/precedents/search`. Тесты дёргают
-именно этот эндпоинт — он и есть публичный контракт PQL.
+Движок прецедентов исполняет SQL через REST-эндпоинт
+`POST /api/precedents/search`. Тесты дёргают именно этот эндпоинт —
+он и есть публичный контракт PQL.
 """
 from __future__ import annotations
 

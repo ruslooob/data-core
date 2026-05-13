@@ -56,9 +56,10 @@ class BacktestRunner:
         self._runs_lock = threading.Lock()
         self._reader_started = False
         self._reader_lock = threading.Lock()
-        # mp-context — обязательно spawn, чтобы дочерний процесс
-        # не наследовал DuckDB-коннект веб-процесса (на Windows это и так
-        # дефолт, на Linux — нет).
+        # mp-context — обязательно spawn, чтобы дочерний процесс не
+        # наследовал psycopg-коннекты (и их сокеты/буферы) веб-процесса.
+        # На Windows spawn — дефолт, на Linux дефолт fork опасен из-за
+        # shared file descriptors открытых коннектов.
         self._mp_ctx = mp.get_context('spawn')
 
     # ── Публичный API ──────────────────────────────────────────────────────

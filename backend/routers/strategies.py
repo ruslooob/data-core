@@ -154,9 +154,13 @@ def delete_strategy(strategy_id: str) -> None:
     con = get_pg()
     if con.execute('SELECT 1 FROM strategies WHERE id = %s LIMIT 1', [strategy_id]).fetchone() is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
-    # Каскад: связки strategy_rules + все backtest_results (и их trade_journal),
-    # потом сама стратегия. DuckDB не поддерживает ON DELETE CASCADE на FK,
-    # поэтому чистим в коде в правильном порядке.
+    # Каскад делаем в коде в правильном порядке: trade_journal →
+    # backtest_results → strategy_rules → strategies. FK strategy_rules→
+    # strategies и trade_journal→backtest_results в схеме объявлены с
+    # ON DELETE CASCADE и подобрали бы зависимые строки сами, но FK
+    # backtest_results→strategies — без каскада, поэтому хотя бы
+    # backtest_results нужно чистить явно. Чистим всё в коде —
+    # единообразно и без сюрпризов при будущих изменениях схемы.
     con.execute("""
         DELETE FROM trade_journal
         WHERE backtest_result_id IN (

@@ -4,17 +4,15 @@
     python scripts/init_postgres_udfs.py
     python scripts/init_postgres_backtest_udfs.py
 
-И в `data/db` миграция котировок:
-    python scripts/migrate_stocks_to_postgres.py
-    python scripts/migrate_duckdb_to_postgres.py
+И загружены котировки в Postgres:
+    python scripts/load_data_to_postgres.py
 
 Тесты НЕ удаляют данные из persistent — они открывают свой psycopg-коннект
 с TEMP TABLE и работают только в нём.
 
 Покрытие:
 - buy-and-hold: одна покупка, держим, equity растёт по close.
-- buy-each-day: триггер срабатывает каждый торговый день, в т.ч. понедельник
-  (регрессия для бага DuckDB-движка, см. историю миграции).
+- buy-each-day: триггер срабатывает каждый торговый день, в т.ч. понедельник.
 - FIFO sell: продаются самые старые лоты первыми, pnl_realized считается верно.
 - close_price forward-fill на нерабочий день.
 - _reprice_equity: правильно считает equity при множестве лотов одного тикера.
@@ -122,9 +120,8 @@ def test_buy_and_hold_lkoh(con):
 
 
 # ── 2. buy each day: триггер срабатывает каждый торговый день ──
-# Регрессия: в старом DuckDB-движке систематически пропускались понедельники
-# в первые годы (2002–2005). Здесь проверяем что Postgres-движок покупает
-# каждый торговый день включая понедельники.
+# Проверяем, что движок покупает каждый торговый день, включая
+# понедельники (т.е. нет систематических пропусков по дню недели).
 
 def test_buy_each_day_no_weekday_skips(con):
     rules = [RuleSpec(
@@ -270,10 +267,9 @@ def test_reprice_equity_with_many_lots(con):
 
 
 # ── 6. No-lookahead на первом тике: open_price(:tick) и close_price(:tick) NULL ──
-# Регрессия: в DuckDB-движке на первом тике prev_date был None, и
-# StockDataProvider создавался без max_date — вся история была видна,
-# что нарушало no-lookahead. Postgres-движок честно ставит max_date в
-# далёкое прошлое (1990-01-01), чтобы все TA-UDF возвращали NULL.
+# На первом тике prev_date is None; движок выставляет
+# `backtest.max_date` в далёкое прошлое (1990-01-01), и все TA-UDF
+# возвращают NULL — соблюдается no-lookahead.
 
 def test_no_lookahead_on_first_tick(con):
     """Trigger срабатывает на первом тике (index=0), но open_price(:tick)

@@ -1,10 +1,9 @@
 """Лёгкая обёртка для исполнения PQL-запросов на Postgres.
 
-Раньше тут жил DuckDB-движок с UDF и системными рецептами. После переезда
-на Postgres все UDF (`car`, `vol_ratio`, `volume_ratio`) живут в
-самой БД (`scripts/init_postgres_udfs.py`), системные рецепты в
-`precedent_queries` создаются миграцией. Эта обёртка нужна только для
-обратной совместимости имени.
+PQL-движок построен поверх Postgres: все UDF (`car`, `vol_ratio`,
+`volume_ratio`, …) живут в самой БД (`scripts/init_postgres_udfs.py`),
+системные рецепты в `precedent_queries` создаются миграцией. Эта обёртка
+нужна только чтобы прогревать общий pool коннектов при старте процесса.
 
 Публичный API:
 - `PrecedentEngine().execute(sql, params)` — выполнить произвольный SQL и
