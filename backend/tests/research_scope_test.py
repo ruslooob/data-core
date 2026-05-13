@@ -15,7 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.postgres_db import PG_DSN
-from main import DEFAULT_RESEARCH_ID, app
+from main import app
+from routers._common import DEFAULT_RESEARCH_ID
 
 client = TestClient(app)
 
