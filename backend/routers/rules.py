@@ -131,7 +131,12 @@ def rename_rule(rule_id: str, req: RenameRequest) -> RuleOut:
     """, [rule_id]).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Правило не найдено')
-    dup = con.execute('SELECT 1 FROM rules WHERE name = %s AND id <> %s LIMIT 1', [name, rule_id]).fetchone()
+    current_research_id = row[8]
+    dup = con.execute(
+        'SELECT 1 FROM rules WHERE name = %s AND id <> %s '
+        'AND (research_id = %s OR (research_id IS NULL AND %s::text IS NULL)) LIMIT 1',
+        [name, rule_id, current_research_id, current_research_id],
+    ).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Правило с именем "{name}" уже существует')
     con.execute('UPDATE rules SET name = %s WHERE id = %s', [name, rule_id])

@@ -137,8 +137,11 @@ def rename_strategy(strategy_id: str, req: RenameRequest) -> StrategyOut:
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail='Стратегия не найдена')
+    current_research_id = row[4]
     dup = con.execute(
-        'SELECT 1 FROM strategies WHERE name = %s AND id <> %s LIMIT 1', [name, strategy_id],
+        'SELECT 1 FROM strategies WHERE name = %s AND id <> %s '
+        'AND (research_id = %s OR (research_id IS NULL AND %s::text IS NULL)) LIMIT 1',
+        [name, strategy_id, current_research_id, current_research_id],
     ).fetchone()
     if dup is not None:
         raise HTTPException(status_code=409, detail=f'Стратегия с именем "{name}" уже существует')
