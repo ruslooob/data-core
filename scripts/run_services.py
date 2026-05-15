@@ -37,6 +37,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / 'data' / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# FIXME: захардкоженный путь до конкретного conda-окружения автора.
+# Костыль — не переносится на другие машины. Резолвить через sys.executable
+# или переменную окружения (CONDA_PREFIX / DATA_CORE_PYTHON).
 PY = r'C:/Users/Ruslan/anaconda3/envs/data-core/python.exe'
 BACKEND_PORT = 8080
 FRONTEND_PORT = 5173
