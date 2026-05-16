@@ -85,6 +85,74 @@ export interface EventTagsBulkResponse {
   rows: EventTagsRow[]
 }
 
+// ── Event Effect Analysis ───────────────────────────────────────────────────
+
+export interface EventEffectParams {
+  window: number
+  model: ExpectedReturnModel
+  estimationWindow: number
+}
+
+export type CentralStatistic = 'median' | 'mean'
+
+export interface EventEffectIndividualRequest {
+  ticker: string
+  eventIds: string[]
+  params: EventEffectParams
+  centralStatistic: CentralStatistic
+}
+
+export interface IndividualCarRow {
+  eventId: string
+  date: string
+  car: number
+}
+
+export interface ExcludedEventRow {
+  eventId: string
+  reason: string
+}
+
+export interface IndividualForecast {
+  central: number
+  piLower: number
+  piUpper: number
+  n: number
+  shapiroPValue: number | null
+}
+
+export interface EventEffectIndividualResponse {
+  individualCars: IndividualCarRow[]
+  excludedEvents: ExcludedEventRow[]
+  forecast: IndividualForecast | null
+}
+
+export interface SensitivityGrid {
+  windows: number[]
+  models: ExpectedReturnModel[]
+  estimationWindows: number[]
+}
+
+export interface EventEffectSensitivityRequest {
+  ticker: string
+  eventIds: string[]
+  grid: SensitivityGrid
+}
+
+export interface SensitivityCell {
+  window: number
+  model: ExpectedReturnModel
+  estimation: number
+  car: number
+  pValue: number
+  n: number
+}
+
+export interface EventEffectSensitivityResponse {
+  cells: SensitivityCell[]
+  excludedEventsByEstimation: Record<string, string[]>
+}
+
 // ── Исследование (Research) ─────────────────────────────────────────────────
 
 export interface Research {

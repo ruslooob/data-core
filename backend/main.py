@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import (
     backtest as backtest_router,
     environments as environments_router,
+    event_effect as event_effect_router,
     event_study as event_study_router,
     market as market_router,
     precedents as precedents_router,
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(market_router.router)
 app.include_router(event_study_router.router)
+app.include_router(event_effect_router.router)
 app.include_router(precedents_router.router)
 app.include_router(research_router.router)
 app.include_router(rules_router.router)

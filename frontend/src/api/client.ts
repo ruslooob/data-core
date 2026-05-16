@@ -10,6 +10,10 @@ import type {
   DividendEvent,
   Environment,
   EnvironmentCreate,
+  EventEffectIndividualRequest,
+  EventEffectIndividualResponse,
+  EventEffectSensitivityRequest,
+  EventEffectSensitivityResponse,
   EventStudyRequest,
   EventStudyResult,
   EventTagsBulkResponse,
@@ -139,6 +143,30 @@ export async function searchPrecedents(
     throw new PrecedentApiError(message, line, column)
   }
   return response.json() as Promise<PrecedentSearchResult>
+}
+
+export function runEventEffectIndividual(
+  request: EventEffectIndividualRequest,
+  signal?: AbortSignal,
+): Promise<EventEffectIndividualResponse> {
+  return fetchJson<EventEffectIndividualResponse>('/api/event-effect/individual', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
+}
+
+export function runEventEffectSensitivity(
+  request: EventEffectSensitivityRequest,
+  signal?: AbortSignal,
+): Promise<EventEffectSensitivityResponse> {
+  return fetchJson<EventEffectSensitivityResponse>('/api/event-effect/sensitivity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
 }
 
 export function searchPrecedentsFuzzy(

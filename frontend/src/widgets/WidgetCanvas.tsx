@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { WidgetGroup } from './chartSync'
+import { EventEffectAnalysisWidget } from './EventEffectAnalysisWidget'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
 import { PqlEditorWidget } from './PqlEditorWidget'
@@ -12,7 +13,7 @@ import { ResearchSelector } from './research/ResearchSelector'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-search' | 'pql-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-search' | 'event-effect-analysis' | 'pql-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
 
 interface WidgetInstance {
   id: string
@@ -33,6 +34,7 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'event-study': 'Event study',
   'index-chart': 'Index chart',
   'precedent-search': 'Поиск прецедентов',
+  'event-effect-analysis': 'Анализ эффекта событий',
   'pql-editor': 'PQL Editor',
   'backtest-editor': 'BacktestEditor',
   'entity-editor': 'EntityEditor',
@@ -48,6 +50,7 @@ const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }
   'backtest-editor': { width: 1280, height: 960 },
   'entity-editor': { width: 1280, height: 960 },
   'research-report': { width: 900, height: 700 },
+  'event-effect-analysis': { width: 1100, height: 700 },
 }
 
 export function WidgetCanvas() {
@@ -126,6 +129,9 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('precedent-search')} style={menuItemStyle}>
               Поиск прецедентов
             </button>
+            <button onClick={() => addWidget('event-effect-analysis')} style={menuItemStyle}>
+              Анализ эффекта событий
+            </button>
             <button onClick={() => addWidget('pql-editor')} style={menuItemStyle}>
               PQL Editor
             </button>
@@ -168,6 +174,8 @@ export function WidgetCanvas() {
               <IndexChartWidget group={w.group} />
             ) : w.type === 'precedent-search' ? (
               <PrecedentSearchWidget group={w.group} />
+            ) : w.type === 'event-effect-analysis' ? (
+              <EventEffectAnalysisWidget group={w.group} />
             ) : w.type === 'pql-editor' ? (
               <PqlEditorWidget group={w.group} />
             ) : w.type === 'backtest-editor' ? (
