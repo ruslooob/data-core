@@ -138,11 +138,9 @@ pytest tests/ -v
 - [SPEC_PRECEDENT_LANGUAGE.md](docs/SPEC_PRECEDENT_LANGUAGE.md) — Спецификация запроса поиска прецендентов
 - [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) — движок бэктеста, стратегии, правила, окружения, прогоны
 - [SPEC_RESEARCH.md](docs/SPEC_RESEARCH.md) — исследование как контекст работы
-- [SPEC_EVENT_FILTER.md](docs/SPEC_EVENT_FILTER.md) — фильтр событий
 
 **Методология**
 - [EXPECTED_RETURN_MODELS.md](docs/EXPECTED_RETURN_MODELS.md) — модели ожидаемой доходности. Используются в методологии событийного анализа.
-- [ROBUSTNESS_CHECK.md](docs/ROBUSTNESS_CHECK.md) — проверка устойчивости результатов
 - [TAGS.md](docs/TAGS.md) — система тегов событий
 
 **Прикладное**
