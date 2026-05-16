@@ -66,6 +66,25 @@ export interface PrecedentQuerySaveRequest {
   source: string
 }
 
+export interface PrecedentFuzzyHit {
+  eventId: string
+  event: string
+}
+
+export interface PrecedentFuzzySearchResponse {
+  hits: PrecedentFuzzyHit[]
+  truncated: boolean
+}
+
+export interface EventTagsRow {
+  eventId: string
+  tags: string[]
+}
+
+export interface EventTagsBulkResponse {
+  rows: EventTagsRow[]
+}
+
 // ── Исследование (Research) ─────────────────────────────────────────────────
 
 export interface Research {

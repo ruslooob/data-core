@@ -8,7 +8,13 @@ from fastapi import APIRouter, HTTPException
 
 from routers._common import get_pg, pg_type_name, to_json_safe
 from schemas.precedents import (
+    EventTagsBulkRequest,
+    EventTagsBulkResponse,
+    EventTagsRow,
     PrecedentColumn,
+    PrecedentFuzzyHit,
+    PrecedentFuzzySearchRequest,
+    PrecedentFuzzySearchResponse,
     PrecedentQueryRecord,
     PrecedentQuerySaveRequest,
     PrecedentSearchRequest,
@@ -94,3 +100,51 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     )
 
     return PrecedentQueryRecord(id=new_id, name=name, source=source, created_at=created_at)
+
+
+@router.post("/api/precedents/search/fuzzy", response_model_by_alias=True)
+def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzySearchResponse:
+    """Подстрочный поиск по описанию события (ILIKE).
+
+    Триграммный GIN-индекс на events.event ускоряет шаблон '%...%'.
+    Жёсткий потолок MAX_ROWS=1000 — как в PQL.
+    """
+    query = req.query.strip()
+    if not query:
+        return PrecedentFuzzySearchResponse(hits=[], truncated=False)
+
+    pattern = f"%{query}%"
+    con = get_pg()
+    rows = con.execute(
+        "SELECT id, event FROM events WHERE event ILIKE %s ORDER BY date_start DESC LIMIT %s",
+        [pattern, PRECEDENT_MAX_ROWS + 1],
+    ).fetchall()
+
+    truncated = len(rows) > PRECEDENT_MAX_ROWS
+    if truncated:
+        rows = rows[:PRECEDENT_MAX_ROWS]
+
+    hits = [PrecedentFuzzyHit(event_id=r[0], event=r[1] or '') for r in rows]
+    return PrecedentFuzzySearchResponse(hits=hits, truncated=truncated)
+
+
+@router.post("/api/precedents/tags-bulk", response_model_by_alias=True)
+def event_tags_bulk(req: EventTagsBulkRequest) -> EventTagsBulkResponse:
+    """Возвращает теги для каждого event_id из запроса.
+
+    Используется виджетом «Поиск прецедентов»: PQL и fuzzy возвращают
+    только id+event, а теги дотягиваются отдельно одним батчем.
+    """
+    if not req.event_ids:
+        return EventTagsBulkResponse(rows=[])
+
+    con = get_pg()
+    rows = con.execute(
+        "SELECT event_id, ARRAY_AGG(tag_code ORDER BY tag_code) "
+        "FROM event_tags WHERE event_id = ANY(%s) GROUP BY event_id",
+        [req.event_ids],
+    ).fetchall()
+
+    return EventTagsBulkResponse(
+        rows=[EventTagsRow(event_id=r[0], tags=list(r[1] or [])) for r in rows],
+    )

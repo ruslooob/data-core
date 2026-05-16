@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { WidgetGroup } from './chartSync'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
-import { PrecedentEditorWidget } from './PrecedentEditorWidget'
+import { PqlEditorWidget } from './PqlEditorWidget'
+import { PrecedentSearchWidget } from './PrecedentSearchWidget'
 import { PriceChartWidget } from './PriceChartWidget'
 import { BacktestEditorWidget } from './BacktestEditorWidget'
 import { EntityEditorWidget } from './EntityEditorWidget'
@@ -11,7 +12,7 @@ import { ResearchSelector } from './research/ResearchSelector'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-search' | 'pql-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
 
 interface WidgetInstance {
   id: string
@@ -31,7 +32,8 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'price-chart': 'Price chart',
   'event-study': 'Event study',
   'index-chart': 'Index chart',
-  'precedent-editor': 'Precedent editor',
+  'precedent-search': 'Поиск прецедентов',
+  'pql-editor': 'PQL Editor',
   'backtest-editor': 'BacktestEditor',
   'entity-editor': 'EntityEditor',
   'research-report': 'Research Journal',
@@ -121,8 +123,11 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('event-study')} style={menuItemStyle}>
               Event study
             </button>
-            <button onClick={() => addWidget('precedent-editor')} style={menuItemStyle}>
-              Precedent editor
+            <button onClick={() => addWidget('precedent-search')} style={menuItemStyle}>
+              Поиск прецедентов
+            </button>
+            <button onClick={() => addWidget('pql-editor')} style={menuItemStyle}>
+              PQL Editor
             </button>
             <button onClick={() => addWidget('backtest-editor')} style={menuItemStyle}>
               BacktestEditor
@@ -161,8 +166,10 @@ export function WidgetCanvas() {
               <PriceChartWidget group={w.group} />
             ) : w.type === 'index-chart' ? (
               <IndexChartWidget group={w.group} />
-            ) : w.type === 'precedent-editor' ? (
-              <PrecedentEditorWidget group={w.group} />
+            ) : w.type === 'precedent-search' ? (
+              <PrecedentSearchWidget group={w.group} />
+            ) : w.type === 'pql-editor' ? (
+              <PqlEditorWidget group={w.group} />
             ) : w.type === 'backtest-editor' ? (
               <BacktestEditorWidget />
             ) : w.type === 'entity-editor' ? (

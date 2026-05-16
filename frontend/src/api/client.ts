@@ -12,6 +12,8 @@ import type {
   EnvironmentCreate,
   EventStudyRequest,
   EventStudyResult,
+  EventTagsBulkResponse,
+  PrecedentFuzzySearchResponse,
   PrecedentQueryRecord,
   PrecedentQuerySaveRequest,
   PrecedentSearchRequest,
@@ -137,6 +139,26 @@ export async function searchPrecedents(
     throw new PrecedentApiError(message, line, column)
   }
   return response.json() as Promise<PrecedentSearchResult>
+}
+
+export function searchPrecedentsFuzzy(
+  query: string,
+  signal?: AbortSignal,
+): Promise<PrecedentFuzzySearchResponse> {
+  return fetchJson<PrecedentFuzzySearchResponse>('/api/precedents/search/fuzzy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+    signal,
+  })
+}
+
+export function getEventTagsBulk(eventIds: string[]): Promise<EventTagsBulkResponse> {
+  return fetchJson<EventTagsBulkResponse>('/api/precedents/tags-bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventIds }),
+  })
 }
 
 export function listPrecedentQueries(): Promise<PrecedentQueryRecord[]> {

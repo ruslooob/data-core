@@ -15,7 +15,7 @@ interface SearchablePickerProps<T> {
 
 /**
  * Кнопка с иконкой поиска, раскрывающая выпадающий список с фильтром по имени.
- * Используется для импорта прецедентов в PrecedentEditor и для импорта правил/окружений в BacktestEditor.
+ * Используется для импорта прецедентов в PQL Editor и для импорта правил/окружений в BacktestEditor.
  */
 export function SearchablePicker<T>({
   items,

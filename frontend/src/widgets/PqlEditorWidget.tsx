@@ -17,7 +17,7 @@ import type {
 import type { WidgetGroup } from './chartSync'
 import { SearchablePicker } from './SearchablePicker'
 
-interface PrecedentEditorWidgetProps {
+interface PqlEditorWidgetProps {
   group: WidgetGroup
 }
 
@@ -35,7 +35,7 @@ interface ErrorState {
   column: number | null
 }
 
-export function PrecedentEditorWidget(_props: PrecedentEditorWidgetProps) {
+export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
   const [source, setSource] = useState<string>(DEFAULT_QUERY)
   const [status, setStatus] = useState<Status>('idle')
   const [result, setResult] = useState<PrecedentSearchResult | null>(null)

@@ -42,6 +42,13 @@ interface GroupStoreState {
   showEvents: Record<WidgetGroup, boolean>
   /** Активное событие исследования каждой группы (что сейчас в Event Study). */
   activeEvents: Record<WidgetGroup, ActiveEvent | null>
+  /**
+   * Набор прецедентов каждой группы — список event_id, выбранных в виджете
+   * «Поиск прецедентов» и транслируемых потребителям (Event Effect Analysis,
+   * Event Study, маркеры на графике). Для группы `none` сюда ничего не пишется
+   * — автономный «Поиск прецедентов» хранит набор в локальном state.
+   */
+  precedentEventIds: Record<WidgetGroup, string[]>
 
   // Действия — состав группы
   registerMember: (id: string, group: WidgetGroup, ticker?: string | null) => void
@@ -59,6 +66,13 @@ interface GroupStoreState {
 
   // Действия — активное событие
   setActiveEvent: (group: WidgetGroup, ev: ActiveEvent | null) => void
+
+  // Действия — набор прецедентов
+  setPrecedentSet: (group: WidgetGroup, eventIds: string[]) => void
+  togglePrecedentInSet: (group: WidgetGroup, eventId: string) => void
+  addPrecedentsToSet: (group: WidgetGroup, eventIds: string[]) => void
+  removePrecedentsFromSet: (group: WidgetGroup, eventIds: string[]) => void
+  clearPrecedentSet: (group: WidgetGroup) => void
 }
 
 const emptyMap = <T,>(value: T): Record<WidgetGroup, T> => ({
@@ -74,6 +88,13 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
   leaders: emptyMap<string | null>(null),
   showEvents: emptyMap<boolean>(false),
   activeEvents: emptyMap<ActiveEvent | null>(null),
+  precedentEventIds: {
+    none: [],
+    red: [],
+    blue: [],
+    green: [],
+    yellow: [],
+  },
 
   registerMember: (id, group, ticker = null) =>
     set((state) => ({
@@ -146,6 +167,49 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
       if (group === 'none') return state
       return { activeEvents: { ...state.activeEvents, [group]: ev } }
     }),
+
+  setPrecedentSet: (group, eventIds) =>
+    set((state) => {
+      if (group === 'none') return state
+      return { precedentEventIds: { ...state.precedentEventIds, [group]: eventIds } }
+    }),
+
+  togglePrecedentInSet: (group, eventId) =>
+    set((state) => {
+      if (group === 'none') return state
+      const cur = state.precedentEventIds[group]
+      const next = cur.includes(eventId)
+        ? cur.filter((id) => id !== eventId)
+        : [...cur, eventId]
+      return { precedentEventIds: { ...state.precedentEventIds, [group]: next } }
+    }),
+
+  addPrecedentsToSet: (group, eventIds) =>
+    set((state) => {
+      if (group === 'none' || eventIds.length === 0) return state
+      const cur = state.precedentEventIds[group]
+      const known = new Set(cur)
+      const added = eventIds.filter((id) => !known.has(id))
+      if (added.length === 0) return state
+      return { precedentEventIds: { ...state.precedentEventIds, [group]: [...cur, ...added] } }
+    }),
+
+  removePrecedentsFromSet: (group, eventIds) =>
+    set((state) => {
+      if (group === 'none' || eventIds.length === 0) return state
+      const remove = new Set(eventIds)
+      const cur = state.precedentEventIds[group]
+      const next = cur.filter((id) => !remove.has(id))
+      if (next.length === cur.length) return state
+      return { precedentEventIds: { ...state.precedentEventIds, [group]: next } }
+    }),
+
+  clearPrecedentSet: (group) =>
+    set((state) => {
+      if (group === 'none') return state
+      if (state.precedentEventIds[group].length === 0) return state
+      return { precedentEventIds: { ...state.precedentEventIds, [group]: [] } }
+    }),
 }))
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -169,6 +233,9 @@ export const selectShowEvents = (group: WidgetGroup) => (s: GroupStoreState) =>
 
 export const selectActiveEvent = (group: WidgetGroup) => (s: GroupStoreState) =>
   s.activeEvents[group]
+
+export const selectPrecedentSet = (group: WidgetGroup) => (s: GroupStoreState) =>
+  s.precedentEventIds[group]
 
 // ───────────────────────────────────────────────────────────────────────────
 // Event bus: transient команды (зум, выбор события, hover-дата)

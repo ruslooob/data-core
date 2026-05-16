@@ -106,7 +106,7 @@ python scripts/run_services.py --frontend  # только фронт
 | **Price chart** | График цены акции с маркерами дивидендов и событий | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md) |
 | **Index chart** | IMOEX, RUONIA и другие индексы                | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md) |
 | **Event study** | Расчёт CAR для события с фильтрацией выбросов | [SPEC_FRONTEND.md](docs/SPEC_FRONTEND.md), [EXPECTED_RETURN_MODELS.md](docs/EXPECTED_RETURN_MODELS.md) |
-| **Precedent editor** | PQL-запросы к базе событий                    | [SPEC_PRECEDENT_LANGUAGE.md](docs/SPEC_PRECEDENT_LANGUAGE.md) |
+| **PQL Editor** | PQL-запросы к базе событий                    | [SPEC_PRECEDENT_LANGUAGE.md](docs/SPEC_PRECEDENT_LANGUAGE.md) |
 | **EntityEditor** | Редактор стратегий, правил и окружений бэктеста | [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) |
 | **BacktestEditor** | Запуск прогонов, результаты прогона | [SPEC_BACKTEST.md](docs/SPEC_BACKTEST.md) |
 | **Research Journal** | Экспорт прогонов исследования                 | [SPEC_RESEARCH.md](docs/SPEC_RESEARCH.md) |

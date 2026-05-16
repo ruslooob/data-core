@@ -32,3 +32,30 @@ class PrecedentQueryRecord(CamelModel):
 class PrecedentQuerySaveRequest(CamelModel):
     name: str
     source: str
+
+
+class PrecedentFuzzySearchRequest(CamelModel):
+    query: str
+
+
+class PrecedentFuzzyHit(CamelModel):
+    event_id: str
+    event: str
+
+
+class PrecedentFuzzySearchResponse(CamelModel):
+    hits: list[PrecedentFuzzyHit]
+    truncated: bool
+
+
+class EventTagsBulkRequest(CamelModel):
+    event_ids: list[str]
+
+
+class EventTagsRow(CamelModel):
+    event_id: str
+    tags: list[str]
+
+
+class EventTagsBulkResponse(CamelModel):
+    rows: list[EventTagsRow]

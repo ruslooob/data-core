@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Триграммный индекс на events.event для fuzzy-поиска по описанию
+        события в виджете «Поиск прецедентов». Включаем расширение
+        pg_trgm и строим GIN-индекс с оператором gin_trgm_ops — это
+        ускоряет ILIKE '%...%' и операторы похожести (`%`, `<%`).
+    -->
+
+    <changeSet id="005-events-search-index" author="ruslan">
+
+        <sql>
+            CREATE EXTENSION IF NOT EXISTS pg_trgm
+        </sql>
+
+        <sql>
+            CREATE INDEX idx_events_event_trgm
+                ON events USING GIN (event gin_trgm_ops)
+        </sql>
+
+    </changeSet>
+
+</databaseChangeLog>

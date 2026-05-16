@@ -17,5 +17,6 @@
     <include file="changes/002-udfs.xml" relativeToChangelogFile="true"/>
     <include file="changes/003-seed-default-research.xml" relativeToChangelogFile="true"/>
     <include file="changes/004-events-announce-date-payload.xml" relativeToChangelogFile="true"/>
+    <include file="changes/005-events-search-index.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
