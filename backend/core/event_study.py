@@ -184,33 +184,41 @@ class EventStudy:
 
         outliers_removed = 0
 
-        # Фильтрация выбросов: fit → вычислить residuals → отсеять → refit
-        if outlier_threshold is not None and outlier_threshold > 0:
-            mdl_pre = _make_model(model)
-            mdl_pre.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
-            expected_pre = mdl_pre.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
-            residuals_pre = stock_est.values - expected_pre.values
-            sigma_pre = float(np.std(residuals_pre, ddof=1)) if len(residuals_pre) > 1 else 0.0
+        # Фильтрация выбросов и калибровка модели обёрнуты в try/except:
+        # на вырожденных оценочных окнах (NaN / константа в доходностях
+        # индекса или акции) numpy.polyfit бросает LinAlgError. Для
+        # event study это равнозначно «не смогли откалибровать модель» —
+        # возвращаем None, событие исключается ровно как при нехватке
+        # истории. См. также backend/routers/event_effect.py.
+        try:
+            if outlier_threshold is not None and outlier_threshold > 0:
+                mdl_pre = _make_model(model)
+                mdl_pre.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+                expected_pre = mdl_pre.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+                residuals_pre = stock_est.values - expected_pre.values
+                sigma_pre = float(np.std(residuals_pre, ddof=1)) if len(residuals_pre) > 1 else 0.0
 
-            if sigma_pre > 0:
-                mask = np.abs(residuals_pre) <= outlier_threshold * sigma_pre
-                outliers_removed = int(np.sum(~mask))
-                if outliers_removed > 0 and np.sum(mask) >= 10:
-                    common_est = common_est[mask]
-                    stock_est = stock_est.reindex(common_est)
-                    mkt_est = mkt_est.reindex(common_est)
-                    rf_est = rf_est.reindex(common_est)
+                if sigma_pre > 0:
+                    mask = np.abs(residuals_pre) <= outlier_threshold * sigma_pre
+                    outliers_removed = int(np.sum(~mask))
+                    if outliers_removed > 0 and np.sum(mask) >= 10:
+                        common_est = common_est[mask]
+                        stock_est = stock_est.reindex(common_est)
+                        mkt_est = mkt_est.reindex(common_est)
+                        rf_est = rf_est.reindex(common_est)
 
-        stock_ev = self.stock_log_returns.reindex(ev_idx).fillna(0.0)
-        mkt_ev = market.reindex(ev_idx).ffill().fillna(0.0) if market is not None else pd.Series(0.0, index=ev_idx)
-        rf_ev = rf.reindex(ev_idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=ev_idx)
+            stock_ev = self.stock_log_returns.reindex(ev_idx).fillna(0.0)
+            mkt_ev = market.reindex(ev_idx).ffill().fillna(0.0) if market is not None else pd.Series(0.0, index=ev_idx)
+            rf_ev = rf.reindex(ev_idx).ffill().fillna(0.0) if rf is not None else pd.Series(0.0, index=ev_idx)
 
-        mdl = _make_model(model)
-        mdl.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
-        expected_ev = mdl.predict(dates=ev_idx, market_log_returns=mkt_ev, rf_log_returns=rf_ev)
+            mdl = _make_model(model)
+            mdl.fit(stock_log_returns=stock_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+            expected_ev = mdl.predict(dates=ev_idx, market_log_returns=mkt_ev, rf_log_returns=rf_ev)
 
-        # σ аномальных доходностей в оценочном окне (после фильтрации)
-        expected_est = mdl.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+            # σ аномальных доходностей в оценочном окне (после фильтрации)
+            expected_est = mdl.predict(dates=common_est, market_log_returns=mkt_est, rf_log_returns=rf_est)
+        except np.linalg.LinAlgError:
+            return None
         residuals_est = stock_est.values - expected_est.values
         estimation_std = float(np.std(residuals_est, ddof=1)) if len(residuals_est) > 1 else 0.0
 
