@@ -33,8 +33,10 @@ export interface ChartCoreOptions {
   memberId: string
   /**
    * Тикер, публикуемый виджетом в groupStore. undefined/null значат
-   * «виджет не про акцию» (например, IndexChartWidget). PriceChartWidget
-   * передаёт выбранный тикер и меняет его при переключении.
+   * «виджет не публикует тикер группы» — другие участники не смогут
+   * сделать его лидером для CAR-анализа. PriceChartWidget передаёт
+   * выбранный тикер, IndexChartWidget — `'IMOEX'` (когда показывает
+   * индекс Мосбиржи; для RUONIA остаётся `null`).
    */
   ticker?: string | null
   withVolume?: boolean

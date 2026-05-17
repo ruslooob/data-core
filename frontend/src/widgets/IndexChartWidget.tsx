@@ -26,6 +26,10 @@ export function IndexChartWidget({ group }: IndexChartWidgetProps) {
     containerRef,
     group,
     memberId: widgetId,
+    // IMOEX лежит в stock_candles → виджет может быть лидером группы и
+    // питать другие виджеты тикером для CAR-анализа. RUONIA приходит из
+    // risk_free_rate как % годовых, тикером группы быть не может.
+    ticker: series === 'IMOEX' ? 'IMOEX' : null,
     withVolume: false,
   })
 
