@@ -28,12 +28,18 @@ CentralStatistic = str  # 'median' | 'mean'
 # Уровень доверия PI и теста Shapiro-Wilk — захардкожен в спеке.
 _PI_ALPHA = 0.05
 
+# Порог аномальности по percentile rank.
+_ANOMALY_RANK_THRESHOLD = 0.95
+
 
 @dataclass
 class IndividualCar:
     event_id: str
     date: str  # ISO YYYY-MM-DD
     car: float
+    rank: float        # percentile rank |CAR| в распределении |псевдо-CAR| события (0..1)
+    is_anomaly: bool   # rank > _ANOMALY_RANK_THRESHOLD
+    noise_band: float  # личный 95-перцентиль |псевдо-CAR| (|CAR| > noise_band → аномалия)
 
 
 @dataclass
@@ -66,6 +72,11 @@ class SensitivityCell:
     car: float
     p_value: float
     n: int
+    # |CAR|-режим: средний rank по выборке (0..1) и p-value t-test против 0.5.
+    # Если события случайны относительно фона, mean_rank ≈ 0.5; систематический
+    # сдвиг к большим |CAR| даёт mean_rank > 0.5.
+    mean_rank: float
+    rank_p_value: float
 
 
 @dataclass
@@ -87,6 +98,36 @@ def _load_event_dates(con, event_ids: list[str]) -> dict[str, date]:
         [event_ids],
     ).fetchall()
     return {r[0]: r[1] for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Baseline через нарезку estimation residuals скользящим окном
+# ---------------------------------------------------------------------------
+
+def _pseudo_cars(residuals: list[float], window_len: int) -> list[float]:
+    """Скользящие W-дневные суммы дневных AR из оценочного окна.
+
+    Имитируют, какой был бы CAR, если бы событие случилось в каждой точке
+    estimation_window. Дают эмпирическое распределение «обычного 11-дневного
+    движения» тикера в эпоху прямо перед событием.
+    """
+    n = len(residuals)
+    if n < window_len:
+        return []
+    arr = np.asarray(residuals, dtype=float)
+    # Сумма по скользящему окну через cumsum для эффективности.
+    cs = np.concatenate(([0.0], np.cumsum(arr)))
+    sums = cs[window_len:] - cs[:n - window_len + 1]
+    return sums.tolist()
+
+
+def _percentile_rank(observed: float, distribution: list[float]) -> float:
+    """Где |observed| находится в распределении |distribution| (доля 0..1)."""
+    if not distribution:
+        return 0.0
+    abs_obs = abs(observed)
+    n_below = sum(1 for v in distribution if abs(v) < abs_obs)
+    return n_below / len(distribution)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +208,7 @@ def calculate_individual(
 
     individual_cars: list[IndividualCar] = []
     excluded: list[ExcludedEvent] = []
+    window_len = 2 * window + 1
 
     for eid in event_ids:
         ev_date = date_by_id.get(eid)
@@ -186,10 +228,20 @@ def calculate_individual(
             excluded.append(ExcludedEvent(event_id=eid, reason='insufficient_history'))
             continue
 
+        pseudo = _pseudo_cars(result.estimation_residuals, window_len)
+        rank = _percentile_rank(result.car, pseudo)
+        is_anomaly = rank > _ANOMALY_RANK_THRESHOLD
+        noise_band = (
+            float(np.percentile(np.abs(pseudo), 95)) if pseudo else 0.0
+        )
+
         individual_cars.append(IndividualCar(
             event_id=eid,
             date=ev_date.isoformat(),
             car=result.car,
+            rank=rank,
+            is_anomaly=is_anomaly,
+            noise_band=noise_band,
         ))
 
     forecast = _forecast([ic.car for ic in individual_cars], central_statistic)
@@ -218,12 +270,14 @@ def calculate_sensitivity(
 ) -> SensitivityResult:
     """Heatmap CAR/p-value по сетке (window × model × estimation_window).
 
-    Для каждой комбинации параметров вызывает EventStudy.analyze_aggregate
-    и собирает агрегированный CAR + p-value + размер выборки.
+    Для каждой комбинации параметров проходим все события через
+    EventStudy.analyze, собираем индивидуальные CAR + rank-аномалии, и
+    отдаём в ячейку: средний CAR с t-test p-value (для signed-режима UI)
+    и долю аномалий с биномиальным p-value (для |CAR|-режима UI).
 
-    excluded_events_by_estimation формируется по самому короткому оценочному
-    окну в сетке: чем длиннее окно — тем больше исключений. Для упрощения
-    собираем исключения отдельным проходом по каждому estimation_window.
+    excluded_events_by_estimation формируется отдельным короткиим проходом
+    по каждому estimation_window с минимальным event_window и первой моделью —
+    исключения зависят почти только от оценочного окна.
     """
     date_by_id = _load_event_dates(con, event_ids)
 
@@ -238,26 +292,57 @@ def calculate_sensitivity(
     for est in estimation_windows:
         for mdl in models:
             for w in windows:
-                agg = study.analyze_aggregate(
-                    event_dates=valid_event_dates,
-                    model=mdl,
-                    event_window=(-w, w),
-                    estimation_window=est,
-                    market=market_log_returns,
-                    rf=rf,
-                )
-                if agg is None:
+                window_len = 2 * w + 1
+                # Один проход по событиям: собираем CARs и индивидуальные rank-и.
+                cars_list: list[float] = []
+                ranks_list: list[float] = []
+                for ev_date in valid_event_dates:
+                    r = study.analyze(
+                        event_date=ev_date,
+                        model=mdl,
+                        event_window=(-w, w),
+                        estimation_window=est,
+                        market=market_log_returns,
+                        rf=rf,
+                    )
+                    if r is None:
+                        continue
+                    cars_list.append(r.car)
+                    pseudo = _pseudo_cars(r.estimation_residuals, window_len)
+                    ranks_list.append(_percentile_rank(r.car, pseudo))
+
+                n = len(cars_list)
+                if n == 0:
                     cells.append(SensitivityCell(
                         window=w, model=mdl, estimation=est,
                         car=0.0, p_value=1.0, n=0,
+                        mean_rank=0.5, rank_p_value=1.0,
                     ))
+                    continue
+
+                mean_car = float(np.mean(cars_list))
+                if n >= 2:
+                    _, p_value = sp_stats.ttest_1samp(cars_list, 0.0)
+                    p_value = float(p_value)
                 else:
-                    cells.append(SensitivityCell(
-                        window=w, model=mdl, estimation=est,
-                        car=agg.cumulative_mean_car,
-                        p_value=agg.p_value,
-                        n=agg.n_events,
-                    ))
+                    p_value = 1.0
+
+                # T-test mean(rank) против 0.5: «в среднем по выборке абсолютный
+                # CAR значимо смещён относительно типичного шума акции?». При
+                # случайной выборке E[rank] = 0.5, систематическое влияние
+                # сдвигает в верх (или вниз — двусторонний тест).
+                mean_rank = float(np.mean(ranks_list))
+                if n >= 2:
+                    _, rank_p_value = sp_stats.ttest_1samp(ranks_list, 0.5)
+                    rank_p_value = float(rank_p_value)
+                else:
+                    rank_p_value = 1.0
+
+                cells.append(SensitivityCell(
+                    window=w, model=mdl, estimation=est,
+                    car=mean_car, p_value=p_value, n=n,
+                    mean_rank=mean_rank, rank_p_value=rank_p_value,
+                ))
 
     # excluded_events_by_estimation: пробегаемся ещё раз по каждому
     # estimation_window и фиксируем events, для которых analyze() вернул None.

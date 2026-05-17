@@ -5,7 +5,7 @@ import { Prec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import {
   PrecedentApiError,
-  getEventTagsBulk,
+  getEventsInfo,
   searchPrecedents,
   searchPrecedentsFuzzy,
 } from '../api/client'
@@ -26,6 +26,7 @@ type Status = 'idle' | 'loading' | 'success' | 'error'
 interface EventRow {
   eventId: string
   event: string
+  dateStart: string
   tags: string[]
 }
 
@@ -132,21 +133,25 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
         : await runPql(pqlSource, ctrl.signal)
       if (ctrl.signal.aborted) return
 
-      // Дотянуть теги одним батчем
+      // Дотянуть дату и теги одним батчем (events-info).
       const eventIds = hits.hits.map((h) => h.eventId)
-      const tagsResp = eventIds.length > 0
-        ? await getEventTagsBulk(eventIds)
+      const infoResp = eventIds.length > 0
+        ? await getEventsInfo(eventIds)
         : { rows: [] }
       if (ctrl.signal.aborted) return
 
-      const tagsMap = new Map<string, string[]>()
-      for (const r of tagsResp.rows) tagsMap.set(r.eventId, r.tags)
+      const infoMap = new Map<string, { dateStart: string; tags: string[] }>()
+      for (const r of infoResp.rows) infoMap.set(r.eventId, { dateStart: r.dateStart, tags: r.tags })
 
-      const rows: EventRow[] = hits.hits.map((h) => ({
-        eventId: h.eventId,
-        event: h.event,
-        tags: tagsMap.get(h.eventId) ?? [],
-      }))
+      const rows: EventRow[] = hits.hits.map((h) => {
+        const info = infoMap.get(h.eventId)
+        return {
+          eventId: h.eventId,
+          event: h.event,
+          dateStart: info?.dateStart ?? '',
+          tags: info?.tags ?? [],
+        }
+      })
 
       setFoundRows(rows)
       setTruncated(hits.truncated)
@@ -211,6 +216,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     return selectedIds.map((id) => eventCache.get(id) ?? {
       eventId: id,
       event: '(событие не загружено в этой сессии)',
+      dateStart: '',
       tags: [],
     })
   }, [viewMode, foundRows, selectedIds, eventCache])
@@ -341,6 +347,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
                   />
                 )}
               </th>
+              <th style={thDateStyle}>дата</th>
               <th style={thStyle}>event</th>
               <th style={thStyle}>теги</th>
             </tr>
@@ -348,7 +355,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
           <tbody>
             {displayedRows.length === 0 ? (
               <tr>
-                <td style={emptyCellStyle} colSpan={3}>
+                <td style={emptyCellStyle} colSpan={4}>
                   {viewMode === 'found'
                     ? (status === 'success' ? 'Ничего не найдено' : 'Введите запрос и нажмите «Выполнить»')
                     : 'Набор пуст. Поставьте галочки в режиме «Найденные».'}
@@ -366,6 +373,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
                         onChange={() => toggleSelected(row.eventId)}
                       />
                     </td>
+                    <td style={tdDateStyle}>{row.dateStart}</td>
                     <td style={tdEventStyle}>{row.event}</td>
                     <td style={tdTagsStyle}>{row.tags.join(', ')}</td>
                   </tr>
@@ -608,6 +616,21 @@ const tdCheckboxStyle: React.CSSProperties = {
   borderBottom: '1px solid #f0f0f0',
   textAlign: 'center',
   width: 28,
+}
+
+const thDateStyle: React.CSSProperties = {
+  ...thStyle,
+  whiteSpace: 'nowrap',
+  width: 96,
+}
+
+const tdDateStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  borderBottom: '1px solid #f0f0f0',
+  whiteSpace: 'nowrap',
+  color: '#444',
+  fontVariantNumeric: 'tabular-nums',
+  width: 96,
 }
 
 const tdEventStyle: React.CSSProperties = {

@@ -33,6 +33,9 @@ class EventStudyResult:
     car: float               # накопленная аномальная доходность
     n_days: int              # фактическое количество дней в окне
     estimation_std: float    # σ аномальных доходностей в оценочном окне
+    estimation_residuals: list[float] = field(default_factory=list)
+    # ↑ дневные AR на оценочном окне (после фильтрации выбросов, если она была);
+    # используются для построения baseline-фона через нарезку скользящим окном
     outliers_removed: int = 0  # сколько выбросов убрано из оценочного окна
 
 
@@ -220,6 +223,7 @@ class EventStudy:
             car=car,
             n_days=len(ev_idx),
             estimation_std=estimation_std,
+            estimation_residuals=residuals_est.tolist(),
             outliers_removed=outliers_removed,
         )
 

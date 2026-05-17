@@ -38,7 +38,10 @@ def post_individual(req: EventEffectIndividualRequest) -> EventEffectIndividualR
 
     return EventEffectIndividualResponse(
         individual_cars=[
-            IndividualCarRow(event_id=ic.event_id, date=ic.date, car=ic.car)
+            IndividualCarRow(
+                event_id=ic.event_id, date=ic.date, car=ic.car,
+                rank=ic.rank, is_anomaly=ic.is_anomaly, noise_band=ic.noise_band,
+            )
             for ic in result.individual_cars
         ],
         excluded_events=[
@@ -79,6 +82,7 @@ def post_sensitivity(req: EventEffectSensitivityRequest) -> EventEffectSensitivi
             SensitivityCell(
                 window=c.window, model=c.model, estimation=c.estimation,
                 car=c.car, p_value=c.p_value, n=c.n,
+                mean_rank=c.mean_rank, rank_p_value=c.rank_p_value,
             )
             for c in result.cells
         ],

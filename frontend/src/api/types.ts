@@ -76,13 +76,14 @@ export interface PrecedentFuzzySearchResponse {
   truncated: boolean
 }
 
-export interface EventTagsRow {
+export interface EventInfoRow {
   eventId: string
+  dateStart: string
   tags: string[]
 }
 
-export interface EventTagsBulkResponse {
-  rows: EventTagsRow[]
+export interface EventsInfoResponse {
+  rows: EventInfoRow[]
 }
 
 // ── Event Effect Analysis ───────────────────────────────────────────────────
@@ -106,6 +107,9 @@ export interface IndividualCarRow {
   eventId: string
   date: string
   car: number
+  rank: number
+  isAnomaly: boolean
+  noiseBand: number
 }
 
 export interface ExcludedEventRow {
@@ -146,6 +150,8 @@ export interface SensitivityCell {
   car: number
   pValue: number
   n: number
+  meanRank: number
+  rankPValue: number
 }
 
 export interface EventEffectSensitivityResponse {

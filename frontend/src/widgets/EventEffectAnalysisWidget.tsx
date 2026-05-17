@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Plotly from 'plotly.js-dist-min'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import { runEventEffectIndividual, runEventEffectSensitivity } from '../api/client'
@@ -15,12 +15,65 @@ import { selectLeaderTicker, selectPrecedentSet, useGroupStore } from './groupSt
 
 const Plot = createPlotlyComponent(Plotly)
 
+/**
+ * Resizable-обёртка для Plotly-графиков.
+ *
+ * Решает проблему: react-plotly.js useResizeHandler слушает только
+ * window.resize, поэтому CSS-resize контейнера (drag за угол) он не видит.
+ * Frame подвешивает ResizeObserver на свой внешний div и вручную вызывает
+ * Plotly.Plots.resize на графике внутри. graphDiv передаётся в frame
+ * через React Context — дочерний Plot ставит ref-callback через useContext.
+ */
+
+interface ChartResizeContextValue {
+  registerGraphDiv: (gd: HTMLElement | null) => void
+}
+
+const ChartResizeContext = createContext<ChartResizeContextValue | null>(null)
+
+function ResizableChartFrame({ children }: { children: ReactNode }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const graphDivRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const observer = new ResizeObserver(() => {
+      if (graphDivRef.current) Plotly.Plots.resize(graphDivRef.current)
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  const registerGraphDiv = useCallback((gd: HTMLElement | null) => {
+    graphDivRef.current = gd
+  }, [])
+
+  return (
+    <ChartResizeContext.Provider value={{ registerGraphDiv }}>
+      <div ref={containerRef} style={chartBlockOuterStyle}>
+        {children}
+      </div>
+    </ChartResizeContext.Provider>
+  )
+}
+
+/** Хук для дочернего Plot: возвращает onInitialized-callback, который
+ *  регистрирует graphDiv в родительском ResizableChartFrame. */
+function useRegisterPlotInFrame() {
+  const ctx = useContext(ChartResizeContext)
+  return useCallback((_figure: unknown, graphDiv: HTMLElement) => {
+    ctx?.registerGraphDiv(graphDiv)
+  }, [ctx])
+}
+
 interface EventEffectAnalysisWidgetProps {
   group: WidgetGroup
 }
 
 type Tab = 'explorer' | 'sensitivity'
 type FetchStatus = 'idle' | 'loading' | 'success' | 'error'
+type ValueMode = 'signed' | 'abs'
 
 const DEFAULT_WINDOW = 5
 const DEFAULT_MODEL: ExpectedReturnModel = 'market_model'
@@ -43,6 +96,20 @@ const DEFAULT_GRID_ESTIMATIONS = [150, 200]
 
 const SMALL_SAMPLE_THRESHOLD = 5
 const SHAPIRO_ALPHA = 0.05
+
+// Размеры heatmap зависят от размера сетки: ширина = ячейки × число окон,
+// высота = ячейки × число моделей. Это избавляет от пустого серого поля при
+// маленькой сетке и масштабирует контейнер под большую сетку.
+//
+// HEATMAP_CELL_TEXT_WIDTH — оценка ширины текста внутри ячейки (самая длинная
+// строка типа "p=0.438" в шрифте 13pt). HEATMAP_CELL_PADDING_X — желаемый
+// горизонтальный воздух с каждой стороны текста до границ ячейки.
+const HEATMAP_CELL_TEXT_WIDTH = 90
+const HEATMAP_CELL_PADDING_X = 30
+const HEATMAP_CELL_WIDTH = HEATMAP_CELL_TEXT_WIDTH + HEATMAP_CELL_PADDING_X * 2
+const HEATMAP_CELL_HEIGHT = 70
+const HEATMAP_PADDING_X = 124  // margin.l + margin.r + борды
+const HEATMAP_PADDING_Y = 40   // margin.t + margin.b + борды
 
 export function EventEffectAnalysisWidget({ group }: EventEffectAnalysisWidgetProps) {
   const eventIds = useGroupStore(selectPrecedentSet(group))
@@ -75,9 +142,27 @@ function Body({
   eventIds: string[]
 }) {
   const [tab, setTab] = useState<Tab>('explorer')
+  const [valueMode, setValueMode] = useState<ValueMode>('signed')
 
   return (
     <div style={rootStyle}>
+      <div style={modeBarStyle}>
+        <span style={modeBarLabelStyle}>Метрика:</span>
+        <button
+          style={valueMode === 'signed' ? modeButtonActiveStyle : modeButtonStyle}
+          onClick={() => setValueMode('signed')}
+        >
+          CAR
+        </button>
+        <button
+          style={valueMode === 'abs' ? modeButtonActiveStyle : modeButtonStyle}
+          onClick={() => setValueMode('abs')}
+        >
+          |CAR|
+        </button>
+        <span style={tabMetaStyle}>{ticker} · {eventIds.length} событий выбрано</span>
+      </div>
+
       <div style={tabsBarStyle}>
         <button
           style={tab === 'explorer' ? tabActiveStyle : tabStyle}
@@ -91,16 +176,15 @@ function Body({
         >
           CAR Sensitivity Analysis
         </button>
-        <span style={tabMetaStyle}>{ticker} · {eventIds.length} событий выбрано</span>
       </div>
 
       {/* Обе вкладки всегда смонтированы — переключение через видимость,
           чтобы при возврате не терять загруженные данные и параметры. */}
       <div style={tab === 'explorer' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
-        <ExplorerTab ticker={ticker} eventIds={eventIds} />
+        <ExplorerTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
       </div>
       <div style={tab === 'sensitivity' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
-        <SensitivityTab ticker={ticker} eventIds={eventIds} />
+        <SensitivityTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
       </div>
     </div>
   )
@@ -110,7 +194,7 @@ function Body({
 // Вкладка 1: Events CAR Explorer
 // ────────────────────────────────────────────────────────────────────────────
 
-function ExplorerTab({ ticker, eventIds }: { ticker: string; eventIds: string[] }) {
+function ExplorerTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds: string[]; valueMode: ValueMode }) {
   const [eventWindow, setEventWindow] = useState(DEFAULT_WINDOW)
   const [model, setModel] = useState<ExpectedReturnModel>(DEFAULT_MODEL)
   const [estimation, setEstimation] = useState(DEFAULT_ESTIMATION)
@@ -119,6 +203,7 @@ function ExplorerTab({ ticker, eventIds }: { ticker: string; eventIds: string[] 
   const [status, setStatus] = useState<FetchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [resp, setResp] = useState<EventEffectIndividualResponse | null>(null)
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const timerRef = useRef<number | null>(null)
@@ -211,20 +296,39 @@ function ExplorerTab({ ticker, eventIds }: { ticker: string; eventIds: string[] 
           <Warning text={`${excludedCount} из ${totalRequested} событий исключено: недостаточно истории для оценочного окна.`} />
         )}
         {shapiroP != null && shapiroP < SHAPIRO_ALPHA && (
-          <Warning text={`⚠ распределение CAR не нормально (Shapiro p = ${shapiroP.toFixed(3)}). Прогнозный интервал может быть неточным.`} />
+          <Warning text={`⚠ распределение CAR не нормально (Shapiro p = ${shapiroP.toFixed(3)}). ДИ может быть неточным.`} />
         )}
         {n > 0 && n < SMALL_SAMPLE_THRESHOLD && (
-          <Warning text={`Выборка мала (n = ${n}). Оценки прогнозного интервала могут быть ненадёжны.`} />
+          <Warning text={`Выборка мала (n = ${n}). Оценки ДИ могут быть ненадёжны.`} />
         )}
         {error && <Warning text={error} severity="error" />}
       </div>
 
-      {/* Три представления */}
+      {/* Три представления. Таблица — фиксированной начальной ширины с возможностью
+          растащить её по горизонтали (CSS resize). Все три блока имеют минимальную
+          ширину; если родительский контейнер уже суммы минимумов — появляется
+          горизонтальный скролл всей области. */}
       {resp != null && (
         <div style={explorerGridStyle}>
-          <CarTable rows={resp.individualCars} />
-          <CarHistogram rows={resp.individualCars} forecast={resp.forecast} />
-          <CarScatter rows={resp.individualCars} />
+          <div style={tableBlockOuterStyle}>
+            <CarTable
+              rows={resp.individualCars}
+              valueMode={valueMode}
+              hoveredEventId={hoveredEventId}
+              onHoverEvent={setHoveredEventId}
+            />
+          </div>
+          <ResizableChartFrame>
+            <CarHistogram
+              rows={resp.individualCars}
+              forecast={resp.forecast}
+              valueMode={valueMode}
+              centralStatistic={central}
+            />
+          </ResizableChartFrame>
+          <ResizableChartFrame>
+            <CarScatter rows={resp.individualCars} valueMode={valueMode} hoveredEventId={hoveredEventId} />
+          </ResizableChartFrame>
         </div>
       )}
     </div>
@@ -233,28 +337,50 @@ function ExplorerTab({ ticker, eventIds }: { ticker: string; eventIds: string[] 
 
 // ── Таблица индивидуальных CAR ──
 
-type SortKey = 'date' | 'car'
+type SortKey = 'date' | 'car' | 'noise' | 'rank'
 type SortDir = 'asc' | 'desc'
 
-function CarTable({ rows }: { rows: IndividualCarRow[] }) {
+const ANOMALY_TOOLTIP = 'Аномалия — расхождение слишком большое относительно обычного шума акции'
+
+function CarTable({
+  rows,
+  valueMode,
+  hoveredEventId,
+  onHoverEvent,
+}: {
+  rows: IndividualCarRow[]
+  valueMode: ValueMode
+  hoveredEventId: string | null
+  onHoverEvent: (id: string | null) => void
+}) {
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   const sorted = useMemo(() => {
     const copy = rows.slice()
     copy.sort((a, b) => {
-      const va = sortKey === 'date' ? a.date : a.car
-      const vb = sortKey === 'date' ? b.date : b.car
+      const va =
+        sortKey === 'date' ? a.date
+        : sortKey === 'noise' ? a.noiseBand
+        : sortKey === 'rank' ? a.rank
+        : valueMode === 'abs' ? Math.abs(a.car) : a.car
+      const vb =
+        sortKey === 'date' ? b.date
+        : sortKey === 'noise' ? b.noiseBand
+        : sortKey === 'rank' ? b.rank
+        : valueMode === 'abs' ? Math.abs(b.car) : b.car
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
     return copy
-  }, [rows, sortKey, sortDir])
+  }, [rows, sortKey, sortDir, valueMode])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
     else { setSortKey(key); setSortDir(key === 'date' ? 'asc' : 'desc') }
   }
+
+  const indicator = (key: SortKey) => sortKey === key ? (sortDir === 'asc' ? '▲' : '▼') : ''
 
   return (
     <div style={blockStyle}>
@@ -263,25 +389,42 @@ function CarTable({ rows }: { rows: IndividualCarRow[] }) {
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thClickableStyle} onClick={() => toggleSort('date')}>
-                дата {sortKey === 'date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-              </th>
+              <th style={thAnomalyStyle}></th>
+              <th style={thClickableStyle} onClick={() => toggleSort('date')}>дата {indicator('date')}</th>
               <th style={thClickableStyle} onClick={() => toggleSort('car')}>
-                CAR {sortKey === 'car' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                {valueMode === 'abs' ? '|CAR|' : 'CAR'} {indicator('car')}
               </th>
+              <th style={thClickableStyle} onClick={() => toggleSort('noise')}>шум {indicator('noise')}</th>
+              <th style={thClickableStyle} onClick={() => toggleSort('rank')}>rank {indicator('rank')}</th>
             </tr>
           </thead>
           <tbody>
             {sorted.length === 0 ? (
-              <tr><td style={emptyCellStyle} colSpan={2}>Нет валидных событий</td></tr>
-            ) : sorted.map((r) => (
-              <tr key={r.eventId}>
-                <td style={tdStyle}>{r.date}</td>
-                <td style={{ ...tdStyle, color: r.car >= 0 ? '#1a7f37' : '#a01919' }}>
-                  {(r.car * 100).toFixed(2)}%
-                </td>
-              </tr>
-            ))}
+              <tr><td style={emptyCellStyle} colSpan={5}>Нет валидных событий</td></tr>
+            ) : sorted.map((r) => {
+              const displayed = valueMode === 'abs' ? Math.abs(r.car) : r.car
+              const rowBg = r.eventId === hoveredEventId ? '#f0f6ff' : undefined
+              return (
+                <tr
+                  key={r.eventId}
+                  onMouseEnter={() => onHoverEvent(r.eventId)}
+                  onMouseLeave={() => onHoverEvent(null)}
+                  style={rowBg ? { background: rowBg } : undefined}
+                >
+                  <td style={tdAnomalyStyle}>
+                    {r.isAnomaly && <span title={ANOMALY_TOOLTIP} style={anomalyIconStyle}>⚠</span>}
+                  </td>
+                  <td style={tdStyle}>{r.date}</td>
+                  <td style={{ ...tdStyle, color: displayed >= 0 ? '#1a7f37' : '#a01919' }}>
+                    {(displayed * 100).toFixed(2)}%
+                  </td>
+                  <td style={tdStyle}>±{(r.noiseBand * 100).toFixed(1)}%</td>
+                  <td style={{ ...tdStyle, color: r.isAnomaly ? '#d97706' : '#444', fontWeight: r.isAnomaly ? 600 : 400 }}>
+                    {r.rank.toFixed(2)}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -294,30 +437,42 @@ function CarTable({ rows }: { rows: IndividualCarRow[] }) {
 function CarHistogram({
   rows,
   forecast,
+  valueMode,
+  centralStatistic,
 }: {
   rows: IndividualCarRow[]
   forecast: EventEffectIndividualResponse['forecast']
+  valueMode: ValueMode
+  centralStatistic: CentralStatistic
 }) {
-  const cars = rows.map((r) => r.car * 100)
-  const bins = makeHistogramBins(cars)
+  const values = rows.map((r) => (valueMode === 'abs' ? Math.abs(r.car) : r.car) * 100)
+  const bins = makeHistogramBins(values)
+  const maxCount = bins.reduce((m, b) => (b.count > m ? b.count : m), 0)
 
-  const shapes: Partial<Plotly.Shape>[] = forecast != null
-    ? [{
-        type: 'rect',
-        xref: 'x', yref: 'paper',
-        x0: forecast.piLower * 100, x1: forecast.piUpper * 100,
-        y0: 0, y1: 1,
-        fillcolor: 'rgba(41, 98, 255, 0.12)',
-        line: { width: 0 },
-        layer: 'below',
-      } as Partial<Plotly.Shape>, {
-        type: 'line',
-        xref: 'x', yref: 'paper',
-        x0: forecast.central * 100, x1: forecast.central * 100,
-        y0: 0, y1: 1,
-        line: { color: '#666', width: 2, dash: 'dash' },
-      } as Partial<Plotly.Shape>]
-    : []
+  // Центральная статистика для пунктира:
+  // - signed: forecast.central (приходит с бэка, уже учитывает median/mean).
+  // - abs: считаем median/mean модулей здесь, бэк отдаёт центр только со знаком.
+  const centerPct = (() => {
+    if (valueMode === 'signed') return forecast != null ? forecast.central * 100 : null
+    if (values.length === 0) return null
+    return centralStatistic === 'median' ? medianOf(values) : meanOf(values)
+  })()
+  const centerLabel = centralStatistic === 'median' ? 'медиана' : 'среднее'
+
+  // ДИ-полоса (фон) — только в режиме signed. Центральная линия рисуется
+  // отдельным scatter-trace ниже (чтобы поддерживала hover).
+  const shapes: Partial<Plotly.Shape>[] = []
+  if (valueMode === 'signed' && forecast != null) {
+    shapes.push({
+      type: 'rect',
+      xref: 'x', yref: 'paper',
+      x0: forecast.piLower * 100, x1: forecast.piUpper * 100,
+      y0: 0, y1: 1,
+      fillcolor: 'rgba(41, 98, 255, 0.12)',
+      line: { width: 0 },
+      layer: 'below',
+    } as Partial<Plotly.Shape>)
+  }
 
   const data: Plotly.Data[] = [{
     type: 'bar',
@@ -333,27 +488,44 @@ function CarHistogram({
     name: 'CAR',
   }]
 
+  if (centerPct != null && maxCount > 0) {
+    data.push({
+      type: 'scatter',
+      mode: 'lines',
+      x: [centerPct, centerPct],
+      y: [0, maxCount * 1.05],
+      line: { color: '#666', width: 2, dash: 'dash' },
+      hovertemplate: `${centerLabel}: ${centerPct.toFixed(2)}%<extra></extra>`,
+      showlegend: false,
+      name: centerLabel,
+    } as Plotly.Data)
+  }
+
+  const subtitle =
+    valueMode === 'signed' && forecast != null
+      ? ` · 95% ДИ: [${(forecast.piLower * 100).toFixed(2)}%, ${(forecast.piUpper * 100).toFixed(2)}%]`
+      : ''
+
+  const onInitialized = useRegisterPlotInFrame()
+
   return (
-    <div style={blockStyle}>
+    <div style={chartInnerBlockStyle}>
       <div style={blockTitleStyle}>
-        Распределение CAR
-        {forecast != null && (
-          <span style={blockSubtitleStyle}>
-            &nbsp;· 95% PI: [{(forecast.piLower * 100).toFixed(2)}%, {(forecast.piUpper * 100).toFixed(2)}%]
-          </span>
-        )}
+        Распределение {valueMode === 'abs' ? '|CAR|' : 'CAR'}
+        {subtitle && <span style={blockSubtitleStyle}>&nbsp;{subtitle}</span>}
       </div>
       <Plot
         data={data}
         layout={{
           autosize: true,
           margin: { l: 40, r: 10, t: 10, b: 35 },
-          xaxis: { title: { text: 'CAR, %' }, zeroline: true, zerolinecolor: '#999' },
+          xaxis: { title: { text: (valueMode === 'abs' ? '|CAR|' : 'CAR') + ', %' }, zeroline: true, zerolinecolor: '#999' },
           yaxis: { title: { text: 'события' } },
           shapes,
           showlegend: false,
         }}
         useResizeHandler
+        onInitialized={onInitialized}
         style={plotStyle}
         config={{ displayModeBar: false }}
       />
@@ -363,29 +535,51 @@ function CarHistogram({
 
 // ── Scatter CAR по времени ──
 
-function CarScatter({ rows }: { rows: IndividualCarRow[] }) {
+function CarScatter({
+  rows,
+  valueMode,
+  hoveredEventId,
+}: {
+  rows: IndividualCarRow[]
+  valueMode: ValueMode
+  hoveredEventId: string | null
+}) {
+  const ys = rows.map((r) => (valueMode === 'abs' ? Math.abs(r.car) : r.car) * 100)
+
+  // Hover-связь с таблицей: точка увеличена и обведена, если строка под курсором.
+  const sizes = rows.map((r) => (r.eventId === hoveredEventId ? 14 : 7))
+  const lineColors = rows.map((r) => (r.eventId === hoveredEventId ? '#000' : 'rgba(0,0,0,0)'))
+  const lineWidths = rows.map((r) => (r.eventId === hoveredEventId ? 2 : 0))
+
   const data: Plotly.Data[] = [{
     x: rows.map((r) => r.date),
-    y: rows.map((r) => r.car * 100),
+    y: ys,
     type: 'scatter',
     mode: 'markers',
-    marker: { color: '#2962FF', size: 7 },
+    marker: {
+      color: rows.map((r) => (r.isAnomaly ? '#d97706' : '#2962FF')),
+      size: sizes,
+      line: { color: lineColors, width: lineWidths },
+    },
     name: 'CAR',
   }]
 
+  const onInitialized = useRegisterPlotInFrame()
+
   return (
-    <div style={blockStyle}>
-      <div style={blockTitleStyle}>CAR во времени</div>
+    <div style={chartInnerBlockStyle}>
+      <div style={blockTitleStyle}>{valueMode === 'abs' ? '|CAR|' : 'CAR'} во времени</div>
       <Plot
         data={data}
         layout={{
           autosize: true,
           margin: { l: 40, r: 10, t: 10, b: 35 },
           xaxis: { title: { text: 'дата события' }, type: 'date' },
-          yaxis: { title: { text: 'CAR, %' }, zeroline: true, zerolinecolor: '#999' },
+          yaxis: { title: { text: (valueMode === 'abs' ? '|CAR|' : 'CAR') + ', %' }, zeroline: true, zerolinecolor: '#999' },
           showlegend: false,
         }}
         useResizeHandler
+        onInitialized={onInitialized}
         style={plotStyle}
         config={{ displayModeBar: false }}
       />
@@ -397,7 +591,7 @@ function CarScatter({ rows }: { rows: IndividualCarRow[] }) {
 // Вкладка 2: CAR Sensitivity Analysis
 // ────────────────────────────────────────────────────────────────────────────
 
-function SensitivityTab({ ticker, eventIds }: { ticker: string; eventIds: string[] }) {
+function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds: string[]; valueMode: ValueMode }) {
   const [gridWindows, setGridWindows] = useState<number[]>(DEFAULT_GRID_WINDOWS)
   const [gridModels, setGridModels] = useState<ExpectedReturnModel[]>(DEFAULT_GRID_MODELS)
   const [gridEstimations, setGridEstimations] = useState<number[]>(DEFAULT_GRID_ESTIMATIONS)
@@ -475,6 +669,7 @@ function SensitivityTab({ ticker, eventIds }: { ticker: string; eventIds: string
           cells={sliceCells}
           windows={gridWindows}
           models={gridModels}
+          valueMode={valueMode}
         />
       )}
     </div>
@@ -553,10 +748,12 @@ function SensitivityHeatmap({
   cells,
   windows,
   models,
+  valueMode,
 }: {
   cells: SensitivityCell[]
   windows: number[]
   models: ExpectedReturnModel[]
+  valueMode: ValueMode
 }) {
   // Карта (model, window) → cell
   const cellMap = useMemo(() => {
@@ -565,12 +762,15 @@ function SensitivityHeatmap({
     return m
   }, [cells])
 
-  // z для цвета — по p_value (низкое p → насыщенный зелёный). Используем
-  // дискретную шкалу через колеровку готовых значений ниже.
+  // z для цвета:
+  //  - signed: t-test p_value против 0 («есть ли направленный эффект»).
+  //  - abs:   t-test mean(rank) против 0.5 («в среднем по выборке |CAR| смещён
+  //           относительно типичного шума»).
   const z: number[][] = models.map((m) =>
     windows.map((w) => {
       const c = cellMap.get(`${m}|${w}`)
-      return c ? c.pValue : 1.0
+      if (!c) return 1.0
+      return valueMode === 'abs' ? c.rankPValue : c.pValue
     }),
   )
 
@@ -578,6 +778,9 @@ function SensitivityHeatmap({
     windows.map((w) => {
       const c = cellMap.get(`${m}|${w}`)
       if (!c) return '—'
+      if (valueMode === 'abs') {
+        return `rank=${c.meanRank.toFixed(2)}\np=${c.rankPValue.toFixed(3)}\nn=${c.n}`
+      }
       return `${(c.car * 100).toFixed(2)}%\np=${c.pValue.toFixed(3)}\nn=${c.n}`
     }),
   )
@@ -600,7 +803,7 @@ function SensitivityHeatmap({
     y: models.map((m) => MODEL_LABELS[m]),
     text: textMatrix,
     texttemplate: '%{text}',
-    textfont: { size: 11 },
+    textfont: { size: 13, color: '#000' },
     colorscale,
     zmin: 0, zmax: 1,
     showscale: false,
@@ -609,15 +812,23 @@ function SensitivityHeatmap({
     hovertemplate: '%{text}<extra></extra>',
   } as unknown as Plotly.Data]
 
+  const heatmapBoxStyle: React.CSSProperties = {
+    ...heatmapBlockStyle,
+    width: HEATMAP_CELL_WIDTH * windows.length + HEATMAP_PADDING_X,
+    height: HEATMAP_CELL_HEIGHT * models.length + HEATMAP_PADDING_Y,
+  }
+
   return (
-    <div style={heatmapBlockStyle}>
+    <div style={heatmapBoxStyle}>
       <Plot
         data={data}
         layout={{
           autosize: true,
-          margin: { l: 90, r: 10, t: 10, b: 30 },
-          xaxis: { type: 'category' },
-          yaxis: { type: 'category', automargin: true },
+          // Метки окон — сверху (как заголовки таблицы), поэтому увеличен margin.t.
+          margin: { l: 110, r: 10, t: 25, b: 10 },
+          xaxis: { type: 'category', side: 'top' },
+          // autorange: 'reversed' — первая модель сверху, как заголовок таблицы.
+          yaxis: { type: 'category', automargin: true, autorange: 'reversed' },
         }}
         useResizeHandler
         style={plotStyle}
@@ -647,6 +858,16 @@ function statusInlineText(s: FetchStatus): string {
   if (s === 'loading') return 'Расчёт…'
   if (s === 'error') return 'Ошибка'
   return ''
+}
+
+function meanOf(values: number[]): number {
+  return values.reduce((s, v) => s + v, 0) / values.length
+}
+
+function medianOf(values: number[]): number {
+  const sorted = values.slice().sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
 interface HistogramBin {
@@ -700,6 +921,37 @@ const rootStyle: React.CSSProperties = {
   gap: 8,
 }
 
+const modeBarStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flexShrink: 0,
+}
+
+const modeBarLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
+  marginRight: 2,
+}
+
+const modeButtonStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: 12,
+  background: '#f5f5f5',
+  border: '1px solid #ddd',
+  borderRadius: 4,
+  cursor: 'pointer',
+  color: '#555',
+}
+
+const modeButtonActiveStyle: React.CSSProperties = {
+  ...modeButtonStyle,
+  background: '#2962FF',
+  color: '#fff',
+  border: '1px solid #2962FF',
+  fontWeight: 600,
+}
+
 const tabsBarStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -708,7 +960,7 @@ const tabsBarStyle: React.CSSProperties = {
   borderBottom: '1px solid #eee',
 }
 
-const tabBaseStyle: React.CSSProperties = {
+const tabStyle: React.CSSProperties = {
   padding: '6px 14px',
   fontSize: 13,
   background: 'transparent',
@@ -718,10 +970,8 @@ const tabBaseStyle: React.CSSProperties = {
   color: '#666',
 }
 
-const tabStyle: React.CSSProperties = tabBaseStyle
-
 const tabActiveStyle: React.CSSProperties = {
-  ...tabBaseStyle,
+  ...tabStyle,
   color: '#2962FF',
   borderBottomColor: '#2962FF',
   fontWeight: 600,
@@ -827,12 +1077,54 @@ const errorBannerStyle: React.CSSProperties = {
   fontSize: 12,
 }
 
+const EXPLORER_TABLE_INITIAL_WIDTH = 280
+const EXPLORER_TABLE_MIN_WIDTH = 200
+const EXPLORER_TABLE_MAX_WIDTH = 800
+const EXPLORER_CHART_INITIAL_WIDTH = 420
+const EXPLORER_CHART_MIN_WIDTH = 280
+const EXPLORER_CHART_MAX_WIDTH = 1200
+const EXPLORER_CHART_INITIAL_HEIGHT = 400
+const EXPLORER_CHART_MIN_HEIGHT = 250
+const EXPLORER_CHART_MAX_HEIGHT = 900
+
 const explorerGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '260px 1fr 1fr',
+  display: 'flex',
   gap: 12,
   flex: 1,
   minHeight: 0,
+  // Если суммарной ширины блоков не хватает — появляется горизонтальный скролл.
+  overflowX: 'auto',
+}
+
+// Общий стиль для resizable-блока: CSS-resize требует overflow: hidden
+// и фиксированной начальной ширины (не flex).
+const resizableBlockBaseStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+  overflow: 'hidden',
+  flexShrink: 0,
+}
+
+const tableBlockOuterStyle: React.CSSProperties = {
+  ...resizableBlockBaseStyle,
+  width: EXPLORER_TABLE_INITIAL_WIDTH,
+  minWidth: EXPLORER_TABLE_MIN_WIDTH,
+  maxWidth: EXPLORER_TABLE_MAX_WIDTH,
+  // Таблица растягивается только по горизонтали; по вертикали тянется флексом.
+  resize: 'horizontal',
+}
+
+const chartBlockOuterStyle: React.CSSProperties = {
+  ...resizableBlockBaseStyle,
+  width: EXPLORER_CHART_INITIAL_WIDTH,
+  minWidth: EXPLORER_CHART_MIN_WIDTH,
+  maxWidth: EXPLORER_CHART_MAX_WIDTH,
+  height: EXPLORER_CHART_INITIAL_HEIGHT,
+  minHeight: EXPLORER_CHART_MIN_HEIGHT,
+  maxHeight: EXPLORER_CHART_MAX_HEIGHT,
+  // Графики растягиваются по обеим осям.
+  resize: 'both',
 }
 
 const blockStyle: React.CSSProperties = {
@@ -844,14 +1136,23 @@ const blockStyle: React.CSSProperties = {
   minHeight: 0,
 }
 
+// Стиль карточки графика внутри ResizableChartFrame — заполняет всю
+// высоту/ширину внешнего контейнера, чтобы Plotly мог пересчитываться
+// по реальным размерам frame'а.
+const chartInnerBlockStyle: React.CSSProperties = {
+  ...blockStyle,
+  flex: 1,
+  width: '100%',
+}
+
 const heatmapBlockStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   border: '1px solid #e0e0e0',
   borderRadius: 4,
   overflow: 'hidden',
-  height: 280,
   flexShrink: 0,
+  alignSelf: 'flex-start',
 }
 
 const blockTitleStyle: React.CSSProperties = {
@@ -897,6 +1198,28 @@ const tdStyle: React.CSSProperties = {
   padding: '4px 10px',
   borderBottom: '1px solid #f0f0f0',
   whiteSpace: 'nowrap',
+}
+
+const thAnomalyStyle: React.CSSProperties = {
+  background: '#fafafa',
+  borderBottom: '1px solid #e0e0e0',
+  position: 'sticky',
+  top: 0,
+  width: 24,
+  padding: '6px 4px',
+}
+
+const tdAnomalyStyle: React.CSSProperties = {
+  padding: '4px 4px',
+  borderBottom: '1px solid #f0f0f0',
+  textAlign: 'center',
+  width: 24,
+}
+
+const anomalyIconStyle: React.CSSProperties = {
+  color: '#d97706',
+  cursor: 'help',
+  fontSize: 14,
 }
 
 const emptyCellStyle: React.CSSProperties = {

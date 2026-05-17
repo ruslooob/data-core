@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException
 
 from routers._common import get_pg, pg_type_name, to_json_safe
 from schemas.precedents import (
-    EventTagsBulkRequest,
-    EventTagsBulkResponse,
-    EventTagsRow,
+    EventInfoRow,
+    EventsInfoRequest,
+    EventsInfoResponse,
     PrecedentColumn,
     PrecedentFuzzyHit,
     PrecedentFuzzySearchRequest,
@@ -128,23 +128,37 @@ def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzyS
     return PrecedentFuzzySearchResponse(hits=hits, truncated=truncated)
 
 
-@router.post("/api/precedents/tags-bulk", response_model_by_alias=True)
-def event_tags_bulk(req: EventTagsBulkRequest) -> EventTagsBulkResponse:
-    """Возвращает теги для каждого event_id из запроса.
+@router.post("/api/precedents/events-info", response_model_by_alias=True)
+def events_info(req: EventsInfoRequest) -> EventsInfoResponse:
+    """Возвращает дату события и его теги по списку event_id.
 
-    Используется виджетом «Поиск прецедентов»: PQL и fuzzy возвращают
-    только id+event, а теги дотягиваются отдельно одним батчем.
+    Используется виджетом «Поиск прецедентов»: PQL и fuzzy выдают только
+    id+event, остальной контекст (дата, теги) дотягивается одним батчем.
     """
     if not req.event_ids:
-        return EventTagsBulkResponse(rows=[])
+        return EventsInfoResponse(rows=[])
 
     con = get_pg()
     rows = con.execute(
-        "SELECT event_id, ARRAY_AGG(tag_code ORDER BY tag_code) "
-        "FROM event_tags WHERE event_id = ANY(%s) GROUP BY event_id",
+        """
+        SELECT e.id, e.date_start, COALESCE(ARRAY_AGG(et.tag_code ORDER BY et.tag_code)
+                                            FILTER (WHERE et.tag_code IS NOT NULL),
+                                            '{}')
+        FROM events e
+        LEFT JOIN event_tags et ON et.event_id = e.id
+        WHERE e.id = ANY(%s)
+        GROUP BY e.id, e.date_start
+        """,
         [req.event_ids],
     ).fetchall()
 
-    return EventTagsBulkResponse(
-        rows=[EventTagsRow(event_id=r[0], tags=list(r[1] or [])) for r in rows],
+    return EventsInfoResponse(
+        rows=[
+            EventInfoRow(
+                event_id=r[0],
+                date_start=r[1].isoformat() if r[1] is not None else '',
+                tags=list(r[2] or []),
+            )
+            for r in rows
+        ],
     )

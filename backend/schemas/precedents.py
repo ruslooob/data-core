@@ -48,14 +48,15 @@ class PrecedentFuzzySearchResponse(CamelModel):
     truncated: bool
 
 
-class EventTagsBulkRequest(CamelModel):
+class EventsInfoRequest(CamelModel):
     event_ids: list[str]
 
 
-class EventTagsRow(CamelModel):
+class EventInfoRow(CamelModel):
     event_id: str
+    date_start: str
     tags: list[str]
 
 
-class EventTagsBulkResponse(CamelModel):
-    rows: list[EventTagsRow]
+class EventsInfoResponse(CamelModel):
+    rows: list[EventInfoRow]

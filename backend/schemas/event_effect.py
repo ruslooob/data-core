@@ -21,6 +21,9 @@ class IndividualCarRow(CamelModel):
     event_id: str
     date: str
     car: float
+    rank: float
+    is_anomaly: bool
+    noise_band: float
 
 
 class ExcludedEventRow(CamelModel):
@@ -63,6 +66,8 @@ class SensitivityCell(CamelModel):
     car: float
     p_value: float
     n: int
+    mean_rank: float
+    rank_p_value: float
 
 
 class EventEffectSensitivityResponse(CamelModel):

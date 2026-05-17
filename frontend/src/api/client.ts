@@ -14,9 +14,9 @@ import type {
   EventEffectIndividualResponse,
   EventEffectSensitivityRequest,
   EventEffectSensitivityResponse,
+  EventsInfoResponse,
   EventStudyRequest,
   EventStudyResult,
-  EventTagsBulkResponse,
   PrecedentFuzzySearchResponse,
   PrecedentQueryRecord,
   PrecedentQuerySaveRequest,
@@ -181,8 +181,8 @@ export function searchPrecedentsFuzzy(
   })
 }
 
-export function getEventTagsBulk(eventIds: string[]): Promise<EventTagsBulkResponse> {
-  return fetchJson<EventTagsBulkResponse>('/api/precedents/tags-bulk', {
+export function getEventsInfo(eventIds: string[]): Promise<EventsInfoResponse> {
+  return fetchJson<EventsInfoResponse>('/api/precedents/events-info', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ eventIds }),
