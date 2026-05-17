@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Расширение модели событий новыми классами:
+
+        - STOCK_SPLIT  (corporate_action) — сплит акций. Источник для
+          ингеста: data/stocks/splits.csv. На каждый сплит событие в
+          events с тегами {STOCK_SPLIT, <ticker>}.
+        - CB_RATE_DECISION (macro) — решение ЦБ РФ по ставке (ключевой
+          или рефинансирования). Различение через payload.rate_type.
+
+        Параллельно дропается колонка stocks.splits: после переезда
+        сплитов в events она не читается и не пишется (источник правды —
+        events). Чистый накат проходит штатно: миграция 001 создаёт
+        колонку, миграция 006 её удаляет до того, как load_data_to_postgres
+        начнёт заливку.
+    -->
+
+    <changeSet id="006-corporate-and-macro-tags" author="ruslan">
+        <insert tableName="tags">
+            <column name="code"  value="STOCK_SPLIT"/>
+            <column name="name"  value="Сплит акций"/>
+            <column name="type"  value="corporate_action"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code"  value="CB_RATE_DECISION"/>
+            <column name="name"  value="Решение ЦБ РФ по ставке"/>
+            <column name="type"  value="macro"/>
+        </insert>
+    </changeSet>
+
+    <changeSet id="006-drop-stocks-splits-column" author="ruslan">
+        <dropColumn tableName="stocks" columnName="splits"/>
+    </changeSet>
+
+</databaseChangeLog>

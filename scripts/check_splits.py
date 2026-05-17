@@ -2,13 +2,17 @@
 import pandas as pd
 import glob
 import os
-import json
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STOCKS_DIR = os.path.join(HERE, '..', 'data', 'stocks')
 
-with open(os.path.join(STOCKS_DIR, 'splits.json'), 'r', encoding='utf-8') as f:
-    splits = json.load(f)
+splits_df = pd.read_csv(os.path.join(STOCKS_DIR, 'splits.csv'))
+splits: dict[str, list[dict]] = {}
+for _, r in splits_df.iterrows():
+    splits.setdefault(r['ticker'], []).append({
+        'split_date': r['split_date'],
+        'ratio': float(r['ratio']),
+    })
 
 files = sorted(glob.glob(os.path.join(STOCKS_DIR, '*.txt')))
 

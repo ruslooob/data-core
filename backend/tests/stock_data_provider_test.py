@@ -9,7 +9,8 @@
 Удалены тесты, устаревшие концептуально:
 - raw vs normalized сравнения (в Postgres котировки уже нормализованы
   при загрузке, параметр normalized=False игнорируется).
-- TEST_SPLIT-фикстура (CSV-файлы и splits.json больше не источник).
+- TEST_SPLIT-фикстура (CSV-файлы больше не источник; сплиты теперь
+  читаются из `events` по тегу `STOCK_SPLIT`).
 """
 from __future__ import annotations
 

@@ -81,6 +81,13 @@ Initial load (тикер не существовал ни в БД, ни в Finam
 ### load_moex_dividends.py *(планируется)*
 Источник: ISS Мосбиржи, ручка `/iss/securities/{security}/dividends`. Что грузит: дивидендные события c полями `announcement_date` и `payment_date`. Заменяет `data/stocks/dividends_all.csv` от dohod.ru.
 
+### load_cb_rates.py
+Источник: cbr.ru, страница `/hd_base/KeyRate/` (GET с параметрами `UniDbQuery.Posted=True&UniDbQuery.From=...&UniDbQuery.To=...`, кодировка cp1251). Что грузит: историю ключевой ставки ЦБ РФ (с 13.09.2013). Страница отдаёт посуточный ряд значений; парсер дедуплицирует подряд равные значения и оставляет только **даты изменения ставки**. Записывает в `data/macro/cb_rates.csv` со столбцами `effective_date, rate_pct, rate_type='key'`.
+
+Затем `load_data_to_postgres.py` читает CSV и создаёт события `CB_RATE_DECISION` в `events` с приближением `announcement_date = effective_date - 1 business day`. В payload — `rate_pct`, `rate_pct_prev`, `change_bp`, `direction` (hike/cut/hold/initial), `effective_date`. Тег: `CB_RATE_DECISION` (без тегов-тикеров — макрособытие).
+
+Ставка рефинансирования (1992–2015) в первой итерации **не грузится**: cbr.ru через `hd_base/` эту страницу больше не отдаёт. Альтернативный источник — отдельной итерацией, см. `todo.md`.
+
 ### load_moex_currencies.py *(планируется)*
 Источник: ISS Мосбиржи, ручка истории на `/iss/history/engines/currency/markets/selt/securities/{ticker}`. Что грузит: курсы валют (USD/RUB, EUR/RUB). Cross-validation не выполняется — в БД пока нет валютных данных, сверять не с чем.
 

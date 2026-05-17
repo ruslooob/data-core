@@ -3,8 +3,12 @@
 Схема и UDF создаются Liquibase-миграцией (`docker compose --profile migrate
 run liquibase update`). Этот скрипт льёт **только данные**:
 
-- `stocks`, `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day.txt`,
-  с нормализацией по сплитам (`splits.json`).
+- `stocks` — метаданные тикеров из имён файлов `data/stocks/<TICKER>_<NAME>_1day.txt`.
+- Сплиты акций — из `data/stocks/splits.csv` в `events` как `STOCK_SPLIT`,
+  с тегами {STOCK_SPLIT, <ticker>}. Заливаются **до** свечей: нормализация
+  цен в `_load_stocks_and_candles` читает сплиты обратно из `events`.
+- `stock_candles` — из `data/stocks/<TICKER>_<NAME>_1day.txt`,
+  с нормализацией по сплитам из БД.
 - `risk_free_rate` — из `data/stocks/RUONIA_*.xlsx`.
 - Накопительный счёт `SAVINGS_MIACR` — капитализованный индекс
   (start=1000) под овернайт-ставку MIACR из `mfd_rates.csv`.
@@ -15,12 +19,17 @@ run liquibase update`). Этот скрипт льёт **только данны
   = announce_date = announcement_date) и «Выплата…» (date_start =
   payment_date, announce_date = announcement_date). Специфика
   (ticker, dividend_per_share, year) кладётся в events.payload.
+- Решения ЦБ по ключевой ставке — из `data/macro/cb_rates.csv` в `events`
+  как `CB_RATE_DECISION` (`announcement_date = effective_date - 1 BD`,
+  payload содержит ставку до/после и направление).
 
 Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен.
 
 Пользовательские данные (tags, events, event_tags, precedent_queries,
 research, strategies, rules, environments, backtest_results, trade_journal)
-НЕ заливаются — восстанавливаются из pg_dump снапшота.
+НЕ заливаются — восстанавливаются из pg_dump снапшота. **Исключение**:
+event_tags для дивидендных, сплит- и ЦБ-событий — детерминированные сидовые
+связки, не пользовательские, поэтому заливаются здесь.
 
 Запуск:
     python scripts/load_data_to_postgres.py
@@ -31,6 +40,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import date
 from glob import glob
 
 import pandas as pd
@@ -41,7 +51,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STOCKS_DIR = os.path.join(ROOT, 'data', 'stocks')
-SPLITS_PATH = os.path.join(STOCKS_DIR, 'splits.json')
+SPLITS_CSV = os.path.join(STOCKS_DIR, 'splits.csv')
+CB_RATES_CSV = os.path.join(ROOT, 'data', 'macro', 'cb_rates.csv')
 
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
@@ -50,13 +61,24 @@ CANDLE_COLS_RAW = ['<TICKER>', '<PER>', '<DATE>', '<TIME>',
                    '<VOL>', '<OPENINT>']
 
 
-# ── Котировки и сплиты ─────────────────────────────────────────────────────
+# ── Сплиты: чтение обратно из events для нормализации свечей ───────────────
 
-def _load_splits() -> dict[str, list]:
-    if not os.path.exists(SPLITS_PATH):
-        return {}
-    with open(SPLITS_PATH, 'r', encoding='utf-8') as fh:
-        return json.load(fh)
+def _fetch_splits_from_events(pg, ticker: str) -> list[dict]:
+    """Сплиты тикера из таблицы `events` в формате,
+    совместимом с `_load_normalized_candles`.
+    """
+    with pg.cursor() as cur:
+        cur.execute(
+            "SELECT e.date_start, (e.payload->>'ratio')::float "
+            "FROM events e "
+            "JOIN event_tags et ON et.event_id = e.id "
+            "WHERE et.tag_code = 'STOCK_SPLIT' "
+            "  AND e.payload->>'ticker' = %s "
+            "ORDER BY e.date_start",
+            [ticker.upper()],
+        )
+        rows = cur.fetchall()
+    return [{'split_date': d.isoformat(), 'ratio': float(r)} for d, r in rows]
 
 
 def _parse_ticker_and_name(filename: str, file_path: str) -> tuple[str, str]:
@@ -121,20 +143,34 @@ def _load_normalized_candles(path: str, splits: list[dict]) -> pd.DataFrame:
     return df[['candle_date', 'open', 'high', 'low', 'close', 'volume', 'open_interest']]
 
 
-def _load_stocks_and_candles(pg) -> None:
-    splits = _load_splits()
+def _load_stocks_metadata(pg) -> None:
+    """INSERT тикеров в `stocks` (без свечей, без сплитов)."""
+    files = sorted(glob(os.path.join(STOCKS_DIR, '*.txt')))
+    with pg.cursor() as cur:
+        for path in files:
+            filename = os.path.basename(path)
+            ticker, name = _parse_ticker_and_name(filename, path)
+            cur.execute(
+                'INSERT INTO stocks (ticker, name) VALUES (%s, %s) '
+                'ON CONFLICT (ticker) DO NOTHING',
+                [ticker, name],
+            )
+    print(f'  stocks: {len(files)} files processed')
+
+
+def _load_stocks_candles(pg) -> None:
+    """INSERT свечей с нормализацией по сплитам, прочитанным из `events`.
+
+    Запускается **после** `_load_stock_splits` — иначе нормализация
+    будет пустой и цены до даты сплита получатся в исходном масштабе.
+    """
     files = sorted(glob(os.path.join(STOCKS_DIR, '*.txt')))
     total_new = 0
     with pg.cursor() as cur:
         for path in files:
             filename = os.path.basename(path)
             ticker, name = _parse_ticker_and_name(filename, path)
-            ticker_splits = splits.get(ticker, [])
-            cur.execute(
-                'INSERT INTO stocks (ticker, name, splits) VALUES (%s, %s, %s) '
-                'ON CONFLICT (ticker) DO NOTHING',
-                [ticker, name, json.dumps(ticker_splits)],
-            )
+            ticker_splits = _fetch_splits_from_events(pg, ticker)
             cur.execute(
                 'SELECT MAX(candle_date) FROM stock_candles WHERE ticker = %s',
                 [ticker],
@@ -166,7 +202,7 @@ def _load_stocks_and_candles(pg) -> None:
             total_new += len(rows)
             print(
                 f'  {ticker:14s} {len(rows):6d} new candles '
-                f'(in file: {len(df)}, in DB up to: {last_date}) ({name})'
+                f'(in file: {len(df)}, in DB up to: {last_date}, splits: {len(ticker_splits)}) ({name})'
             )
     print(f'  total new candles inserted: {total_new}')
 
@@ -227,9 +263,9 @@ def _load_savings_miacr(pg) -> None:
 
     with pg.cursor() as cur:
         cur.execute(
-            'INSERT INTO stocks (ticker, name, splits) '
-            'VALUES (%s, %s, %s) ON CONFLICT (ticker) DO NOTHING',
-            [_SAVINGS_TICKER, _SAVINGS_NAME, json.dumps([])],
+            'INSERT INTO stocks (ticker, name) VALUES (%s, %s) '
+            'ON CONFLICT (ticker) DO NOTHING',
+            [_SAVINGS_TICKER, _SAVINGS_NAME],
         )
         rows = [
             (_SAVINGS_TICKER, df.date.iloc[i], p, p, p, p, 0.0, None)
@@ -248,16 +284,176 @@ def _load_savings_miacr(pg) -> None:
     )
 
 
-# ── Дивиденды ──────────────────────────────────────────────────────────────
+# ── UUID5-namespace на каждый класс событий ───────────────────────────────
+# Один и тот же набор атрибутов (ticker/date/...) даёт один и тот же UUID,
+# ON CONFLICT DO NOTHING обеспечивает идемпотентность повторных запусков.
 
-# Стабильный namespace для UUID5-идентификаторов событий: один и тот же
-# (kind, ticker, date) → один и тот же UUID, ON CONFLICT DO NOTHING на
-# повторных запусках.
 _DIVIDEND_EVENT_NAMESPACE = uuid.UUID('00dc6acf-fc00-4000-8000-000000000000')
+_STOCK_SPLIT_EVENT_NAMESPACE = uuid.UUID('00dc6acf-fc00-4000-8000-000000000001')
+_CB_RATE_EVENT_NAMESPACE = uuid.UUID('00dc6acf-fc00-4000-8000-000000000002')
 
 
 def _make_dividend_event_id(kind: str, ticker: str, date_iso: str) -> str:
     return str(uuid.uuid5(_DIVIDEND_EVENT_NAMESPACE, f'{kind}_{ticker}_{date_iso}'))
+
+
+def _make_split_event_id(ticker: str, date_iso: str) -> str:
+    return str(uuid.uuid5(_STOCK_SPLIT_EVENT_NAMESPACE, f'STOCK_SPLIT_{ticker}_{date_iso}'))
+
+
+def _make_cb_rate_event_id(rate_type: str, effective_iso: str) -> str:
+    return str(uuid.uuid5(_CB_RATE_EVENT_NAMESPACE, f'CB_RATE_DECISION_{rate_type}_{effective_iso}'))
+
+
+# ── Сплиты акций ───────────────────────────────────────────────────────────
+
+def _load_stock_splits(pg) -> None:
+    """Сплиты из `data/stocks/splits.csv` в `events` + связки event_tags.
+
+    Запускается **до** `_load_stocks_candles`: нормализация свечей
+    читает сплиты обратно из events. Фильтрация по двум множествам:
+    тикер должен быть в `stocks` и иметь company-тег в `tags`.
+    """
+    if not os.path.exists(SPLITS_CSV):
+        print(f'  {SPLITS_CSV} не найден — пропускаем сплиты')
+        return
+    df = pd.read_csv(SPLITS_CSV, dtype={'ticker': str, 'split_date': str})
+    df['split_date'] = pd.to_datetime(df['split_date']).dt.date
+    df['ratio'] = pd.to_numeric(df['ratio'])
+
+    with pg.cursor() as cur:
+        cur.execute('SELECT ticker FROM stocks')
+        known_tickers = {r[0] for r in cur.fetchall()}
+        cur.execute("SELECT code FROM tags WHERE type = 'company'")
+        company_tags = {r[0] for r in cur.fetchall()}
+
+    event_rows: list[tuple] = []
+    tag_rows: list[tuple] = []
+    skipped: list[str] = []
+    for _, r in df.iterrows():
+        ticker = str(r['ticker']).upper()
+        if ticker not in known_tickers:
+            skipped.append(f'{ticker} (нет в stocks)')
+            continue
+        if ticker not in company_tags:
+            skipped.append(f'{ticker} (нет company-тега)')
+            continue
+        d = r['split_date']
+        ratio = float(r['ratio'])
+        event_id = _make_split_event_id(ticker, d.isoformat())
+        payload = json.dumps({'ticker': ticker, 'ratio': ratio})
+        event_text = (
+            f'Сплит акций {ticker} {ratio:g}:1' if ratio >= 1
+            else f'Обратный сплит акций {ticker} 1:{1/ratio:g}'
+        )
+        event_rows.append((event_id, d, d, None, event_text, payload))
+        tag_rows.append((event_id, 'STOCK_SPLIT'))
+        tag_rows.append((event_id, ticker))
+
+    if not event_rows:
+        print(f'  events (сплиты): 0 (пропущено: {", ".join(skipped) or "—"})')
+        return
+
+    with pg.cursor() as cur:
+        cur.executemany(
+            'INSERT INTO events '
+            '(id, date_start, announce_date, date_end, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            'ON CONFLICT (id) DO NOTHING',
+            event_rows,
+        )
+        cur.executemany(
+            'INSERT INTO event_tags (event_id, tag_code) VALUES (%s, %s) '
+            'ON CONFLICT (event_id, tag_code) DO NOTHING',
+            tag_rows,
+        )
+    print(
+        f'  events (сплиты): {len(event_rows)} attempted, '
+        f'event_tags: {len(tag_rows)} attempted, '
+        f'пропущено: {len(skipped)}'
+    )
+
+
+# ── Решения ЦБ по ставке ──────────────────────────────────────────────────
+
+def _shift_business_day(d: date, offset: int) -> date:
+    """Сдвиг на N рабочих дней (без учёта праздников).
+
+    Используется только для приближения announcement_date решения ЦБ
+    как `effective_date - 1 BD`. Точная дата пресс-релиза лежит на
+    `cbr.ru/dkp/decisions/` — отдельная итерация.
+    """
+    return (pd.Timestamp(d) + pd.tseries.offsets.BDay(offset)).date()
+
+
+def _format_cb_event_text(rate_type: str, rate: float, prev: float | None, direction: str) -> str:
+    name = 'ключевой ставки' if rate_type == 'key' else 'ставки рефинансирования'
+    if direction == 'initial':
+        return f'Установление {name}: {rate:g}%'
+    if direction == 'hold':
+        return f'Сохранение {name} на уровне {rate:g}%'
+    arrow = '↑' if direction == 'hike' else '↓'
+    return f'Изменение {name}: {prev:g}% → {rate:g}% {arrow}'
+
+
+def _load_cb_rates(pg) -> None:
+    if not os.path.exists(CB_RATES_CSV):
+        print(f'  {CB_RATES_CSV} не найден — пропускаем ставку ЦБ')
+        return
+    df = pd.read_csv(CB_RATES_CSV, dtype={'rate_type': str})
+    df['effective_date'] = pd.to_datetime(df['effective_date']).dt.date
+    df['rate_pct'] = pd.to_numeric(df['rate_pct'])
+    df = df.sort_values(['rate_type', 'effective_date']).reset_index(drop=True)
+
+    event_rows: list[tuple] = []
+    tag_rows: list[tuple] = []
+    for rate_type, group in df.groupby('rate_type', sort=False):
+        prev_rate: float | None = None
+        for _, r in group.iterrows():
+            effective = r['effective_date']
+            rate = float(r['rate_pct'])
+            if prev_rate is None:
+                direction = 'initial'
+                change_bp = None
+            elif rate > prev_rate:
+                direction = 'hike'
+                change_bp = int(round((rate - prev_rate) * 100))
+            elif rate < prev_rate:
+                direction = 'cut'
+                change_bp = int(round((rate - prev_rate) * 100))
+            else:
+                direction = 'hold'
+                change_bp = 0
+
+            announce = _shift_business_day(effective, -1)
+            event_id = _make_cb_rate_event_id(rate_type, effective.isoformat())
+            payload = json.dumps({
+                'rate_type': rate_type,
+                'rate_pct': rate,
+                'rate_pct_prev': prev_rate,
+                'change_bp': change_bp,
+                'direction': direction,
+                'effective_date': effective.isoformat(),
+            })
+            event_text = _format_cb_event_text(rate_type, rate, prev_rate, direction)
+            event_rows.append((event_id, announce, announce, None, event_text, payload))
+            tag_rows.append((event_id, 'CB_RATE_DECISION'))
+            prev_rate = rate
+
+    with pg.cursor() as cur:
+        cur.executemany(
+            'INSERT INTO events '
+            '(id, date_start, announce_date, date_end, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            'ON CONFLICT (id) DO NOTHING',
+            event_rows,
+        )
+        cur.executemany(
+            'INSERT INTO event_tags (event_id, tag_code) VALUES (%s, %s) '
+            'ON CONFLICT (event_id, tag_code) DO NOTHING',
+            tag_rows,
+        )
+    print(f'  events (ЦБ ставка): {len(event_rows)} attempted')
 
 
 def _load_dividends(pg) -> None:
@@ -314,20 +510,32 @@ def _load_dividends(pg) -> None:
 def main() -> None:
     pg = psycopg.connect(PG_DSN, autocommit=False)
     try:
-        print('1. stocks + stock_candles (CSV → Postgres)')
-        _load_stocks_and_candles(pg)
+        print('1. stocks metadata (filename → Postgres)')
+        _load_stocks_metadata(pg)
         pg.commit()
 
-        print('2. risk_free_rate (RUONIA xlsx → Postgres)')
+        print('2. stock splits (splits.csv → events)')
+        _load_stock_splits(pg)
+        pg.commit()
+
+        print('3. stock_candles (CSV → Postgres, нормализация по сплитам из events)')
+        _load_stocks_candles(pg)
+        pg.commit()
+
+        print('4. risk_free_rate (RUONIA xlsx → Postgres)')
         _load_ruonia(pg)
         pg.commit()
 
-        print('3. SAVINGS_MIACR — накопительный счёт под MIACR (CSV → stock_candles)')
+        print('5. SAVINGS_MIACR — накопительный счёт под MIACR (CSV → stock_candles)')
         _load_savings_miacr(pg)
         pg.commit()
 
-        print('4. dividends (CSV → Postgres)')
+        print('6. dividends (CSV → events)')
         _load_dividends(pg)
+        pg.commit()
+
+        print('7. ЦБ ключевая ставка (cb_rates.csv → events)')
+        _load_cb_rates(pg)
         pg.commit()
 
         with pg.cursor() as cur:
@@ -340,6 +548,14 @@ def main() -> None:
                 "WHERE event LIKE 'Объявление дивидендов %%' OR event LIKE 'Выплата дивидендов %%'"
             )
             print(f'  events (дивиденды)       {cur.fetchone()[0]}')
+            cur.execute(
+                "SELECT COUNT(*) FROM event_tags WHERE tag_code = 'STOCK_SPLIT'"
+            )
+            print(f'  events (сплиты)          {cur.fetchone()[0]}')
+            cur.execute(
+                "SELECT COUNT(*) FROM event_tags WHERE tag_code = 'CB_RATE_DECISION'"
+            )
+            print(f'  events (ЦБ ставка)       {cur.fetchone()[0]}')
     finally:
         pg.close()
 

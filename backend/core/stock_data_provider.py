@@ -1,10 +1,10 @@
 """Поставщик данных по акциям: котировки, сплиты, дневные доходности.
 
-Источник — Postgres-таблица `stock_candles` (нормализованные по сплитам)
-и `stocks` (реестр + список сплитов в JSONB). Загружается через
-psycopg-pool из `core.postgres_db`. Контракт публичных методов
-сохранён по сравнению с CSV-версией: код выше по стеку (event_study,
-backtest_engine, API) не должен заметить переезд.
+Источник — Postgres-таблицы `stock_candles` (нормализованные по сплитам),
+`stocks` (реестр) и `events` (тег `STOCK_SPLIT` — сплиты как обычные
+события). Загружается через psycopg-pool из `core.postgres_db`. Контракт
+публичных методов сохранён по сравнению с CSV-версией: код выше по
+стеку (event_study, backtest_engine, API) не должен заметить переезд.
 
 Параметр `max_date` ограничивает видимый ряд верхней границей
 включительно — нужен бэктесту для no-lookahead.
@@ -35,14 +35,22 @@ class StockDataProvider:
         return [r[0] for r in rows]
 
     def get_ticker_splits(self, ticker: str) -> list[dict]:
-        """Список сплитов по тикеру из `stocks.splits` (JSONB)."""
+        """Список сплитов по тикеру из событий `STOCK_SPLIT` в `events`.
+
+        Формат элемента — `{'split_date': 'YYYY-MM-DD', 'ratio': float}`,
+        совместимый с прежним JSONB-полем `stocks.splits` (теперь дропнуто).
+        """
         with get_pool().connection() as con:
-            row = con.execute(
-                'SELECT splits FROM stocks WHERE ticker = %s', [ticker.upper()],
-            ).fetchone()
-        if row is None or row[0] is None:
-            return []
-        return list(row[0])
+            rows = con.execute(
+                "SELECT e.date_start, (e.payload->>'ratio')::float "
+                "FROM events e "
+                "JOIN event_tags et ON et.event_id = e.id "
+                "WHERE et.tag_code = 'STOCK_SPLIT' "
+                "  AND e.payload->>'ticker' = %s "
+                "ORDER BY e.date_start",
+                [ticker.upper()],
+            ).fetchall()
+        return [{'split_date': d.isoformat(), 'ratio': float(r)} for d, r in rows]
 
     def get_candles(
             self,
@@ -55,8 +63,9 @@ class StockDataProvider:
 
         В Postgres-БД котировки уже нормализованы по сплитам, поэтому
         параметр `normalized` сейчас игнорируется (всегда normalized).
-        Сырые значения будут восстановимы из `stocks.splits`, если
-        потребуется — пока такая необходимость не возникала.
+        Сырые значения восстановимы через `get_ticker_splits()` (события
+        `STOCK_SPLIT`), если потребуется — пока такая необходимость не
+        возникала.
 
         Поведение `max_date` поставщика: применяется как дополнительный
         потолок к `end_date`.
