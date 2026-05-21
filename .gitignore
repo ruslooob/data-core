@@ -5,7 +5,8 @@ __pycache__/
 /data/events/*
 !data/events/1_raw
 reports
-.claude
+.claude/projects/
+.claude/settings.local.json
 .ipynb_checkpoints
 /models
 *.log

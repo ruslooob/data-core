@@ -1,28 +1,23 @@
-"""Запуск backend и frontend в фоне с ротацией логов.
+"""Управление backend и frontend в фоне с ротацией логов.
 
 Использование:
-    python scripts/run_services.py             # оба сервиса
-    python scripts/run_services.py --backend   # только бек
-    python scripts/run_services.py --frontend  # только фронт
+    python scripts/run_services.py             # запустить (идемпотентно)
+    python scripts/run_services.py --stop      # остановить
+    python scripts/run_services.py --restart   # перезапустить
+    python scripts/run_services.py --backend   # ограничить действие беком
+    python scripts/run_services.py --frontend  # ограничить действие фронтом
 
-Идемпотентность: если порт уже занят — сервис пропускается, ошибки нет.
+Без флагов действия (--stop/--restart) — идемпотентный запуск: если порт
+уже занят, сервис пропускается без ошибки.
 
-Архитектура: для каждого сервиса спавнится детачнутый middleware-процесс
-(`scripts/_service_runner.py`), который читает stdout/stderr дочернего
-сервиса через pipe и пишет каждую строку через ротирующий хендлер.
-Ротация — по размеру (10 MB) **и** по дате (новый файл каждые сутки);
-хранится 7 архивов на каждый лог.
+Каждый сервис спавнится через детачнутый middleware `scripts/_service_runner.py`
+(там же реализована ротация и архивация логов).
 
 Логи:
     data/logs/backend.out.log   — uvicorn stdout (access)
     data/logs/backend.err.log   — uvicorn stderr (servicing + errors)
     data/logs/frontend.out.log  — vite stdout
     data/logs/frontend.err.log  — vite stderr
-
-Архивы: <name>.1 … <name>.7 (свежее — меньший номер).
-
-Timestamp в строках backend'а — через scripts/uvicorn_log_config.yaml.
-Vite пишется без timestamp.
 """
 from __future__ import annotations
 
@@ -31,20 +26,22 @@ import json
 import os
 import socket
 import subprocess
+import sys
+import time
 from pathlib import Path
+
+import psutil
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / 'data' / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# FIXME: захардкоженный путь до конкретного conda-окружения автора.
-# Костыль — не переносится на другие машины. Резолвить через sys.executable
-# или переменную окружения (CONDA_PREFIX / DATA_CORE_PYTHON).
-PY = r'C:/Users/Ruslan/anaconda3/envs/data-core/python.exe'
+PY = sys.executable
 BACKEND_PORT = 8080
 FRONTEND_PORT = 5173
 UVICORN_LOG_CONFIG = ROOT / 'scripts' / 'uvicorn_log_config.yaml'
 SERVICE_RUNNER = ROOT / 'scripts' / '_service_runner.py'
+PORT_RELEASE_GRACE_SEC = 1.0
 
 
 def _port_in_use(port: int) -> bool:
@@ -55,6 +52,42 @@ def _port_in_use(port: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def _listening_pids_by_port(ports: list[int]) -> dict[int, list[int]]:
+    targets = set(ports)
+    result: dict[int, set[int]] = {p: set() for p in ports}
+    for conn in psutil.net_connections(kind='tcp4'):
+        if (conn.status == psutil.CONN_LISTEN
+                and conn.laddr
+                and conn.laddr.port in targets
+                and conn.pid):
+            result[conn.laddr.port].add(conn.pid)
+    return {p: sorted(pids) for p, pids in result.items()}
+
+
+def _kill_tree(pid: int) -> None:
+    try:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+    victims = parent.children(recursive=True) + [parent]
+    for proc in victims:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(victims, timeout=3)
+
+
+def _stop_on_port(name: str, port: int, pids: list[int]) -> bool:
+    if not pids:
+        print(f'[{name}] на :{port} никого нет')
+        return False
+    for pid in pids:
+        _kill_tree(pid)
+        print(f'[{name}] прибил pid={pid} (с детьми)')
+    return True
 
 
 def _detached_flags() -> int:
@@ -124,14 +157,35 @@ def start_frontend() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--backend', action='store_true', help='запустить только бекенд')
-    parser.add_argument('--frontend', action='store_true', help='запустить только фронт')
+    parser.add_argument('--backend', action='store_true', help='ограничить действие беком (по умолчанию оба)')
+    parser.add_argument('--frontend', action='store_true', help='ограничить действие фронтом (по умолчанию оба)')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--stop', action='store_true', help='остановить, не запускать')
+    mode.add_argument('--restart', action='store_true', help='остановить и запустить заново')
     args = parser.parse_args()
-    both = not args.backend and not args.frontend
-    if args.backend or both:
-        start_backend()
-    if args.frontend or both:
-        start_frontend()
+
+    do_backend = args.backend or not args.frontend
+    do_frontend = args.frontend or not args.backend
+
+    targets: list[tuple[str, int]] = []
+    if do_backend:
+        targets.append(('backend', BACKEND_PORT))
+    if do_frontend:
+        targets.append(('frontend', FRONTEND_PORT))
+
+    if args.stop or args.restart:
+        snapshot = _listening_pids_by_port([port for _, port in targets])
+        killed_any = False
+        for name, port in targets:
+            killed_any |= _stop_on_port(name, port, snapshot[port])
+        if args.restart and killed_any:
+            time.sleep(PORT_RELEASE_GRACE_SEC)
+
+    if not args.stop:
+        if do_backend:
+            start_backend()
+        if do_frontend:
+            start_frontend()
 
 
 if __name__ == '__main__':

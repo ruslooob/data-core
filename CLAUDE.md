@@ -24,11 +24,6 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pip install
 # Тесты
 cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest tests/ -v
 
-# Запуск сервисов в фоне (идемпотентно, с ротацией логов)
-C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py             # оба
-C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py --backend   # только бек
-C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/run_services.py --frontend  # только фронт
-
 # Миграции БД через Liquibase (changelog в db/changelog/, см. docs/SPEC_DATABASE.md)
 docker compose --profile migrate run --rm liquibase update
 docker compose --profile migrate run --rm liquibase status
@@ -36,6 +31,8 @@ docker compose --profile migrate run --rm liquibase status
 # Загрузка референсных данных в Postgres после миграций (идемпотентно)
 C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_data_to_postgres.py
 ```
+
+Запуск, остановка, перезапуск и smoke-проверка стека (Postgres + backend + frontend) — `.claude/skills/run-data-core/` (slash-команда `/run-data-core`).
 
 Импорты внутри Python-кода остаются короткими: `from core.event_study import EventStudy`.
 
@@ -47,8 +44,8 @@ C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_data_to_postgre
 - Dash в ноутбуках: `jupyter_mode='inline'` (по умолчанию) или `jupyter_mode='external'` (только ссылка)
 - Запускать сервисы и команды самостоятельно — пользователь только кликает на ссылки и проверяет
 - Git-команды должны отрабатывать мгновенно — таймаут не более 10 секунд
-- Windows: для Vite использовать `host: '127.0.0.1'` (localhost не биндится). Перед запуском убивать зомби-процессы на занятых портах через `Stop-Process -Force`
-- Windows: если `Get-NetTCPConnection -LocalPort N` показывает PID, а `Get-Process -Id <PID>` его не находит — сокет «застрял» в ядре после форсированного убийства процесса. `taskkill /F /PID` тоже не поможет. Единственный надёжный фикс — перезагрузка. Не закапывайся в попытки убить зомби — сразу проси перезагрузить
+- Windows: для Vite использовать `host: '127.0.0.1'` (localhost не биндится). Для остановки/перезапуска занятых портов — `python scripts/run_services.py --stop` или `--restart` (см. skill)
+- Windows: если `Get-NetTCPConnection -LocalPort N` показывает PID, а `Get-Process -Id <PID>` его не находит — сокет «застрял» в ядре после форсированного убийства процесса. `taskkill /F /PID` также не поможет. Единственный надёжный фикс — перезагрузка. Не углубляться в попытки убить зомби — сразу запрашивать у пользователя перезагрузку
 - Не плодить новые порты — переиспользовать те, что в спецификации (backend 8080, frontend 5173)
 
 ## Процесс разработки
