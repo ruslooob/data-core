@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Эмитенты и корпоративные раскрытия (см. docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md).
+
+        Вводится таблица emitters как самостоятельная сущность «юр.лицо»;
+        stocks расширяется ссылкой на эмитента и набором характеристик
+        ценной бумаги из MOEX ISS. В словарь тегов добавляются четыре кода
+        для типов корпоративных событий первой волны (P0).
+
+        emitters.inn — обязательный, уникальный (физически один ИНН не
+        может принадлежать двум юр.лицам). По нему идёт matching с
+        порталом e-disclosure.ru.
+
+        stocks.emitter_id — nullable, чтобы миграция не падала на
+        существующих тикерах без эмитента; после Этапа 3 загрузчика
+        ожидается отсутствие NULL.
+
+        FK без cascade: эмитент удаляется крайне редко (только вручную),
+        и удаление эмитента не должно молча уносить ценные бумаги.
+    -->
+
+    <changeSet id="007-create-emitters" author="ruslan">
+        <createTable tableName="emitters">
+            <column name="emitter_id" type="INTEGER">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="inn" type="VARCHAR">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="emitters_inn_uniq"/>
+            </column>
+            <column name="okpo" type="VARCHAR"/>
+            <column name="title" type="VARCHAR">
+                <constraints nullable="false"/>
+            </column>
+            <column name="e_disclosure_company_id" type="INTEGER"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="007-extend-stocks-security-card" author="ruslan">
+        <addColumn tableName="stocks">
+            <column name="emitter_id" type="INTEGER"/>
+            <column name="isin" type="VARCHAR"/>
+            <column name="regnumber" type="VARCHAR"/>
+            <column name="full_name" type="VARCHAR"/>
+            <column name="short_name" type="VARCHAR"/>
+            <column name="latname" type="VARCHAR"/>
+            <column name="security_type" type="VARCHAR"/>
+            <column name="list_level" type="SMALLINT"/>
+            <column name="issue_size" type="BIGINT"/>
+            <column name="face_value" type="DOUBLE PRECISION"/>
+            <column name="face_unit" type="VARCHAR"/>
+            <column name="issue_date" type="DATE"/>
+            <column name="primary_boardid" type="VARCHAR"/>
+        </addColumn>
+
+        <addForeignKeyConstraint
+            baseTableName="stocks" baseColumnNames="emitter_id"
+            referencedTableName="emitters" referencedColumnNames="emitter_id"
+            constraintName="stocks_emitter_id_fkey"/>
+    </changeSet>
+
+    <changeSet id="007-corporate-disclosure-tags" author="ruslan">
+        <insert tableName="tags">
+            <column name="code" value="REPORT_IFRS"/>
+            <column name="name" value="Раскрытие отчётности МСФО / US GAAP"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code" value="REPORT_RSBU_ANNUAL"/>
+            <column name="name" value="Раскрытие годовой бухгалтерской отчётности РСБУ"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code" value="BUYBACK_ANNOUNCE"/>
+            <column name="name" value="Объявление программы обратного выкупа"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code" value="BUYBACK_EXECUTE"/>
+            <column name="name" value="Приобретение эмитентом собственных акций"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+
+        <rollback>
+            <sql>
+                DELETE FROM tags WHERE code IN (
+                    'REPORT_IFRS',
+                    'REPORT_RSBU_ANNUAL',
+                    'BUYBACK_ANNOUNCE',
+                    'BUYBACK_EXECUTE'
+                )
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
