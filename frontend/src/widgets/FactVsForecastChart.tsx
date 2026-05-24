@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart,
+  createSeriesMarkers,
   CrosshairMode,
   LineSeries,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts'
 
@@ -13,6 +15,8 @@ interface FactVsForecastChartProps {
   dates: string[]
   actual: number[]
   predicted: number[]
+  /** Порог подсветки выбросов в σ остатков. 0 = выкл. */
+  highlightThreshold: number
 }
 
 interface TooltipState {
@@ -34,17 +38,42 @@ interface TooltipState {
  * При hover курсора показывается тултип с фактом, прогнозом и их разницей
  * (остатком модели на этом дне).
  */
-export function FactVsForecastChart({ dates, actual, predicted }: FactVsForecastChartProps) {
+export function FactVsForecastChart({
+  dates,
+  actual,
+  predicted,
+  highlightThreshold,
+}: FactVsForecastChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const actualRef = useRef<ISeriesApi<'Line'> | null>(null)
   const predictedRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const dataRef = useRef<{ dates: string[]; actual: number[]; predicted: number[] }>({
     dates: [],
     actual: [],
     predicted: [],
   })
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+
+  const outlierDates = useMemo(() => {
+    if (highlightThreshold <= 0) return new Set<string>()
+    const n = Math.min(dates.length, actual.length, predicted.length)
+    if (n < 2) return new Set<string>()
+    const residuals: number[] = []
+    for (let i = 0; i < n; i++) residuals.push(actual[i] - predicted[i])
+    const mean = residuals.reduce((s, r) => s + r, 0) / n
+    let sumSq = 0
+    for (const r of residuals) sumSq += (r - mean) * (r - mean)
+    const sigma = Math.sqrt(sumSq / (n - 1))
+    if (sigma === 0) return new Set<string>()
+    const limit = highlightThreshold * sigma
+    const out = new Set<string>()
+    for (let i = 0; i < n; i++) {
+      if (Math.abs(residuals[i]) > limit) out.add(dates[i])
+    }
+    return out
+  }, [dates, actual, predicted, highlightThreshold])
 
   // Init chart once
   useEffect(() => {
@@ -152,6 +181,7 @@ export function FactVsForecastChart({ dates, actual, predicted }: FactVsForecast
       chartRef.current = null
       actualRef.current = null
       predictedRef.current = null
+      markersRef.current = null
     }
   }, [])
 
@@ -181,6 +211,20 @@ export function FactVsForecastChart({ dates, actual, predicted }: FactVsForecast
     predictedSeries.setData(predictedData)
     chart.timeScale().fitContent()
   }, [dates, actual, predicted])
+
+  // Обновление маркеров-выбросов
+  useEffect(() => {
+    const actualSeries = actualRef.current
+    if (!actualSeries) return
+    if (!markersRef.current) markersRef.current = createSeriesMarkers(actualSeries, [])
+    const markers = Array.from(outlierDates).map((d) => ({
+      time: d as Time,
+      position: 'inBar' as const,
+      color: '#e53935',
+      shape: 'circle' as const,
+    }))
+    markersRef.current.setMarkers(markers)
+  }, [outlierDates])
 
   if (dates.length === 0) {
     return <div style={emptyStateStyle}>Нет данных</div>

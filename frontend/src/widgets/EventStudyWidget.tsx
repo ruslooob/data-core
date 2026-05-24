@@ -51,7 +51,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [daysBefore, setDaysBefore] = useState<number | null>(10)
   const [daysAfter, setDaysAfter] = useState<number | null>(10)
   const [estimationWindow, setEstimationWindow] = useState<number | null>(200)
-  const [outlierThreshold, setOutlierThreshold] = useState(0) // 0 = выкл, 2-5 = σ
+  const [outlierThreshold, setOutlierThreshold] = useState(0) // 0 = выкл, 2-5 = σ — пересчитывает модель
+  const [highlightThreshold, setHighlightThreshold] = useState(0) // 0 = выкл, 2-5 = σ — только подсветка маркерами
   const [result, setResult] = useState<EventStudyResult | null>(null)
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -224,6 +225,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
   return (
     <div style={rootContainerStyle}>
+      <div style={sectionHeaderStyle}>CAR в окне события</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
         <label style={labelStyle}>
           Тикер{isLockedToLeader && ' (ведущий)'}
@@ -337,12 +339,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
       {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
 
-      {result && result.outliersRemoved > 0 && (
-        <div style={{ fontSize: 12, color: '#e65100', padding: '2px 0' }}>
-          Из оценочного окна убрано выбросов: {result.outliersRemoved}
-        </div>
-      )}
-
       {isBlockedNoLeader ? (
         <div style={placeholderStyle}>
           Выберите ведущий price chart в группе
@@ -351,7 +347,6 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         </div>
       ) : result && resultWindow ? (
         <>
-          <div style={chartLabelStyle}>CAR в окне события</div>
           <div style={carChartContainerStyle}>
             <CarChart
               result={result}
@@ -360,12 +355,34 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
               group={group}
             />
           </div>
-          <div style={chartLabelStyle}>Оценочное окно: факт vs прогноз</div>
+          <div style={sectionHeaderStyle}>Оценочное окно: факт vs прогноз</div>
+          <div style={diagnosticControlsStyle}>
+            <label style={labelStyle}>
+              Подсветка выбросов
+              <select
+                value={highlightThreshold}
+                onChange={(e) => setHighlightThreshold(Number(e.target.value))}
+                style={selectStyle}
+              >
+                {OUTLIER_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            {result.outliersRemoved > 0 && (
+              <div style={outliersHintStyle}>
+                Фильтр модели уже убрал {result.outliersRemoved}{' '}
+                {pluralizeDays(result.outliersRemoved)} — здесь видны выбросы
+                из оставшегося оценочного окна.
+              </div>
+            )}
+          </div>
           <div style={factVsForecastContainerStyle}>
             <FactVsForecastChart
               dates={result.estimationDates}
               actual={result.estimationActual}
               predicted={result.estimationPredicted}
+              highlightThreshold={highlightThreshold}
             />
           </div>
         </>
@@ -374,6 +391,15 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
       )}
     </div>
   )
+}
+
+function pluralizeDays(n: number): string {
+  const lastTwo = n % 100
+  if (lastTwo >= 11 && lastTwo <= 14) return 'дней'
+  const last = n % 10
+  if (last === 1) return 'день'
+  if (last >= 2 && last <= 4) return 'дня'
+  return 'дней'
 }
 
 function ShowEventsToggleButton({
@@ -501,12 +527,28 @@ const factVsForecastContainerStyle: React.CSSProperties = {
   flexDirection: 'column',
 }
 
-const chartLabelStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#666',
-  padding: '0 4px',
-  marginBottom: -4,
+const sectionHeaderStyle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 600,
+  color: '#333',
+  padding: '4px 0 2px',
+  borderBottom: '1px solid #e0e0e0',
   flexShrink: 0,
+}
+
+const diagnosticControlsStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 16,
+  alignItems: 'center',
+  flexShrink: 0,
+}
+
+const outliersHintStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#e65100',
+  flex: 1,
+  minWidth: 220,
 }
 
 const placeholderStyle: React.CSSProperties = {
