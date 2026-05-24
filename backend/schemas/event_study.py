@@ -17,6 +17,9 @@ class EventStudyResponse(CamelModel):
     car: float
     n_days: int
     estimation_std: float
+    estimation_dates: list[str]
+    estimation_actual: list[float]
+    estimation_predicted: list[float]
     outliers_removed: int
 
 

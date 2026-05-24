@@ -51,6 +51,7 @@ const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }
   'entity-editor': { width: 1280, height: 960 },
   'research-report': { width: 900, height: 700 },
   'event-effect-analysis': { width: 1100, height: 700 },
+  'event-study': { width: 1280, height: 720 },
 }
 
 export function WidgetCanvas() {

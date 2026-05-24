@@ -317,6 +317,9 @@ export interface EventStudyResult {
   nDays: number
   estimationStd: number
   outliersRemoved: number
+  estimationDates: string[]
+  estimationActual: number[]
+  estimationPredicted: number[]
 }
 
 // ── Агрегированный event study ──────────────────────────────────────────────

@@ -7,6 +7,7 @@ import type {
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
+import { FactVsForecastChart } from './FactVsForecastChart'
 import { NumberField } from './NumberField'
 import {
   groupEventBus,
@@ -222,7 +223,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+    <div style={rootContainerStyle}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
         <label style={labelStyle}>
           Тикер{isLockedToLeader && ' (ведущий)'}
@@ -342,44 +343,35 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {isBlockedNoLeader ? (
-          <div
-            style={{
-              flex: 1,
-              color: '#888',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              padding: 16,
-            }}
-          >
-            Выберите ведущий price chart в группе
-            <br />
-            (кнопка ⟳ на нужном графике)
+      {isBlockedNoLeader ? (
+        <div style={placeholderStyle}>
+          Выберите ведущий price chart в группе
+          <br />
+          (кнопка ⟳ на нужном графике)
+        </div>
+      ) : result && resultWindow ? (
+        <>
+          <div style={chartLabelStyle}>CAR в окне события</div>
+          <div style={carChartContainerStyle}>
+            <CarChart
+              result={result}
+              daysBefore={resultWindow.before}
+              daysAfter={resultWindow.after}
+              group={group}
+            />
           </div>
-        ) : result && resultWindow ? (
-          <CarChart
-            result={result}
-            daysBefore={resultWindow.before}
-            daysAfter={resultWindow.after}
-            group={group}
-          />
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              color: '#888',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            Нажми «Рассчитать»
+          <div style={chartLabelStyle}>Оценочное окно: факт vs прогноз</div>
+          <div style={factVsForecastContainerStyle}>
+            <FactVsForecastChart
+              dates={result.estimationDates}
+              actual={result.estimationActual}
+              predicted={result.estimationPredicted}
+            />
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <div style={placeholderStyle}>Нажми «Рассчитать»</div>
+      )}
     </div>
   )
 }
@@ -482,5 +474,49 @@ const calcButtonStyle: React.CSSProperties = {
   border: 'none',
   borderRadius: 6,
   cursor: 'pointer',
+}
+
+const CAR_CHART_HEIGHT = 380
+const FACT_VS_FORECAST_HEIGHT = 280
+
+const rootContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  height: '100%',
+  overflowY: 'auto',
+}
+
+const carChartContainerStyle: React.CSSProperties = {
+  height: CAR_CHART_HEIGHT,
+  flexShrink: 0,
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+const factVsForecastContainerStyle: React.CSSProperties = {
+  height: FACT_VS_FORECAST_HEIGHT,
+  flexShrink: 0,
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+const chartLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
+  padding: '0 4px',
+  marginBottom: -4,
+  flexShrink: 0,
+}
+
+const placeholderStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 200,
+  color: '#888',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  textAlign: 'center',
+  padding: 16,
 }
 

@@ -36,6 +36,9 @@ class EventStudyResult:
     estimation_residuals: list[float] = field(default_factory=list)
     # ↑ дневные AR на оценочном окне (после фильтрации выбросов, если она была);
     # используются для построения baseline-фона через нарезку скользящим окном
+    estimation_dates: list[str] = field(default_factory=list)
+    estimation_actual: list[float] = field(default_factory=list)
+    estimation_predicted: list[float] = field(default_factory=list)
     outliers_removed: int = 0  # сколько выбросов убрано из оценочного окна
 
 
@@ -232,6 +235,9 @@ class EventStudy:
             n_days=len(ev_idx),
             estimation_std=estimation_std,
             estimation_residuals=residuals_est.tolist(),
+            estimation_dates=[d.strftime('%Y-%m-%d') for d in common_est],
+            estimation_actual=stock_est.values.tolist(),
+            estimation_predicted=expected_est.values.tolist(),
             outliers_removed=outliers_removed,
         )
 

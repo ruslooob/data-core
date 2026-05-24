@@ -45,6 +45,9 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         car=result.car,
         n_days=result.n_days,
         estimation_std=result.estimation_std,
+        estimation_dates=result.estimation_dates,
+        estimation_actual=result.estimation_actual,
+        estimation_predicted=result.estimation_predicted,
         outliers_removed=result.outliers_removed,
     )
 
