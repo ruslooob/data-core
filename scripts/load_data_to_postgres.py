@@ -4,6 +4,11 @@
 run liquibase update`). Этот скрипт льёт **только данные**:
 
 - `stocks` — метаданные тикеров из имён файлов `data/stocks/<TICKER>_<NAME>_1day.txt`.
+- `emitters` + расширение `stocks` (ISIN, тип, листинг, объём выпуска и т.д.) —
+  из `data/stocks/moex_securities.csv` и `data/stocks/moex_emitters.csv`
+  (готовятся `scripts/load_moex_securities_list.py`). Обогащаются только
+  тикеры, уже существующие в `stocks`; синтетические инструменты
+  (SAVINGS_MIACR и пр.) пропускаются.
 - Сплиты акций — из `data/stocks/splits.csv` в `events` как `STOCK_SPLIT`,
   с тегами {STOCK_SPLIT, <ticker>}. Заливаются **до** свечей: нормализация
   цен в `_load_stocks_and_candles` читает сплиты обратно из `events`.
@@ -22,6 +27,12 @@ run liquibase update`). Этот скрипт льёт **только данны
 - Решения ЦБ по ключевой ставке — из `data/macro/cb_rates.csv` в `events`
   как `CB_RATE_DECISION` (`announcement_date = effective_date - 1 BD`,
   payload содержит ставку до/после и направление).
+- Корпоративные раскрытия с e-disclosure.ru — из `data/events/edisclosure_*.json`
+  (готовятся `scripts/load_edisclosure_events.py`). Каждое событие — строка
+  в `events` с детерминированным id `edisc:<pseudoGUID>`. Связи: тег типа
+  события (`REPORT_IFRS`/`REPORT_RSBU_ANNUAL`/`BUYBACK_ANNOUNCE`/`BUYBACK_EXECUTE`)
+  плюс тег на каждую бумагу эмитента (дублирование тегов для эмитента
+  с несколькими бумагами — осознанное решение, см. SPEC_CORP_DISCLOSURE).
 
 Все INSERT'ы через `ON CONFLICT DO NOTHING` — повторный запуск безопасен.
 
@@ -36,6 +47,7 @@ event_tags для дивидендных, сплит- и ЦБ-событий —
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import sys
@@ -53,6 +65,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STOCKS_DIR = os.path.join(ROOT, 'data', 'stocks')
 SPLITS_CSV = os.path.join(STOCKS_DIR, 'splits.csv')
 CB_RATES_CSV = os.path.join(ROOT, 'data', 'macro', 'cb_rates.csv')
+MOEX_SECURITIES_CSV = os.path.join(STOCKS_DIR, 'moex_securities.csv')
+MOEX_EMITTERS_CSV = os.path.join(STOCKS_DIR, 'moex_emitters.csv')
+EDISCLOSURE_EVENTS_GLOB = os.path.join(ROOT, 'data', 'events', 'edisclosure_*.json')
 
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
@@ -205,6 +220,83 @@ def _load_stocks_candles(pg) -> None:
                 f'(in file: {len(df)}, in DB up to: {last_date}, splits: {len(ticker_splits)}) ({name})'
             )
     print(f'  total new candles inserted: {total_new}')
+
+
+# ── MOEX securities + emitters ─────────────────────────────────────────────
+
+def _load_moex_securities_and_emitters(pg) -> None:
+    """Заливает эмитентов и обогащает карточки бумаг из MOEX-снапшота.
+
+    Порядок: сначала emitters (FK-цель), потом UPDATE по stocks.
+    Обогащаются только тикеры, уже присутствующие в stocks (что есть
+    в БД, но нет в MOEX-выгрузке — например, синтетический
+    SAVINGS_MIACR — остаются с emitter_id IS NULL).
+    """
+    if not os.path.exists(MOEX_SECURITIES_CSV) or not os.path.exists(MOEX_EMITTERS_CSV):
+        print('  MOEX-снапшот отсутствует — пропускаем эмитентов и расширение stocks')
+        return
+
+    with open(MOEX_SECURITIES_CSV, encoding='utf-8') as fh:
+        all_secs = list(csv.DictReader(fh))
+    with open(MOEX_EMITTERS_CSV, encoding='utf-8') as fh:
+        all_emits = {e['emitter_id']: e for e in csv.DictReader(fh)}
+
+    with pg.cursor() as cur:
+        cur.execute('SELECT ticker FROM stocks')
+        known_tickers = {r[0] for r in cur.fetchall()}
+
+    enrichable = [s for s in all_secs if s['ticker'] in known_tickers]
+    needed_emitter_ids = {s['emitter_id'] for s in enrichable}
+    relevant_emitters = [all_emits[eid] for eid in needed_emitter_ids if eid in all_emits]
+
+    emitter_rows = [
+        (int(e['emitter_id']), e['inn'], e['okpo'] or None, e['title'])
+        for e in relevant_emitters
+    ]
+    security_rows = [
+        (
+            int(s['emitter_id']),
+            s['isin'] or None,
+            s['regnumber'] or None,
+            s['full_name'] or None,
+            s['short_name'] or None,
+            s['latname'] or None,
+            s['security_type'] or None,
+            int(s['list_level']) if s['list_level'] else None,
+            int(s['issue_size']) if s['issue_size'] else None,
+            float(s['face_value']) if s['face_value'] else None,
+            s['face_unit'] or None,
+            s['issue_date'] or None,
+            s['primary_boardid'] or None,
+            s['ticker'],
+        )
+        for s in enrichable
+    ]
+
+    with pg.cursor() as cur:
+        cur.executemany(
+            'INSERT INTO emitters (emitter_id, inn, okpo, title) '
+            'VALUES (%s, %s, %s, %s) ON CONFLICT (emitter_id) DO NOTHING',
+            emitter_rows,
+        )
+        cur.executemany(
+            'UPDATE stocks SET '
+            'emitter_id = %s, isin = %s, regnumber = %s, '
+            'full_name = %s, short_name = %s, latname = %s, '
+            'security_type = %s, list_level = %s, issue_size = %s, '
+            'face_value = %s, face_unit = %s, issue_date = %s, '
+            'primary_boardid = %s '
+            'WHERE ticker = %s',
+            security_rows,
+        )
+
+    print(f'  emitters: {len(emitter_rows)} attempted')
+    print(f'  stocks обогащено: {len(enrichable)} (из {len(known_tickers)} в БД)')
+
+    moex_tickers = {s['ticker'] for s in all_secs}
+    not_in_moex = sorted(known_tickers - moex_tickers)
+    if not_in_moex:
+        print(f'  без MOEX-карточки (emitter_id останется NULL): {", ".join(not_in_moex)}')
 
 
 # ── RUONIA ─────────────────────────────────────────────────────────────────
@@ -505,6 +597,119 @@ def _load_dividends(pg) -> None:
     print(f'  events (дивиденды): {len(rows)} rows attempted')
 
 
+# ── Корпоративные раскрытия с e-disclosure ────────────────────────────────
+
+# Точный текст eventName → код нашего тега. Нормализация — strip().
+# При обнаружении нового варианта (например, с вариативной пунктуацией)
+# дополняется здесь.
+EDISCLOSURE_EVENT_NAME_TO_TAG: dict[str, str] = {
+    'Раскрытие эмитентом бухгалтерской отчетности в стандартах МСФО или US GAAP':
+        'REPORT_IFRS',
+    'Раскрытие в сети Интернет годовой бухгалтерской отчетности':
+        'REPORT_RSBU_ANNUAL',
+    'Принятие решения о приобретении размещённых эмитентом акций':
+        'BUYBACK_ANNOUNCE',
+    'Принятие решения о приобретении размещенных эмитентом акций':  # без «ё»
+        'BUYBACK_ANNOUNCE',
+    'Приобретение эмитентом собственных голосующих акций (долей) или депозитарных расписок на акции эмитента':
+        'BUYBACK_EXECUTE',
+}
+
+
+def _load_edisclosure_events(pg) -> None:
+    """Заливает корпоративные события из data/events/edisclosure_*.json.
+
+    На каждое событие: одна строка в `events` (id = `edisc:<pseudoGUID>`),
+    плюс связи в `event_tags` — тег типа события и теги всех бумаг
+    эмитента из stocks. Параллельно заполняется emitters.e_disclosure_company_id.
+    """
+    files = sorted(glob(EDISCLOSURE_EVENTS_GLOB))
+    if not files:
+        print('  Нет файлов edisclosure_*.json — пропускаем')
+        return
+
+    with pg.cursor() as cur:
+        cur.execute("SELECT code FROM tags WHERE type = 'company'")
+        company_tags = {r[0] for r in cur.fetchall()}
+        cur.execute(
+            'SELECT emitter_id, ticker FROM stocks WHERE emitter_id IS NOT NULL'
+        )
+        tickers_by_emitter: dict[int, list[str]] = {}
+        for emitter_id, ticker in cur.fetchall():
+            if ticker in company_tags:
+                tickers_by_emitter.setdefault(emitter_id, []).append(ticker)
+
+    event_rows: list[tuple] = []
+    tag_rows: list[tuple] = []
+    company_id_updates: dict[int, int] = {}  # emitter_id → e_disclosure_company_id
+    unknown_types: dict[str, str] = {}  # event_name → пример-файл
+    files_without_tickers: list[str] = []
+
+    for path in files:
+        with open(path, encoding='utf-8') as fh:
+            snap = json.load(fh)
+        inn = snap['inn']
+        emitter_id = snap['emitter_id']
+        tickers = tickers_by_emitter.get(emitter_id, [])
+        if not tickers:
+            files_without_tickers.append(os.path.basename(path))
+            continue
+
+        for raw in snap['events']:
+            event_name = raw['eventName'].strip()
+            tag = EDISCLOSURE_EVENT_NAME_TO_TAG.get(event_name)
+            if tag is None:
+                unknown_types.setdefault(event_name, os.path.basename(path))
+                continue
+            pseudo_guid = raw['pseudoGUID']
+            event_id = f'edisc:{pseudo_guid}'
+            event_date = raw['eventDate'][:10]
+            pub_date = raw['pubDate'][:10]
+            payload = json.dumps({
+                'pseudoGUID': pseudo_guid,
+                'inn': inn,
+                'emitter_id': emitter_id,
+                'company_id_edisclosure': raw.get('companyID'),
+                'agency': raw.get('agency'),
+            })
+            event_rows.append((event_id, event_date, pub_date, None, event_name, payload))
+            tag_rows.append((event_id, tag))
+            for ticker in tickers:
+                tag_rows.append((event_id, ticker))
+
+            cid = raw.get('companyID')
+            if cid is not None and emitter_id not in company_id_updates:
+                company_id_updates[emitter_id] = cid
+
+    with pg.cursor() as cur:
+        cur.executemany(
+            'INSERT INTO events (id, date_start, announce_date, date_end, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            'ON CONFLICT (id) DO NOTHING',
+            event_rows,
+        )
+        cur.executemany(
+            'INSERT INTO event_tags (event_id, tag_code) VALUES (%s, %s) '
+            'ON CONFLICT (event_id, tag_code) DO NOTHING',
+            tag_rows,
+        )
+        cur.executemany(
+            'UPDATE emitters SET e_disclosure_company_id = %s '
+            'WHERE emitter_id = %s AND e_disclosure_company_id IS NULL',
+            [(cid, eid) for eid, cid in company_id_updates.items()],
+        )
+
+    print(f'  events (e-disclosure): {len(event_rows)} attempted, '
+          f'event_tags: {len(tag_rows)} attempted, '
+          f'company_id обновлено у {len(company_id_updates)} эмитентов')
+    if files_without_tickers:
+        print(f'  пропущено файлов (эмитент не в stocks): {len(files_without_tickers)}')
+    if unknown_types:
+        print(f'  WARNING: {len(unknown_types)} неизвестных типов событий:')
+        for name, fname in list(unknown_types.items())[:5]:
+            print(f'    "{name[:80]}" ({fname})')
+
+
 # ── Главный сценарий ───────────────────────────────────────────────────────
 
 def main() -> None:
@@ -514,35 +719,45 @@ def main() -> None:
         _load_stocks_metadata(pg)
         pg.commit()
 
-        print('2. stock splits (splits.csv → events)')
+        print('2. MOEX securities + emitters (CSV → emitters, UPDATE stocks)')
+        _load_moex_securities_and_emitters(pg)
+        pg.commit()
+
+        print('3. stock splits (splits.csv → events)')
         _load_stock_splits(pg)
         pg.commit()
 
-        print('3. stock_candles (CSV → Postgres, нормализация по сплитам из events)')
+        print('4. stock_candles (CSV → Postgres, нормализация по сплитам из events)')
         _load_stocks_candles(pg)
         pg.commit()
 
-        print('4. risk_free_rate (RUONIA xlsx → Postgres)')
+        print('5. risk_free_rate (RUONIA xlsx → Postgres)')
         _load_ruonia(pg)
         pg.commit()
 
-        print('5. SAVINGS_MIACR — накопительный счёт под MIACR (CSV → stock_candles)')
+        print('6. SAVINGS_MIACR — накопительный счёт под MIACR (CSV → stock_candles)')
         _load_savings_miacr(pg)
         pg.commit()
 
-        print('6. dividends (CSV → events)')
+        print('7. dividends (CSV → events)')
         _load_dividends(pg)
         pg.commit()
 
-        print('7. ЦБ ключевая ставка (cb_rates.csv → events)')
+        print('8. ЦБ ключевая ставка (cb_rates.csv → events)')
         _load_cb_rates(pg)
+        pg.commit()
+
+        print('9. e-disclosure corporate events (JSON → events + event_tags)')
+        _load_edisclosure_events(pg)
         pg.commit()
 
         with pg.cursor() as cur:
             print('\nfinal counts:')
-            for tbl in ('stocks', 'stock_candles', 'risk_free_rate'):
+            for tbl in ('stocks', 'stock_candles', 'risk_free_rate', 'emitters'):
                 cur.execute(f'SELECT COUNT(*) FROM {tbl}')
                 print(f'  {tbl:24s} {cur.fetchone()[0]}')
+            cur.execute('SELECT COUNT(*) FROM stocks WHERE emitter_id IS NULL')
+            print(f'  stocks без эмитента      {cur.fetchone()[0]}')
             cur.execute(
                 "SELECT COUNT(*) FROM events "
                 "WHERE event LIKE 'Объявление дивидендов %%' OR event LIKE 'Выплата дивидендов %%'"
@@ -556,6 +771,14 @@ def main() -> None:
                 "SELECT COUNT(*) FROM event_tags WHERE tag_code = 'CB_RATE_DECISION'"
             )
             print(f'  events (ЦБ ставка)       {cur.fetchone()[0]}')
+            cur.execute(
+                "SELECT tag_code, COUNT(*) FROM event_tags "
+                "WHERE tag_code IN ('REPORT_IFRS','REPORT_RSBU_ANNUAL',"
+                "                   'BUYBACK_ANNOUNCE','BUYBACK_EXECUTE') "
+                "GROUP BY tag_code ORDER BY tag_code"
+            )
+            for tag, n in cur.fetchall():
+                print(f'  events ({tag:20s}) {n}')
     finally:
         pg.close()
 
