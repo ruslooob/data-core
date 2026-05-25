@@ -156,14 +156,26 @@ def _print_list() -> None:
         print(f'  {ldr.name:22s}  fetch={has_fetch}  load=[{stages}]  — {ldr.description}')
 
 
-def _run_fetches(selected: list[str]) -> None:
+def _run_fetches(selected: list[str]) -> list[str]:
+    """Запускает fetch для каждого выбранного лоадера. Ошибки отдельных
+    источников не валят прогон — возвращается список сбойных имён,
+    оркестратор продолжает с оставшимися источниками. Так частичная
+    недоступность одного API не блокирует обновление всех остальных.
+    """
+    failed: list[str] = []
     for name in selected:
         ldr = _by_name(name)
         if ldr.fetch is None:
             print(f'== fetch: {name} — нет стадии (TODO), пропуск ==')
             continue
         print(f'== fetch: {name} ==')
-        ldr.fetch()
+        try:
+            ldr.fetch()
+        except Exception as e:
+            failed.append(name)
+            print(f'\nWARNING fetch {name} упал: {e!r} — продолжаем без него',
+                  file=sys.stderr)
+    return failed
 
 
 def _run_loads(selected_names: set[str], pg) -> None:

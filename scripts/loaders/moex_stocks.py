@@ -344,7 +344,13 @@ def _update_stock_ticker(con, ticker: str) -> None:
 
 def fetch_stocks(tickers: list[str] | None = None) -> None:
     """Инкрементально обновляет котировки акций. По умолчанию — все
-    тикеры из stocks, кроме индексов/ETF/синтетики."""
+    тикеры из stocks, кроме индексов/ETF/синтетики.
+
+    Частичные сбои (отдельные тикеры — делистинг, недоступность ISS-карточки)
+    логируются как WARNING и не останавливают прогон. Это позволяет
+    оркестратору продолжить с другими источниками; «застрявшие» тикеры
+    видны в выводе и разбираются вручную.
+    """
     import psycopg
 
     pg_dsn = os.environ.get(
@@ -360,11 +366,10 @@ def fetch_stocks(tickers: list[str] | None = None) -> None:
                 _update_stock_ticker(con, ticker)
             except (SanityError, OverlapError, RuntimeError) as e:
                 failures.append(ticker)
-                print(f'  {ticker}: остановлен — {e}', file=sys.stderr)
+                print(f'  {ticker}: пропущен — {e}', file=sys.stderr)
         if failures:
-            raise RuntimeError(
-                f'{len(failures)} тикеров завершились ошибкой: {failures}'
-            )
+            print(f'\nWARNING: {len(failures)} тикеров пропущено: {failures}',
+                  file=sys.stderr)
 
 
 # ── fetch: индексы (полная перезапись истории) ────────────────────────────
