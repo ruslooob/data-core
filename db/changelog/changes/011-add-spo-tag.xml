@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Тег SPO — Secondary Public Offering, отчуждение собственных или
+        казначейских акций эмитента (или его подконтрольной организации)
+        в рынок. Симметричен BUYBACK_EXECUTE по экономическому смыслу:
+        BUYBACK_EXECUTE сокращает предложение, SPO его увеличивает.
+        Реакция котировок в event-study противоположна.
+
+        Покрывает два типа на e-disclosure (см. drafts/SPEC_CORP_DISCLOSURE_DRAFT.md):
+        - «Отчуждение эмитентом собственных голосующих акций (долей)…»
+        - «Отчуждение подконтрольной эмитенту организацией голосующих
+          акций (долей) эмитента…»
+
+        Заодно в этой же итерации в словарь EDISCLOSURE_EVENT_NAME_TO_TAG
+        добавляется маппинг «Приобретение подконтрольной… акций эмитента»
+        в существующий тег BUYBACK_EXECUTE — это buyback через дочку,
+        для event-study неотличим от прямого выкупа.
+    -->
+
+    <changeSet id="011-add-spo-tag" author="ruslan">
+        <insert tableName="tags">
+            <column name="code" value="SPO"/>
+            <column name="name" value="Размещение / отчуждение собственных или казначейских акций эмитента"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+
+        <rollback>
+            <sql>DELETE FROM tags WHERE code = 'SPO'</sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
