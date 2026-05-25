@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Расширение словаря тегов корпоративных раскрытий (см.
+        docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md, раздел «Стратегия
+        загрузки и словарь тегов»).
+
+        После переключения загрузчика на режим «грузим всё» в JSON
+        попадает вся выдача e-disclosure; в БД заливщик отбирает события
+        по словарю eventName → тег. Текущие четыре тега покрывают около
+        одного процента сырья. Добавляются три тега, расширяющие
+        покрытие до базовых сценариев event-study:
+
+        - REPORT_CONSOLIDATED — современный эквивалент МСФО, используется
+          крупными эмитентами в эпоху 454-П и частично в начале 714-П;
+        - REPORT_QUARTERLY — ежеквартальная отчётность эпохи 454-П;
+        - MATERIAL_EVENT — универсальная категория пресс-релизов,
+          активно используемая эмитентами с 2022 года для сообщений
+          о действиях, не подпадающих под узкие типы.
+    -->
+
+    <changeSet id="008-corp-disclosure-extended-tags" author="ruslan">
+        <insert tableName="tags">
+            <column name="code" value="REPORT_CONSOLIDATED"/>
+            <column name="name" value="Раскрытие консолидированной финансовой отчётности"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code" value="REPORT_QUARTERLY"/>
+            <column name="name" value="Раскрытие ежеквартального отчёта эмитента"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+        <insert tableName="tags">
+            <column name="code" value="MATERIAL_EVENT"/>
+            <column name="name" value="Существенные действия, влияющие на стоимость или котировки"/>
+            <column name="type" value="corporate_disclosure"/>
+        </insert>
+
+        <rollback>
+            <sql>
+                DELETE FROM tags WHERE code IN (
+                    'REPORT_CONSOLIDATED',
+                    'REPORT_QUARTERLY',
+                    'MATERIAL_EVENT'
+                )
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

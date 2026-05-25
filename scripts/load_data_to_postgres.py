@@ -50,6 +50,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import sys
 import uuid
 from datetime import date
@@ -67,7 +68,7 @@ SPLITS_CSV = os.path.join(STOCKS_DIR, 'splits.csv')
 CB_RATES_CSV = os.path.join(ROOT, 'data', 'macro', 'cb_rates.csv')
 MOEX_SECURITIES_CSV = os.path.join(STOCKS_DIR, 'moex_securities.csv')
 MOEX_EMITTERS_CSV = os.path.join(STOCKS_DIR, 'moex_emitters.csv')
-EDISCLOSURE_EVENTS_GLOB = os.path.join(ROOT, 'data', 'events', 'edisclosure_*.json')
+EDISCLOSURE_EVENTS_GLOB = os.path.join(ROOT, 'data', 'events', 'edisclosure', '*.json')
 
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
@@ -599,12 +600,25 @@ def _load_dividends(pg) -> None:
 
 # ── Корпоративные раскрытия с e-disclosure ────────────────────────────────
 
-# Точный текст eventName → код нашего тега. Нормализация — strip().
-# При обнаружении нового варианта (например, с вариативной пунктуацией)
-# дополняется здесь.
+# Нормализованный текст eventName → код нашего тега. Нормализация:
+# схлопывание любой последовательности пробельных символов в один пробел
+# плюс strip. Это снимает реальный дубль на портале — «…стоимость или
+# ⎵⎵котировки…» с двойным пробелом vs одинарным. Эмитенты, чей тип
+# события не присутствует в словаре, остаются в JSON на диске и в БД
+# не попадают — расширение словаря не требует перезагрузки с e-disclosure.
 EDISCLOSURE_EVENT_NAME_TO_TAG: dict[str, str] = {
+    # REPORT_IFRS — зонтик над тремя регуляторными формами одной сущности
+    # (раскрытие отчётности по международному / консолидированному стандарту);
+    # эмитенты переключались между ними по мере смены положений ЦБ, но для
+    # event-study это один и тот же тип события.
     'Раскрытие эмитентом бухгалтерской отчетности в стандартах МСФО или US GAAP':
         'REPORT_IFRS',
+    'Раскрытие эмитентом консолидированной финансовой отчетности':
+        'REPORT_IFRS',
+    'Раскрытие эмитентом сводной бухгалтерской (консолидированной финансовой) отчетности':
+        'REPORT_IFRS',
+    'Раскрытие эмитентом ежеквартального отчета':
+        'REPORT_QUARTERLY',
     'Раскрытие в сети Интернет годовой бухгалтерской отчетности':
         'REPORT_RSBU_ANNUAL',
     'Принятие решения о приобретении размещённых эмитентом акций':
@@ -614,6 +628,10 @@ EDISCLOSURE_EVENT_NAME_TO_TAG: dict[str, str] = {
     'Приобретение эмитентом собственных голосующих акций (долей) или депозитарных расписок на акции эмитента':
         'BUYBACK_EXECUTE',
 }
+
+
+def _normalize_event_name(name: str) -> str:
+    return re.sub(r'\s+', ' ', name).strip()
 
 
 def _load_edisclosure_events(pg) -> None:
@@ -656,7 +674,7 @@ def _load_edisclosure_events(pg) -> None:
             continue
 
         for raw in snap['events']:
-            event_name = raw['eventName'].strip()
+            event_name = _normalize_event_name(raw['eventName'])
             tag = EDISCLOSURE_EVENT_NAME_TO_TAG.get(event_name)
             if tag is None:
                 unknown_types.setdefault(event_name, os.path.basename(path))
@@ -772,9 +790,9 @@ def main() -> None:
             )
             print(f'  events (ЦБ ставка)       {cur.fetchone()[0]}')
             cur.execute(
-                "SELECT tag_code, COUNT(*) FROM event_tags "
-                "WHERE tag_code IN ('REPORT_IFRS','REPORT_RSBU_ANNUAL',"
-                "                   'BUYBACK_ANNOUNCE','BUYBACK_EXECUTE') "
+                "SELECT tag_code, COUNT(*) FROM event_tags et "
+                "JOIN tags t ON t.code = et.tag_code "
+                "WHERE t.type = 'corporate_disclosure' "
                 "GROUP BY tag_code ORDER BY tag_code"
             )
             for tag, n in cur.fetchall():

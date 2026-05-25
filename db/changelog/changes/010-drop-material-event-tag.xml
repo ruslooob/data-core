@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Удаление тега MATERIAL_EVENT из словаря корпоративных раскрытий.
+
+        Тег добавлялся в миграции 008 как зонтик над универсальной
+        категорией портала «События (действия), оказывающие существенное
+        влияние на стоимость или котировки». На практике эта категория
+        содержит разнородные сообщения (санкционные заявления, расшифровка
+        котировочных скачков, реструктуризации, новости делистинга и т. п.),
+        реакция котировок на которые качественно различается.
+        Объединять их в одном теге для event-study методологически нечисто:
+        тег обязан описывать однородный класс корпоративных действий.
+
+        Сами события остаются в JSON-выгрузках на диске и могут быть
+        замапены позже, после введения NLP-классификации по содержимому
+        сообщения. В БД до этого момента они не попадают.
+
+        Удаление безопасно: связи в event_tags на этот тег к моменту
+        миграции отсутствуют (reset edisc:* выполнен).
+    -->
+
+    <changeSet id="010-drop-material-event-tag" author="ruslan">
+        <preConditions onFail="HALT">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM event_tags WHERE tag_code = 'MATERIAL_EVENT'
+            </sqlCheck>
+        </preConditions>
+
+        <delete tableName="tags">
+            <where>code = 'MATERIAL_EVENT'</where>
+        </delete>
+
+        <rollback>
+            <insert tableName="tags">
+                <column name="code" value="MATERIAL_EVENT"/>
+                <column name="name" value="Существенные действия, влияющие на стоимость или котировки"/>
+                <column name="type" value="corporate_disclosure"/>
+            </insert>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

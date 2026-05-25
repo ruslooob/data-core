@@ -1,13 +1,21 @@
 """Парсер корпоративных событий с e-disclosure.ru для эмитентов из БД.
 
-См. docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md, этап 4.
+См. docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md.
 
-Запрашивает POST /api/search/sevents по ИНН эмитента, фильтруя по четырём
-типам событий (МСФО, годовая РСБУ, объявление и исполнение buyback).
-Результат — один JSON-файл на эмитента в data/events/.
+Запрашивает POST /api/search/sevents по ИНН эмитента **без фильтра типа** —
+тянет всю выдачу за окно дат. Классификация (eventName → тег) выполняется
+позже в load_data_to_postgres.py.
 
-WAF-cookie берутся из переменных окружения; при истечении сессии скрипт
-останавливается и печатает инструкцию по обновлению.
+API e-disclosure режет выдачу одного запроса значением maxFoundEventsToShow
+(обычно 1200) — обойти размером страницы нельзя. Поэтому окно дат при
+превышении лимита делится пополам рекурсивно, пока каждое подокно не
+укладывается в лимит. Все собранные подокна сливаются в один JSON-файл
+на эмитента: data/events/edisclosure_<inn>.json.
+
+WAF Servicepipe принимает запрос даже без cookies (через 307-redirect).
+Если переменные окружения EDISCLOSURE_SPID/SPSC/ANTIFORGERY заданы — они
+подкладываются в сессию (для подстраховки). При не-JSON ответе скрипт
+останавливается с инструкцией по обновлению cookies.
 
 Список эмитентов — JOIN emitters × stocks (только те, у кого в БД есть
 хотя бы одна бумага). В БД не пишет — заливку делает load_data_to_postgres.py.
@@ -17,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from time import sleep
 
 import psycopg
@@ -27,21 +35,14 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(ROOT, 'data', 'events')
+OUT_DIR = os.path.join(ROOT, 'data', 'events', 'edisclosure')
 
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
 ENDPOINT = 'https://e-disclosure.ru/api/search/sevents'
 
-# Типы событий первой волны (P0). Числа — идентификаторы на e-disclosure.
-EVENT_TYPE_IDS = {
-    'REPORT_IFRS': 36,
-    'REPORT_RSBU_ANNUAL': 76,
-    'BUYBACK_ANNOUNCE': 303,
-    'BUYBACK_EXECUTE': 221,
-}
-
-# Cookie сессии — соответствие имени в WAF и переменной окружения.
+# Cookie сессии — опциональны. Если в env заданы — подкладываем; нет —
+# рассчитываем на 307-flow WAF Servicepipe.
 COOKIE_ENV_VARS: dict[str, str] = {
     'spid': 'EDISCLOSURE_SPID',
     'spsc': 'EDISCLOSURE_SPSC',
@@ -49,20 +50,27 @@ COOKIE_ENV_VARS: dict[str, str] = {
 }
 
 # Initial-load: окно начинается с этой даты. Берём заведомо «снизу»,
-# чтобы поднять всю историю, которую отдаёт e-disclosure — у портала
-# первые публикации начинаются в начале 2000-х.
+# чтобы поднять всю историю, которую отдаёт e-disclosure.
 INITIAL_FROM = date(2000, 1, 1)
 
-# Перекрытие при инкрементальной загрузке: тянем последние 14 дней
-# заново, чтобы захватить отложенные публикации.
-OVERLAP_DAYS = 14
+# Размер страницы. Лимит API на общее число событий за запрос (1200)
+# жёсткий — увеличение страницы выше 100 не помогает. 100 укладывается
+# в одну страницу для большинства подокон и снижает число round-trip'ов.
+PAGE_SIZE = 100
+
+# Минимальная ширина подокна при рекурсивном дроблении (защита от
+# бесконечной рекурсии при патологическом числе событий в один день).
+MIN_WINDOW_DAYS = 1
 
 # Пауза между эмитентами, чтобы не нагружать API.
 PAUSE_BETWEEN_EMITTERS_SEC = 0.5
 
+# Сетевые тайм-ауты (connect, read), сек.
+TIMEOUTS = (5, 25)
+
 
 class CookieExpired(Exception):
-    """Признак истёкшей WAF-cookie: API ответил не-JSON."""
+    """API ответил не-JSON: WAF challenge или истёкшая сессия."""
 
 
 def _print_cookie_instructions() -> None:
@@ -76,24 +84,14 @@ def _print_cookie_instructions() -> None:
 
 
 def _build_session() -> requests.Session:
+    s = requests.Session()
     cookies: dict[str, str] = {}
-    missing: list[str] = []
     for cookie_name, env_var in COOKIE_ENV_VARS.items():
         val = os.environ.get(env_var)
-        if not val:
-            missing.append(env_var)
-        else:
+        if val:
             cookies[cookie_name] = val
-    if missing:
-        print(
-            f'Отсутствуют переменные окружения: {", ".join(missing)}',
-            file=sys.stderr,
-        )
-        _print_cookie_instructions()
-        sys.exit(2)
-
-    s = requests.Session()
-    s.cookies.update(cookies)
+    if cookies:
+        s.cookies.update(cookies)
     s.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                       '(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
@@ -107,13 +105,9 @@ def _build_session() -> requests.Session:
 
 
 def _build_payload(inn: str, date_from: date, date_till: date, page: int) -> list[tuple[str, str]]:
-    params: list[tuple[str, str]] = [
+    return [
         ('eventTypeTerm', ''),
         ('radView', '0'),
-    ]
-    for tid in EVENT_TYPE_IDS.values():
-        params.append(('eventTypeCheckboxGroup', str(tid)))
-    params.extend([
         ('dateStart', date_from.strftime('%d.%m.%Y')),
         ('dateFinish', date_till.strftime('%d.%m.%Y')),
         ('textfieldEvent', ''),
@@ -122,55 +116,67 @@ def _build_payload(inn: str, date_from: date, date_till: date, page: int) -> lis
         ('regionsCheckboxGroup', '-1'),
         ('branchesCheckboxGroup', '-1'),
         ('textfieldCompany', inn),
-        ('lastPageSize', '10'),
+        ('lastPageSize', str(PAGE_SIZE)),
         ('lastPageNumber', str(page)),
         ('query', inn),
         ('queryEvent', ''),
-    ])
-    return params
+    ]
 
 
 def _fetch_page(
     session: requests.Session, inn: str,
     date_from: date, date_till: date, page: int,
 ) -> dict:
-    r = session.post(ENDPOINT, data=_build_payload(inn, date_from, date_till, page), timeout=30)
+    r = session.post(ENDPOINT, data=_build_payload(inn, date_from, date_till, page),
+                     timeout=TIMEOUTS, allow_redirects=True)
     ct = r.headers.get('Content-Type', '')
     if not ct.lower().startswith('application/json'):
         raise CookieExpired(
             f'API вернул не-JSON (status={r.status_code}, Content-Type={ct!r}). '
-            'Cookie сессии истекла или была инвалидирована WAF.'
+            'WAF не пропустил запрос; обновите cookies сессии.'
         )
     return r.json()
 
 
-def _fetch_emitter_events(
+def _fetch_window(
     session: requests.Session, inn: str,
     date_from: date, date_till: date,
+    depth: int = 0,
 ) -> list[dict]:
-    """Все события одного эмитента за окно дат, с пагинацией."""
-    events: list[dict] = []
-    page = 1
-    last_response: dict = {}
-    while True:
-        j = _fetch_page(session, inn, date_from, date_till, page)
-        last_response = j
-        events.extend(j.get('foundEventsList', []))
-        paging = j.get('pagingInfo', {})
-        current = paging.get('currentPage', 1)
-        total = paging.get('totalPages', 1)
-        if current >= total:
-            break
-        page += 1
+    """Все события за окно дат с авто-дроблением при превышении лимита API.
 
-    all_found = last_response.get('allFoundEvents', 0)
-    max_shown = last_response.get('maxFoundEventsToShow', 0)
-    if all_found > max_shown > 0:
-        print(
-            f'  WARNING inn={inn}: allFoundEvents={all_found} > '
-            f'maxFoundEventsToShow={max_shown} — часть событий отброшена. '
-            f'Окно стоит сузить.'
-        )
+    Если allFoundEvents > maxFoundEventsToShow — делим окно пополам и
+    повторяем рекурсивно. На листовом подокне собираем все страницы.
+    """
+    j = _fetch_page(session, inn, date_from, date_till, page=1)
+    paging = j.get('pagingInfo', {})
+    all_found = j.get('allFoundEvents', 0)
+    max_show = j.get('maxFoundEventsToShow', 0) or 0
+
+    overflow = max_show > 0 and all_found > max_show
+    width_days = (date_till - date_from).days
+    indent = '  ' * (depth + 1)
+
+    if overflow and width_days > MIN_WINDOW_DAYS:
+        mid = date_from + timedelta(days=width_days // 2)
+        print(f'{indent}окно {date_from}..{date_till}: {all_found} > {max_show}, '
+              f'делю на {date_from}..{mid} и {mid + timedelta(days=1)}..{date_till}',
+              flush=True)
+        left = _fetch_window(session, inn, date_from, mid, depth + 1)
+        right = _fetch_window(session, inn, mid + timedelta(days=1), date_till, depth + 1)
+        return left + right
+
+    if overflow:
+        # упёрлись в MIN_WINDOW_DAYS: всё равно режется, фиксируем и идём дальше
+        print(f'{indent}WARNING окно {date_from}..{date_till}: {all_found} > {max_show} '
+              f'и подокно уже минимально — {all_found - max_show} событий потеряно',
+              flush=True)
+
+    events: list[dict] = list(j.get('foundEventsList', []))
+    total_pages = paging.get('totalPages', 1)
+    for page in range(2, total_pages + 1):
+        jp = _fetch_page(session, inn, date_from, date_till, page)
+        events.extend(jp.get('foundEventsList', []))
     return events
 
 
@@ -185,11 +191,8 @@ def _load_emitters_from_db(pg) -> list[tuple[int, str]]:
         return [(int(eid), inn) for eid, inn in cur.fetchall()]
 
 
-def _make_out_path(inn: str, date_from: date, date_till: date) -> str:
-    return os.path.join(
-        OUT_DIR,
-        f'edisclosure_{inn}_{date_from.isoformat()}_{date_till.isoformat()}.json',
-    )
+def _out_path(inn: str) -> str:
+    return os.path.join(OUT_DIR, f'{inn}.json')
 
 
 def main() -> None:
@@ -211,22 +214,21 @@ def main() -> None:
 
     date_from = INITIAL_FROM
     date_till = date.today()
-    print(f'Окно: {date_from} .. {date_till}')
-    print(f'Типы событий: {", ".join(EVENT_TYPE_IDS.keys())}')
+    print(f'Окно: {date_from} .. {date_till}, фильтр типа: НЕТ (берём всё)')
 
     skipped = 0
     fetched_total = 0
     for idx, (emitter_id, inn) in enumerate(emitters, 1):
-        out_path = _make_out_path(inn, date_from, date_till)
+        out_path = _out_path(inn)
         if os.path.exists(out_path):
             skipped += 1
             continue
 
-        print(f'[{idx}/{len(emitters)}] inn={inn} emitter_id={emitter_id} …', end=' ', flush=True)
+        print(f'[{idx}/{len(emitters)}] inn={inn} emitter_id={emitter_id} …', flush=True)
         try:
-            events = _fetch_emitter_events(session, inn, date_from, date_till)
+            events = _fetch_window(session, inn, date_from, date_till)
         except CookieExpired as e:
-            print(f'\nОстановка: {e}', file=sys.stderr)
+            print(f'Остановка: {e}', file=sys.stderr)
             _print_cookie_instructions()
             sys.exit(1)
 
@@ -235,13 +237,13 @@ def main() -> None:
             'emitter_id': emitter_id,
             'from': date_from.isoformat(),
             'till': date_till.isoformat(),
-            'event_type_ids': list(EVENT_TYPE_IDS.values()),
+            'fetched_at': datetime.now().isoformat(timespec='seconds'),
             'events': events,
         }
         with open(out_path, 'w', encoding='utf-8') as fh:
             json.dump(snapshot, fh, ensure_ascii=False, indent=2)
         fetched_total += len(events)
-        print(f'{len(events)} событий')
+        print(f'  → {len(events)} событий, сохранено: {os.path.basename(out_path)}', flush=True)
         sleep(PAUSE_BETWEEN_EMITTERS_SEC)
 
     print(f'\nЗакончено. Обработано: {len(emitters) - skipped}, пропущено (уже есть): {skipped}.')

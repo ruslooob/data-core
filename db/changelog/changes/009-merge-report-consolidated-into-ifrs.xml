@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Объединение тегов раскрытия финансовой отчётности.
+
+        В словарь корпоративных раскрытий (см. миграцию 008) был
+        добавлен отдельный тег REPORT_CONSOLIDATED — современная форма
+        раскрытия отчётности по международному стандарту. Для целей
+        event-study деление между «МСФО / US GAAP» и «консолидированная
+        финансовая» — артефакт регуляторных эпох (454-П / 714-П), а не
+        самостоятельное корпоративное событие. Объединяется под зонтиком
+        REPORT_IFRS, который описывает любую форму раскрытия отчётности
+        по международному / консолидированному стандарту.
+
+        Удаление безопасно: связи в event_tags на этот тег к моменту
+        миграции отсутствуют (полный reset edisc:* был сделан перед
+        переходом на новую стратегию загрузки).
+    -->
+
+    <changeSet id="009-merge-report-consolidated-into-ifrs" author="ruslan">
+        <preConditions onFail="HALT">
+            <sqlCheck expectedResult="0">
+                SELECT COUNT(*) FROM event_tags WHERE tag_code = 'REPORT_CONSOLIDATED'
+            </sqlCheck>
+        </preConditions>
+
+        <delete tableName="tags">
+            <where>code = 'REPORT_CONSOLIDATED'</where>
+        </delete>
+
+        <rollback>
+            <insert tableName="tags">
+                <column name="code" value="REPORT_CONSOLIDATED"/>
+                <column name="name" value="Раскрытие консолидированной финансовой отчётности"/>
+                <column name="type" value="corporate_disclosure"/>
+            </insert>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
