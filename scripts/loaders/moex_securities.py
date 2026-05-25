@@ -1,16 +1,20 @@
-"""Выгружает с MOEX ISS перечень ценных бумаг фондового рынка и связанных эмитентов.
+"""Лоадер: перечень бумаг и эмитентов фондового рынка Мосбиржи.
 
-Двухпроходный:
-  Pass 1 — батч-листинг `/iss/securities.json?engine=stock&market=shares`
-           (тикеры, ИНН, ОКПО эмитентов, базовые поля бумаги).
-  Pass 2 — поштучно `/iss/securities/{ticker}.json`, обогащает каждую бумагу
-           недостающими полями (LATNAME, ISSUEDATE, ISSUESIZE, FACEVALUE,
-           FACEUNIT, LISTLEVEL).
+Стадии:
+- `fetch()` — два прохода по ISS:
+    Pass 1 — батч-листинг `/iss/securities.json?engine=stock&market=shares`
+             (тикеры, ИНН, ОКПО эмитентов, базовые поля бумаги).
+    Pass 2 — поштучно `/iss/securities/{ticker}.json`, обогащает каждую
+             бумагу полями LATNAME, ISSUEDATE, ISSUESIZE, FACEVALUE,
+             FACEUNIT, LISTLEVEL.
+  Результат — два CSV в `data/stocks/`: `moex_securities.csv` и
+  `moex_emitters.csv`. Идемпотентно: если файлы обновлены сегодня —
+  выгрузка пропускается.
+- `load(pg)` — заливает эмитентов в `emitters` и UPDATE по `stocks`
+  (ISIN, тип, листинг, объём выпуска и т.д.) для уже известных тикеров.
+  Синтетические тикеры (SAVINGS_MIACR и пр.) остаются с `emitter_id IS NULL`.
 
-Результат — два сырых CSV в data/stocks/. В БД не пишет (заливку делает
-scripts/load_data_to_postgres.py).
-
-См. docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md, этап 2.
+См. docs/SPEC_LOADERS.md и docs/drafts/SPEC_CORP_DISCLOSURE_DRAFT.md.
 """
 from __future__ import annotations
 
@@ -26,8 +30,10 @@ import requests
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(ROOT, 'data', 'stocks')
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+STOCKS_DIR = os.path.join(ROOT, 'data', 'stocks')
+SECURITIES_CSV = os.path.join(STOCKS_DIR, 'moex_securities.csv')
+EMITTERS_CSV = os.path.join(STOCKS_DIR, 'moex_emitters.csv')
 
 LIST_ENDPOINT = 'https://iss.moex.com/iss/securities.json'
 LIST_PARAMS = {'iss.meta': 'off', 'engine': 'stock', 'market': 'shares', 'limit': '100'}
@@ -35,10 +41,8 @@ LIST_PARAMS = {'iss.meta': 'off', 'engine': 'stock', 'market': 'shares', 'limit'
 DETAIL_ENDPOINT_TEMPLATE = 'https://iss.moex.com/iss/securities/{ticker}.json'
 DETAIL_PARAMS = {'iss.meta': 'off'}
 
-# Поля, которые забираем из секции `description` карточки бумаги.
 DETAIL_FIELDS = ('LATNAME', 'ISSUEDATE', 'ISSUESIZE', 'FACEVALUE', 'FACEUNIT', 'LISTLEVEL')
 
-# Колонки выходных CSV — соответствуют будущим колонкам таблиц.
 SECURITY_COLUMNS = [
     'ticker', 'emitter_id', 'isin', 'regnumber',
     'full_name', 'short_name', 'latname',
@@ -51,9 +55,10 @@ EMITTER_COLUMNS = ['emitter_id', 'inn', 'okpo', 'title']
 # Спот-чек после Pass 1: знакомые эмитенты, проверенные руками при ресёрче.
 KNOWN_EMITTER_IDS = {'LKOH': 770, 'SBER': 484, 'SBERP': 484, 'GAZP': 711}
 
-# Параллелизм Pass 2: ISS не блокирует на 10 потоков, скорость ~10x.
 PASS2_WORKERS = 10
 
+
+# ── fetch ─────────────────────────────────────────────────────────────────
 
 def _fetch_listing() -> Iterator[dict]:
     """Pass 1: пагинированный обход батч-листинга.
@@ -78,12 +83,9 @@ def _fetch_listing() -> Iterator[dict]:
 
 
 def _split_listing(rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Разделяет батч-выгрузку на список бумаг с российским эмитентом и список эмитентов.
-
-    P0: пропускаем бумаги без emitter_id или без ИНН (иностранные DR,
-    фиксинги, индексы) — для них нет российского эмитента, события на
-    e-disclosure тоже не загружаются.
-    """
+    """Разделяет батч-выгрузку на список бумаг с российским эмитентом
+    и список эмитентов. Бумаги без emitter_id или без ИНН пропускаются
+    (иностранные DR, фиксинги, индексы)."""
     securities: list[dict] = []
     emitters_map: dict[int, dict] = {}
     for r in rows:
@@ -100,7 +102,6 @@ def _split_listing(rows: list[dict]) -> tuple[list[dict], list[dict]]:
             'short_name': r.get('shortname'),
             'security_type': r.get('type'),
             'primary_boardid': r.get('primary_boardid'),
-            # Pass 2 заполнит:
             'latname': None,
             'list_level': None,
             'issue_size': None,
@@ -119,7 +120,6 @@ def _split_listing(rows: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def _fetch_detail(ticker: str, session: requests.Session) -> dict:
-    """Pass 2: одна бумага. Возвращает dict с шестью полями из description."""
     r = session.get(
         DETAIL_ENDPOINT_TEMPLATE.format(ticker=ticker),
         params=DETAIL_PARAMS, timeout=30,
@@ -149,7 +149,6 @@ def _fetch_detail(ticker: str, session: requests.Session) -> dict:
 
 
 def _enrich(securities: list[dict]) -> None:
-    """Pass 2: параллельное обогащение каждой бумаги. Мутирует входной список."""
     session = requests.Session()
     total = len(securities)
     done = 0
@@ -192,7 +191,6 @@ def _sanity(securities: list[dict], emitters: list[dict]) -> None:
 
 
 def _cross_validate(securities: list[dict]) -> None:
-    """Спот-чек: знакомые эмитенты должны совпадать с тем, что мы видели руками."""
     by_ticker = {s['ticker']: s for s in securities}
     misses = []
     for ticker, expected_emitter_id in KNOWN_EMITTER_IDS.items():
@@ -223,18 +221,14 @@ def _is_fresh(path: str) -> bool:
     """Файл считается свежим, если изменялся сегодня."""
     if not os.path.exists(path):
         return False
-    mtime_day = date.fromtimestamp(os.path.getmtime(path))
-    return mtime_day == date.today()
+    return date.fromtimestamp(os.path.getmtime(path)) == date.today()
 
 
-def main() -> None:
-    sec_path = os.path.join(OUT_DIR, 'moex_securities.csv')
-    em_path = os.path.join(OUT_DIR, 'moex_emitters.csv')
-
-    if _is_fresh(sec_path) and _is_fresh(em_path):
+def fetch() -> None:
+    if _is_fresh(SECURITIES_CSV) and _is_fresh(EMITTERS_CSV):
         print('Файлы уже обновлены сегодня — выгрузка пропущена (идемпотентность).')
-        print(f'  {sec_path}')
-        print(f'  {em_path}')
+        print(f'  {SECURITIES_CSV}')
+        print(f'  {EMITTERS_CSV}')
         return
 
     print(f'Pass 1: батч-листинг {LIST_ENDPOINT}')
@@ -252,12 +246,108 @@ def main() -> None:
     _sanity(securities, emitters)
     _cross_validate(securities)
 
-    _write_csv(securities, sec_path, SECURITY_COLUMNS)
-    _write_csv(emitters, em_path, EMITTER_COLUMNS)
+    _write_csv(securities, SECURITIES_CSV, SECURITY_COLUMNS)
+    _write_csv(emitters, EMITTERS_CSV, EMITTER_COLUMNS)
     print('Записано:')
-    print(f'  {sec_path}  ({len(securities)} строк)')
-    print(f'  {em_path}  ({len(emitters)} строк)')
+    print(f'  {SECURITIES_CSV}  ({len(securities)} строк)')
+    print(f'  {EMITTERS_CSV}  ({len(emitters)} строк)')
 
+
+# ── load ──────────────────────────────────────────────────────────────────
+
+def load(pg) -> None:
+    """Заливает эмитентов и обогащает карточки бумаг из MOEX-снапшота.
+
+    Порядок: сначала emitters (FK-цель), потом UPDATE по stocks.
+    Обогащаются только тикеры, уже присутствующие в stocks (что есть
+    в БД, но нет в MOEX-выгрузке — например, синтетический
+    SAVINGS_MIACR — остаются с emitter_id IS NULL).
+    """
+    if not os.path.exists(SECURITIES_CSV) or not os.path.exists(EMITTERS_CSV):
+        print('  MOEX-снапшот отсутствует — пропускаем эмитентов и расширение stocks')
+        return
+
+    with open(SECURITIES_CSV, encoding='utf-8') as fh:
+        all_secs = list(csv.DictReader(fh))
+    with open(EMITTERS_CSV, encoding='utf-8') as fh:
+        all_emits = {e['emitter_id']: e for e in csv.DictReader(fh)}
+
+    with pg.cursor() as cur:
+        cur.execute('SELECT ticker FROM stocks')
+        known_tickers = {r[0] for r in cur.fetchall()}
+
+    enrichable = [s for s in all_secs if s['ticker'] in known_tickers]
+    needed_emitter_ids = {s['emitter_id'] for s in enrichable}
+    relevant_emitters = [all_emits[eid] for eid in needed_emitter_ids if eid in all_emits]
+
+    emitter_rows = [
+        (int(e['emitter_id']), e['inn'], e['okpo'] or None, e['title'])
+        for e in relevant_emitters
+    ]
+    security_rows = [
+        (
+            int(s['emitter_id']),
+            s['isin'] or None,
+            s['regnumber'] or None,
+            s['full_name'] or None,
+            s['short_name'] or None,
+            s['latname'] or None,
+            s['security_type'] or None,
+            int(s['list_level']) if s['list_level'] else None,
+            int(s['issue_size']) if s['issue_size'] else None,
+            float(s['face_value']) if s['face_value'] else None,
+            s['face_unit'] or None,
+            s['issue_date'] or None,
+            s['primary_boardid'] or None,
+            s['ticker'],
+        )
+        for s in enrichable
+    ]
+
+    with pg.cursor() as cur:
+        cur.executemany(
+            'INSERT INTO emitters (emitter_id, inn, okpo, title) '
+            'VALUES (%s, %s, %s, %s) ON CONFLICT (emitter_id) DO NOTHING',
+            emitter_rows,
+        )
+        cur.executemany(
+            'UPDATE stocks SET '
+            'emitter_id = %s, isin = %s, regnumber = %s, '
+            'full_name = %s, short_name = %s, latname = %s, '
+            'security_type = %s, list_level = %s, issue_size = %s, '
+            'face_value = %s, face_unit = %s, issue_date = %s, '
+            'primary_boardid = %s '
+            'WHERE ticker = %s',
+            security_rows,
+        )
+
+    print(f'  emitters: {len(emitter_rows)} attempted')
+    print(f'  stocks обогащено: {len(enrichable)} (из {len(known_tickers)} в БД)')
+
+    moex_tickers = {s['ticker'] for s in all_secs}
+    not_in_moex = sorted(known_tickers - moex_tickers)
+    if not_in_moex:
+        print(f'  без MOEX-карточки (emitter_id останется NULL): {", ".join(not_in_moex)}')
+
+
+# ── direct run ────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    main()
+    import argparse
+
+    import psycopg
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fetch', action='store_true', help='только fetch')
+    parser.add_argument('--load', action='store_true', help='только load в БД')
+    args = parser.parse_args()
+    do_fetch = args.fetch or not args.load
+    do_load = args.load or not args.fetch
+
+    if do_fetch:
+        fetch()
+    if do_load:
+        pg_dsn = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
+        with psycopg.connect(pg_dsn) as pg:
+            load(pg)
+            pg.commit()

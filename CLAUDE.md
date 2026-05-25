@@ -28,8 +28,10 @@ cd backend && C:/Users/Ruslan/anaconda3/envs/data-core/python.exe -m pytest test
 docker compose --profile migrate run --rm liquibase update
 docker compose --profile migrate run --rm liquibase status
 
-# Загрузка референсных данных в Postgres после миграций (идемпотентно)
-C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_data_to_postgres.py
+# Загрузка референсных данных в Postgres после миграций (идемпотентно).
+# Оркестратор по умолчанию делает fetch+load для всех источников; флаги
+# --only / --skip-fetch / --only-fetch — см. docs/SPEC_LOADERS.md.
+C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_all_data.py
 ```
 
 Запуск, остановка, перезапуск и smoke-проверка стека (Postgres + backend + frontend) — `.claude/skills/run-data-core/` (slash-команда `/run-data-core`).
@@ -44,7 +46,7 @@ C:/Users/Ruslan/anaconda3/envs/data-core/python.exe scripts/load_data_to_postgre
 - Dash в ноутбуках: `jupyter_mode='inline'` (по умолчанию) или `jupyter_mode='external'` (только ссылка)
 - Запускать сервисы и команды самостоятельно — пользователь только кликает на ссылки и проверяет
 - Git-команды должны отрабатывать мгновенно — таймаут не более 10 секунд
-- Windows: для Vite использовать `host: '127.0.0.1'` (localhost не биндится). Для остановки/перезапуска занятых портов — `python scripts/run_services.py --stop` или `--restart` (см. skill)
+- Windows: для Vite использовать `host: '127.0.0.1'` (localhost не биндится). Для остановки/перезапуска занятых портов — `python scripts/ops/run_services.py --stop` или `--restart` (см. skill)
 - Windows: если `Get-NetTCPConnection -LocalPort N` показывает PID, а `Get-Process -Id <PID>` его не находит — сокет «застрял» в ядре после форсированного убийства процесса. `taskkill /F /PID` также не поможет. Единственный надёжный фикс — перезагрузка. Не углубляться в попытки убить зомби — сразу запрашивать у пользователя перезагрузку
 - Не плодить новые порты — переиспользовать те, что в спецификации (backend 8080, frontend 5173)
 

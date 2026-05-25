@@ -5,7 +5,7 @@
     python scripts/init_postgres_backtest_udfs.py
 
 И загружены котировки в Postgres:
-    python scripts/load_data_to_postgres.py
+    python scripts/load_all_data.py
 
 Тесты НЕ удаляют данные из persistent — они открывают свой psycopg-коннект
 с TEMP TABLE и работают только в нём.

@@ -4,7 +4,7 @@
 RETENTION_DAYS (по timestamp в имени, не по mtime).
 
 Запуск:
-    python scripts/backup_postgres.py
+    python scripts/ops/backup_postgres.py
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DB_NAME = 'postgres'
 RETENTION_DAYS = 7
 DUMP_FILENAME = 'full.dump'
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKUP_ROOT = REPO_ROOT / 'data' / 'db'
 
 _DIR_NAME_RE = re.compile(r'^backup_(\d{8}_\d{6})$')

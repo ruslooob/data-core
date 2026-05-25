@@ -2,7 +2,7 @@
 
 Шаги:
   1. Проверка docker-контейнера data-core-postgres (поднимает, если лежит).
-  2. Запуск backend + frontend через scripts/run_services.py (идемпотентно).
+  2. Запуск backend + frontend через scripts/ops/run_services.py (идемпотентно).
   3. Polling /api/health и /  фронта (до 30 секунд).
   4. Smoke-вызовы: /api/health, /api/tickers, /openapi.json.
 
@@ -52,11 +52,11 @@ def ensure_postgres() -> None:
 
 
 def start_services() -> None:
-    print('[services] scripts/run_services.py (идемпотентно)')
-    cp = _run([PY, 'scripts/run_services.py'], cwd=ROOT)
+    print('[services] scripts/ops/run_services.py (идемпотентно)')
+    cp = _run([PY, 'scripts/ops/run_services.py'], cwd=ROOT)
     sys.stdout.write(cp.stdout)
     if cp.returncode != 0:
-        raise SystemExit(f'run_services.py failed:\n{cp.stderr}')
+        raise SystemExit(f'ops/run_services.py failed:\n{cp.stderr}')
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:

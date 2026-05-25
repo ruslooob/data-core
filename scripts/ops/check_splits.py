@@ -4,7 +4,7 @@ import glob
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STOCKS_DIR = os.path.join(HERE, '..', 'data', 'stocks')
+STOCKS_DIR = os.path.join(HERE, '..', '..', 'data', 'stocks')
 
 splits_df = pd.read_csv(os.path.join(STOCKS_DIR, 'splits.csv'))
 splits: dict[str, list[dict]] = {}

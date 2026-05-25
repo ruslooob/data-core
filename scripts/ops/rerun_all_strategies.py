@@ -22,7 +22,7 @@ from datetime import datetime
 
 import psycopg
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOG_PATH = os.path.join(ROOT, 'data', 'logs', 'rerun_all_strategies.log')
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 API = 'http://127.0.0.1:8080'

@@ -12,7 +12,7 @@ description: Запуск и верификация локального сте�
 - **Backend** — FastAPI / uvicorn, `:8080`. Запускается из `backend/` через `main:app`.
 - **Frontend** — Vite + React, `:5173`. Хост `127.0.0.1` (на Windows `localhost` не биндится).
 
-Бэкенд и фронт спавнятся **детачнутыми процессами** через `scripts/run_services.py`. Скрипт идемпотентен (занятый порт → пропуск, не ошибка), пишет stdout/stderr в `data/logs/{backend,frontend}.{out,err}.log` с ротацией.
+Бэкенд и фронт спавнятся **детачнутыми процессами** через `scripts/ops/run_services.py`. Скрипт идемпотентен (занятый порт → пропуск, не ошибка), пишет stdout/stderr в `data/logs/{backend,frontend}.{out,err}.log` с ротацией.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ python .claude/skills/run-data-core/smoke.py
 
 ```
 [postgres] data-core-postgres уже запущен
-[services] scripts/run_services.py (идемпотентно)
+[services] scripts/ops/run_services.py (идемпотентно)
 [backend] порт 8080 занят -- пропускаю
 [frontend] порт 5173 занят -- пропускаю
 [ready] backend=ok frontend=ok
@@ -51,11 +51,11 @@ OK: фронт: http://127.0.0.1:5173
 ## Run (human path)
 
 ```bash
-python scripts/run_services.py             # запустить (идемпотентно)
-python scripts/run_services.py --stop      # остановить
-python scripts/run_services.py --restart   # перезапустить (после правки кода бэка)
-python scripts/run_services.py --backend   # действие только над беком
-python scripts/run_services.py --frontend  # действие только над фронтом
+python scripts/ops/run_services.py             # запустить (идемпотентно)
+python scripts/ops/run_services.py --stop      # остановить
+python scripts/ops/run_services.py --restart   # перезапустить (после правки кода бэка)
+python scripts/ops/run_services.py --backend   # действие только над беком
+python scripts/ops/run_services.py --frontend  # действие только над фронтом
 ```
 
 `python` — любой интерпретатор, в котором установлены зависимости проекта; в репозитории используется conda-окружение `data-core`. Дочерние процессы спавнятся через `sys.executable`, поэтому подхватывают ту же среду.
@@ -76,15 +76,15 @@ Swagger: <http://127.0.0.1:8080/docs>. Фронт: <http://127.0.0.1:5173>. Ло
 |---|---|
 | `[wait] backend=False ...` 15+ тиков, затем таймаут | Открыть `data/logs/backend.err.log` — обычно `ImportError` или ошибка подключения к Postgres. |
 | `docker compose up failed: Cannot connect to the Docker daemon` | Docker Desktop не запущен. Запустить вручную, дождаться значка в трее. |
-| `[postgres] не дошёл до healthy за 20 секунд` | Контейнер падает. `docker logs data-core-postgres` покажет причину; чаще всего БД не накатана — требуется `docker compose --profile migrate run --rm liquibase update` и `python scripts/load_data_to_postgres.py`. |
-| `/api/tickers -> 0 тикеров` или 500 | БД пустая. См. выше: миграции и `load_data_to_postgres.py`. |
+| `[postgres] не дошёл до healthy за 20 секунд` | Контейнер падает. `docker logs data-core-postgres` покажет причину; чаще всего БД не накатана — требуется `docker compose --profile migrate run --rm liquibase update` и `python scripts/load_all_data.py`. |
+| `/api/tickers -> 0 тикеров` или 500 | БД пустая. См. выше: миграции и `load_all_data.py`. |
 | Frontend 200, но в браузере белая страница | DevTools → Network. 404 на `/src/main.tsx` означает отсутствующий или повреждённый `node_modules`. Удалить и переустановить. |
 
 ## Stop
 
 ```bash
-python scripts/run_services.py --stop              # оба
-python scripts/run_services.py --stop --backend    # только бек
+python scripts/ops/run_services.py --stop              # оба
+python scripts/ops/run_services.py --stop --backend    # только бек
 docker compose stop postgres                       # БД
 ```
 

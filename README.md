@@ -58,7 +58,7 @@ docker compose up -d postgres
 docker compose --profile migrate run --rm liquibase update
 
 # 3. Залить данные из папки `data`
-python scripts/load_data_to_postgres.py
+python scripts/load_all_data.py
 
 # 4. Проверка
 docker compose --profile migrate run --rm liquibase status   # должно быть 0 pending changesets
@@ -78,7 +78,7 @@ docker exec data-core-postgres pg_restore -U postgres -d postgres \
 Новый дамп создаётся скриптом:
 
 ```bash
-python scripts/backup_postgres.py
+python scripts/ops/backup_postgres.py
 ```
 ---
 
@@ -87,9 +87,9 @@ python scripts/backup_postgres.py
 Postgres должен быть поднят. Дальше — backend + frontend.
 
 ```bash
-python scripts/run_services.py             # оба сервиса
-python scripts/run_services.py --backend   # только бэкенд
-python scripts/run_services.py --frontend  # только фронт
+python scripts/ops/run_services.py             # оба сервиса
+python scripts/ops/run_services.py --backend   # только бэкенд
+python scripts/ops/run_services.py --frontend  # только фронт
 ```
 
 - Backend: `http://127.0.0.1:8080/docs` (Swagger).

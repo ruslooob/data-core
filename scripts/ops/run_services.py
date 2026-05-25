@@ -1,16 +1,16 @@
 """Управление backend и frontend в фоне с ротацией логов.
 
 Использование:
-    python scripts/run_services.py             # запустить (идемпотентно)
-    python scripts/run_services.py --stop      # остановить
-    python scripts/run_services.py --restart   # перезапустить
-    python scripts/run_services.py --backend   # ограничить действие беком
-    python scripts/run_services.py --frontend  # ограничить действие фронтом
+    python scripts/ops/run_services.py             # запустить (идемпотентно)
+    python scripts/ops/run_services.py --stop      # остановить
+    python scripts/ops/run_services.py --restart   # перезапустить
+    python scripts/ops/run_services.py --backend   # ограничить действие беком
+    python scripts/ops/run_services.py --frontend  # ограничить действие фронтом
 
 Без флагов действия (--stop/--restart) — идемпотентный запуск: если порт
 уже занят, сервис пропускается без ошибки.
 
-Каждый сервис спавнится через детачнутый middleware `scripts/_service_runner.py`
+Каждый сервис спавнится через детачнутый middleware `scripts/ops/_service_runner.py`
 (там же реализована ротация и архивация логов).
 
 Логи:
@@ -32,15 +32,15 @@ from pathlib import Path
 
 import psutil
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = ROOT / 'data' / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 PY = sys.executable
 BACKEND_PORT = 8080
 FRONTEND_PORT = 5173
-UVICORN_LOG_CONFIG = ROOT / 'scripts' / 'uvicorn_log_config.yaml'
-SERVICE_RUNNER = ROOT / 'scripts' / '_service_runner.py'
+UVICORN_LOG_CONFIG = ROOT / 'scripts' / 'ops' / 'uvicorn_log_config.yaml'
+SERVICE_RUNNER = ROOT / 'scripts' / 'ops' / '_service_runner.py'
 PORT_RELEASE_GRACE_SEC = 1.0
 
 

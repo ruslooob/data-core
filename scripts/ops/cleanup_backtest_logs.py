@@ -12,7 +12,7 @@ from pathlib import Path
 
 import psycopg
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = ROOT / 'data' / 'logs' / 'backtest'
 PG_DSN = 'host=127.0.0.1 port=5432 dbname=postgres user=postgres password=postgres'
 
