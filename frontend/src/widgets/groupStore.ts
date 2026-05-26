@@ -25,6 +25,16 @@ export interface ActiveEvent {
   daysAfter: number
 }
 
+/**
+ * Запрос «посчитать в Event Study это событие» — событие набора по дате.
+ * Ставят и двойной клик в Event Effect, и клик по маркеру на price chart.
+ * `nonce` отличает новый запрос от старого, чтобы подписчик отработал его один раз.
+ */
+export interface EventStudyRequest {
+  eventDate: string // YYYY-MM-DD
+  nonce: number
+}
+
 interface GroupedWidget {
   group: WidgetGroup
   ticker: string | null
@@ -52,6 +62,8 @@ interface GroupStoreState {
    * набор в локальном state.
    */
   precedentEvents: Record<WidgetGroup, PrecedentEvent[]>
+  /** Событие, которое Event Study группы должен посчитать (по двойному клику / маркеру). */
+  eventStudyRequests: Record<WidgetGroup, EventStudyRequest | null>
 
   // Действия — состав группы
   registerMember: (id: string, group: WidgetGroup, ticker?: string | null) => void
@@ -69,6 +81,9 @@ interface GroupStoreState {
 
   // Действия — активное событие
   setActiveEvent: (group: WidgetGroup, ev: ActiveEvent | null) => void
+
+  // Действия — запрос расчёта в Event Study
+  requestEventStudy: (group: WidgetGroup, eventDate: string) => void
 
   // Действия — набор прецедентов
   setPrecedentSet: (group: WidgetGroup, events: PrecedentEvent[]) => void
@@ -98,6 +113,7 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
     green: [],
     yellow: [],
   },
+  eventStudyRequests: emptyMap<EventStudyRequest | null>(null),
 
   registerMember: (id, group, ticker = null) =>
     set((state) => ({
@@ -171,6 +187,17 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
       return { activeEvents: { ...state.activeEvents, [group]: ev } }
     }),
 
+  requestEventStudy: (group, eventDate) =>
+    set((state) => {
+      if (group === 'none') return state
+      return {
+        eventStudyRequests: {
+          ...state.eventStudyRequests,
+          [group]: { eventDate, nonce: Date.now() },
+        },
+      }
+    }),
+
   setPrecedentSet: (group, events) =>
     set((state) => {
       if (group === 'none') return state
@@ -240,6 +267,9 @@ export const selectActiveEvent = (group: WidgetGroup) => (s: GroupStoreState) =>
 export const selectPrecedentSet = (group: WidgetGroup) => (s: GroupStoreState) =>
   s.precedentEvents[group]
 
+export const selectEventStudyRequest = (group: WidgetGroup) => (s: GroupStoreState) =>
+  s.eventStudyRequests[group]
+
 // ───────────────────────────────────────────────────────────────────────────
 // Event bus: transient команды (зум, выбор события, hover-дата)
 // Не хранит состояние — fire-and-forget
@@ -250,14 +280,8 @@ export interface ZoomRequest {
   to: string
 }
 
-export interface SelectEventRequest {
-  ticker: string
-  eventDate: string
-}
-
 interface GroupEventMap {
   zoom: ZoomRequest
-  selectEvent: SelectEventRequest
   hoverDate: string | null
 }
 

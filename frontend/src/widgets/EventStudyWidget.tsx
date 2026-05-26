@@ -11,6 +11,7 @@ import { FactVsForecastChart } from './FactVsForecastChart'
 import { NumberField } from './NumberField'
 import {
   groupEventBus,
+  selectEventStudyRequest,
   selectLeaderTicker,
   selectPrecedentSet,
   selectShowEvents,
@@ -67,6 +68,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
   const showEvents = useGroupStore(selectShowEvents(group))
   const precedentSet = useGroupStore(selectPrecedentSet(group))
+  const eventStudyRequest = useGroupStore(selectEventStudyRequest(group))
   const setActiveEventInStore = useGroupStore((s) => s.setActiveEvent)
   const toggleShowEventsInStore = useGroupStore((s) => s.toggleShowEvents)
 
@@ -138,22 +140,24 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     }
   }, [group, setActiveEventInStore])
 
-  // Подписка на «выбрать событие»: клик по маркеру price chart, а также двойной
-  // клик по строке таблицы Event Effect (Задача B). Тикер ведёт лидер, поэтому
-  // событие набора ищем по дате.
-  // handleCalculateRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
+  // Запрос «посчитать это событие» из стора группы — ставится двойным кликом по
+  // строке Event Effect и кликом по маркеру на price chart. Событие набора
+  // находим по дате (тикер ведёт лидер). nonce защищает от повторной обработки
+  // одного запроса; свежесозданный виджет подхватывает запрос при появлении его
+  // в наборе.
+  // handleCalculateRef нужен, чтобы эффект не зависел от каждого изменения state.
   const handleCalculateRef = useRef<() => void>(() => {})
+  const handledRequestNonceRef = useRef<number>(0)
   useEffect(() => {
-    if (group === 'none') return
-    return groupEventBus.subscribe(group, 'selectEvent', (req) => {
-      const found = precedentEvents.find((e) => e.dateStart === req.eventDate)
-      if (found) {
-        setEventId(found.eventId)
-        // Авторасчёт на следующем тике, когда state применится
-        setTimeout(() => handleCalculateRef.current(), 0)
-      }
-    })
-  }, [group, precedentEvents])
+    if (!eventStudyRequest) return
+    if (eventStudyRequest.nonce === handledRequestNonceRef.current) return
+    const found = precedentEvents.find((e) => e.dateStart === eventStudyRequest.eventDate)
+    if (!found) return
+    handledRequestNonceRef.current = eventStudyRequest.nonce
+    setEventId(found.eventId)
+    // Авторасчёт на следующем тике, когда применится новый eventId
+    setTimeout(() => handleCalculateRef.current(), 0)
+  }, [eventStudyRequest, precedentEvents])
 
   const stepEvent = (delta: number) => {
     if (precedentEvents.length === 0) return

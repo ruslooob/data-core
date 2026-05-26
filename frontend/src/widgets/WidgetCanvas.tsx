@@ -59,7 +59,7 @@ export function WidgetCanvas() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [topZ, setTopZ] = useState(1)
 
-  const addWidget = (type: WidgetType) => {
+  const addWidget = (type: WidgetType, group: WidgetGroup = 'none') => {
     const size = WIDGET_SIZES[type] ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     const scrollX = window.scrollX
     const scrollY = window.scrollY
@@ -79,7 +79,7 @@ export function WidgetCanvas() {
         y: Math.max(TOOLBAR_OFFSET_Y, centerY + offset),
         width: size.width,
         height: size.height,
-        group: 'none',
+        group,
         zIndex: newZ,
       },
     ])
@@ -100,6 +100,15 @@ export function WidgetCanvas() {
 
   const removeWidget = (id: string) => {
     setWidgets((prev) => prev.filter((w) => w.id !== id))
+  }
+
+  // Двойной клик по событию в Event Effect: фокусируем Event Study этой группы,
+  // если он уже открыт, иначе открываем новый в той же группе. Какое событие
+  // считать — едет через стор (requestEventStudy), его читает сам виджет.
+  const openOrFocusEventStudy = (group: WidgetGroup) => {
+    const existing = widgets.find((w) => w.type === 'event-study' && w.group === group)
+    if (existing) focusWidget(existing.id)
+    else addWidget('event-study', group)
   }
 
   const setWidgetGroup = (id: string, group: WidgetGroup) => {
@@ -176,7 +185,7 @@ export function WidgetCanvas() {
             ) : w.type === 'precedent-search' ? (
               <PrecedentSearchWidget group={w.group} />
             ) : w.type === 'event-effect-analysis' ? (
-              <EventEffectAnalysisWidget group={w.group} />
+              <EventEffectAnalysisWidget group={w.group} onOpenEventStudy={openOrFocusEventStudy} />
             ) : w.type === 'pql-editor' ? (
               <PqlEditorWidget group={w.group} />
             ) : w.type === 'backtest-editor' ? (

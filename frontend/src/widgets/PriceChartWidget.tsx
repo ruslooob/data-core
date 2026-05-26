@@ -30,6 +30,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
   const isLeader = useGroupStore(selectIsLeader(group, widgetId))
   const showEvents = useGroupStore(selectShowEvents(group))
   const activeEvent = useGroupStore(selectActiveEvent(group))
+  const requestEventStudy = useGroupStore((s) => s.requestEventStudy)
 
   // refs для click-handler'а из useChartCore (без пере-подписки)
   const eventsRef = useRef<DividendEvent[]>([])
@@ -67,10 +68,7 @@ export function PriceChartWidget({ group }: PriceChartWidgetProps) {
       }
     }
     if (best && bestDiff <= 2 * 86400) {
-      groupEventBus.emit(currentGroup, 'selectEvent', {
-        ticker: best.ticker,
-        eventDate: best.eventDate,
-      })
+      requestEventStudy(currentGroup, best.eventDate)
     }
   }
 

@@ -69,6 +69,8 @@ function useRegisterPlotInFrame() {
 
 interface EventEffectAnalysisWidgetProps {
   group: WidgetGroup
+  /** Открыть/сфокусировать Event Study этой группы (двойной клик по событию). */
+  onOpenEventStudy?: (group: WidgetGroup) => void
 }
 
 type Tab = 'explorer' | 'sensitivity'
@@ -111,11 +113,19 @@ const HEATMAP_CELL_HEIGHT = 70
 const HEATMAP_PADDING_X = 124  // margin.l + margin.r + борды
 const HEATMAP_PADDING_Y = 40   // margin.t + margin.b + борды
 
-export function EventEffectAnalysisWidget({ group }: EventEffectAnalysisWidgetProps) {
+export function EventEffectAnalysisWidget({ group, onOpenEventStudy }: EventEffectAnalysisWidgetProps) {
   const precedentSet = useGroupStore(selectPrecedentSet(group))
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
+  const requestEventStudy = useGroupStore((s) => s.requestEventStudy)
   // Бэку нужны только id; набор хранит полные строки события
   const eventIds = useMemo(() => precedentSet.map((e) => e.eventId), [precedentSet])
+
+  // Двойной клик по строке таблицы: ставим запрос на расчёт этого события и
+  // открываем/фокусируем Event Study той же группы.
+  const inspectEvent = useCallback((eventDate: string) => {
+    requestEventStudy(group, eventDate)
+    onOpenEventStudy?.(group)
+  }, [group, requestEventStudy, onOpenEventStudy])
 
   // ── Заглушки до того, как можно считать ──
 
@@ -129,7 +139,7 @@ export function EventEffectAnalysisWidget({ group }: EventEffectAnalysisWidgetPr
     return <PlaceholderMessage text="Назначьте ведущий график цены в группе (через кнопку ведущего на графике)." />
   }
 
-  return <Body ticker={leaderTicker} eventIds={eventIds} />
+  return <Body ticker={leaderTicker} eventIds={eventIds} onInspectEvent={inspectEvent} />
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -139,9 +149,11 @@ export function EventEffectAnalysisWidget({ group }: EventEffectAnalysisWidgetPr
 function Body({
   ticker,
   eventIds,
+  onInspectEvent,
 }: {
   ticker: string
   eventIds: string[]
+  onInspectEvent: (eventDate: string) => void
 }) {
   const [tab, setTab] = useState<Tab>('explorer')
   const [valueMode, setValueMode] = useState<ValueMode>('signed')
@@ -183,7 +195,7 @@ function Body({
       {/* Обе вкладки всегда смонтированы — переключение через видимость,
           чтобы при возврате не терять загруженные данные и параметры. */}
       <div style={tab === 'explorer' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
-        <ExplorerTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
+        <ExplorerTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} onInspectEvent={onInspectEvent} />
       </div>
       <div style={tab === 'sensitivity' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
         <SensitivityTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
@@ -196,7 +208,7 @@ function Body({
 // Вкладка 1: Events CAR Explorer
 // ────────────────────────────────────────────────────────────────────────────
 
-function ExplorerTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds: string[]; valueMode: ValueMode }) {
+function ExplorerTab({ ticker, eventIds, valueMode, onInspectEvent }: { ticker: string; eventIds: string[]; valueMode: ValueMode; onInspectEvent: (eventDate: string) => void }) {
   const [eventWindow, setEventWindow] = useState(DEFAULT_WINDOW)
   const [model, setModel] = useState<ExpectedReturnModel>(DEFAULT_MODEL)
   const [estimation, setEstimation] = useState(DEFAULT_ESTIMATION)
@@ -318,6 +330,7 @@ function ExplorerTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds
               valueMode={valueMode}
               hoveredEventId={hoveredEventId}
               onHoverEvent={setHoveredEventId}
+              onInspectEvent={onInspectEvent}
             />
           </div>
           <ResizableChartFrame>
@@ -354,11 +367,13 @@ function CarTable({
   valueMode,
   hoveredEventId,
   onHoverEvent,
+  onInspectEvent,
 }: {
   rows: IndividualCarRow[]
   valueMode: ValueMode
   hoveredEventId: string | null
   onHoverEvent: (id: string | null) => void
+  onInspectEvent: (eventDate: string) => void
 }) {
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
@@ -420,7 +435,9 @@ function CarTable({
                   key={r.eventId}
                   onMouseEnter={() => onHoverEvent(r.eventId)}
                   onMouseLeave={() => onHoverEvent(null)}
-                  style={rowBg ? { background: rowBg } : undefined}
+                  onDoubleClick={() => onInspectEvent(r.date)}
+                  title="Двойной клик — открыть Event Study для этого события"
+                  style={{ cursor: 'pointer', ...(rowBg ? { background: rowBg } : {}) }}
                 >
                   <td style={tdAnomalyStyle}>
                     {anomaly && <span title={ANOMALY_TOOLTIP} style={anomalyIconStyle}>⚠</span>}
