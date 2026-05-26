@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { PrecedentEvent } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 
 /**
@@ -43,12 +44,14 @@ interface GroupStoreState {
   /** Активное событие исследования каждой группы (что сейчас в Event Study). */
   activeEvents: Record<WidgetGroup, ActiveEvent | null>
   /**
-   * Набор прецедентов каждой группы — список event_id, выбранных в виджете
-   * «Поиск прецедентов» и транслируемых потребителям (Event Effect Analysis,
-   * Event Study, маркеры на графике). Для группы `none` сюда ничего не пишется
-   * — автономный «Поиск прецедентов» хранит набор в локальном state.
+   * Набор прецедентов каждой группы — события, выбранные в виджете «Поиск
+   * прецедентов» и транслируемые потребителям (Event Effect Analysis, Event
+   * Study, маркеры на графике). Хранятся целиком (`PrecedentEvent`):
+   * потребители читают дату и описание события прямо из набора. Для группы
+   * `none` сюда ничего не пишется — автономный «Поиск прецедентов» хранит
+   * набор в локальном state.
    */
-  precedentEventIds: Record<WidgetGroup, string[]>
+  precedentEvents: Record<WidgetGroup, PrecedentEvent[]>
 
   // Действия — состав группы
   registerMember: (id: string, group: WidgetGroup, ticker?: string | null) => void
@@ -68,9 +71,9 @@ interface GroupStoreState {
   setActiveEvent: (group: WidgetGroup, ev: ActiveEvent | null) => void
 
   // Действия — набор прецедентов
-  setPrecedentSet: (group: WidgetGroup, eventIds: string[]) => void
-  togglePrecedentInSet: (group: WidgetGroup, eventId: string) => void
-  addPrecedentsToSet: (group: WidgetGroup, eventIds: string[]) => void
+  setPrecedentSet: (group: WidgetGroup, events: PrecedentEvent[]) => void
+  togglePrecedentInSet: (group: WidgetGroup, event: PrecedentEvent) => void
+  addPrecedentsToSet: (group: WidgetGroup, events: PrecedentEvent[]) => void
   removePrecedentsFromSet: (group: WidgetGroup, eventIds: string[]) => void
   clearPrecedentSet: (group: WidgetGroup) => void
 }
@@ -88,7 +91,7 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
   leaders: emptyMap<string | null>(null),
   showEvents: emptyMap<boolean>(false),
   activeEvents: emptyMap<ActiveEvent | null>(null),
-  precedentEventIds: {
+  precedentEvents: {
     none: [],
     red: [],
     blue: [],
@@ -168,47 +171,47 @@ export const useGroupStore = create<GroupStoreState>((set, get) => ({
       return { activeEvents: { ...state.activeEvents, [group]: ev } }
     }),
 
-  setPrecedentSet: (group, eventIds) =>
+  setPrecedentSet: (group, events) =>
     set((state) => {
       if (group === 'none') return state
-      return { precedentEventIds: { ...state.precedentEventIds, [group]: eventIds } }
+      return { precedentEvents: { ...state.precedentEvents, [group]: events } }
     }),
 
-  togglePrecedentInSet: (group, eventId) =>
+  togglePrecedentInSet: (group, event) =>
     set((state) => {
       if (group === 'none') return state
-      const cur = state.precedentEventIds[group]
-      const next = cur.includes(eventId)
-        ? cur.filter((id) => id !== eventId)
-        : [...cur, eventId]
-      return { precedentEventIds: { ...state.precedentEventIds, [group]: next } }
+      const cur = state.precedentEvents[group]
+      const next = cur.some((e) => e.eventId === event.eventId)
+        ? cur.filter((e) => e.eventId !== event.eventId)
+        : [...cur, event]
+      return { precedentEvents: { ...state.precedentEvents, [group]: next } }
     }),
 
-  addPrecedentsToSet: (group, eventIds) =>
+  addPrecedentsToSet: (group, events) =>
     set((state) => {
-      if (group === 'none' || eventIds.length === 0) return state
-      const cur = state.precedentEventIds[group]
-      const known = new Set(cur)
-      const added = eventIds.filter((id) => !known.has(id))
+      if (group === 'none' || events.length === 0) return state
+      const cur = state.precedentEvents[group]
+      const known = new Set(cur.map((e) => e.eventId))
+      const added = events.filter((e) => !known.has(e.eventId))
       if (added.length === 0) return state
-      return { precedentEventIds: { ...state.precedentEventIds, [group]: [...cur, ...added] } }
+      return { precedentEvents: { ...state.precedentEvents, [group]: [...cur, ...added] } }
     }),
 
   removePrecedentsFromSet: (group, eventIds) =>
     set((state) => {
       if (group === 'none' || eventIds.length === 0) return state
       const remove = new Set(eventIds)
-      const cur = state.precedentEventIds[group]
-      const next = cur.filter((id) => !remove.has(id))
+      const cur = state.precedentEvents[group]
+      const next = cur.filter((e) => !remove.has(e.eventId))
       if (next.length === cur.length) return state
-      return { precedentEventIds: { ...state.precedentEventIds, [group]: next } }
+      return { precedentEvents: { ...state.precedentEvents, [group]: next } }
     }),
 
   clearPrecedentSet: (group) =>
     set((state) => {
       if (group === 'none') return state
-      if (state.precedentEventIds[group].length === 0) return state
-      return { precedentEventIds: { ...state.precedentEventIds, [group]: [] } }
+      if (state.precedentEvents[group].length === 0) return state
+      return { precedentEvents: { ...state.precedentEvents, [group]: [] } }
     }),
 }))
 
@@ -235,7 +238,7 @@ export const selectActiveEvent = (group: WidgetGroup) => (s: GroupStoreState) =>
   s.activeEvents[group]
 
 export const selectPrecedentSet = (group: WidgetGroup) => (s: GroupStoreState) =>
-  s.precedentEventIds[group]
+  s.precedentEvents[group]
 
 // ───────────────────────────────────────────────────────────────────────────
 // Event bus: transient команды (зум, выбор события, hover-дата)

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getEvents, getTickers, runEventStudy } from '../api/client'
+import { getTickers, runEventStudy } from '../api/client'
 import type {
-  DividendEvent,
   EventStudyResult,
   ExpectedReturnModel,
+  PrecedentEvent,
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
@@ -12,6 +12,7 @@ import { NumberField } from './NumberField'
 import {
   groupEventBus,
   selectLeaderTicker,
+  selectPrecedentSet,
   selectShowEvents,
   useGroupStore,
 } from './groupStore'
@@ -20,6 +21,11 @@ function shiftDate(iso: string, deltaDays: number): string {
   const d = new Date(iso)
   d.setUTCDate(d.getUTCDate() + deltaDays)
   return d.toISOString().slice(0, 10)
+}
+
+/** Подпись события в дропдауне: дата и описание. */
+function formatEventLabel(e: PrecedentEvent): string {
+  return e.event ? `${e.dateStart} · ${e.event}` : e.dateStart
 }
 
 const MODELS: { value: ExpectedReturnModel; label: string }[] = [
@@ -44,7 +50,6 @@ interface EventStudyWidgetProps {
 
 export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [allTickers, setAllTickers] = useState<string[]>([])
-  const [allEvents, setAllEvents] = useState<DividendEvent[]>([])
   const [ticker, setTicker] = useState<string>('')
   const [eventId, setEventId] = useState<string>('')
   const [model, setModel] = useState<ExpectedReturnModel>('market_model')
@@ -61,66 +66,52 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   // Подписки на стор группы — авто-перерендер только на нужных изменениях
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
   const showEvents = useGroupStore(selectShowEvents(group))
+  const precedentSet = useGroupStore(selectPrecedentSet(group))
   const setActiveEventInStore = useGroupStore((s) => s.setActiveEvent)
   const toggleShowEventsInStore = useGroupStore((s) => s.toggleShowEvents)
 
+  // Список тикеров нужен только для свободного выбора, когда лидер не назначен
   useEffect(() => {
-    getTickers().then((ts) => {
-      setAllTickers(ts)
-      if (ts.length > 0 && !ticker) {
-        setTicker(ts.includes('LKOH') ? 'LKOH' : ts[0])
-      }
-    })
-    getEvents().then(setAllEvents)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    getTickers().then(setAllTickers)
   }, [])
 
-  // Доступные тикеры:
-  //  - none → все (автономный режим)
-  //  - есть ведущий с тикером → только его тикер (forced)
-  //  - нет ведущего / индекс-лидер → пусто (placeholder)
-  const tickers = useMemo(() => {
-    if (group === 'none') return allTickers
-    if (leaderTicker) return [leaderTicker]
-    return []
-  }, [group, leaderTicker, allTickers])
+  // События берём из набора группы целиком и сортируем по дате. По тикеру не
+  // фильтруем: тикер — subject анализа, набор общий для группы (как в Event
+  // Effect Analysis).
+  const precedentEvents = useMemo(
+    () => [...precedentSet].sort((a, b) => a.dateStart.localeCompare(b.dateStart)),
+    [precedentSet],
+  )
 
-  const isLockedToLeader = group !== 'none' && leaderTicker !== null
-  const isBlockedNoLeader = group !== 'none' && leaderTicker === null
-
-  // Синхронизация выбранного тикера с ведущим
-  useEffect(() => {
-    if (group === 'none') {
-      if (tickers.length > 0 && !tickers.includes(ticker)) setTicker(tickers[0])
-      return
-    }
-    if (leaderTicker) {
-      if (ticker !== leaderTicker) setTicker(leaderTicker)
-    } else {
-      if (ticker !== '') setTicker('')
-    }
-  }, [group, leaderTicker, tickers, ticker])
-
-  const paramsValid = daysBefore !== null && daysAfter !== null && estimationWindow !== null
-
-  const tickerEvents = useMemo(
-    () =>
-      allEvents
-        .filter((e) => e.ticker === ticker)
-        .sort((a, b) => a.eventDate.localeCompare(b.eventDate)),
-    [allEvents, ticker],
+  // Тикер: залочен на ведущего, если он есть; иначе свободный выбор из всех
+  const isLockedToLeader = leaderTicker !== null
+  const tickerOptions = useMemo(
+    () => (isLockedToLeader ? [leaderTicker as string] : allTickers),
+    [isLockedToLeader, leaderTicker, allTickers],
   )
 
   useEffect(() => {
-    if (tickerEvents.length > 0) {
-      setEventId(tickerEvents[0].id)
-    } else {
-      setEventId('')
+    if (leaderTicker) {
+      if (ticker !== leaderTicker) setTicker(leaderTicker)
+    } else if (allTickers.length > 0 && !allTickers.includes(ticker)) {
+      setTicker(allTickers.includes('LKOH') ? 'LKOH' : allTickers[0])
     }
-  }, [tickerEvents])
+  }, [leaderTicker, allTickers, ticker])
 
-  const currentIdx = tickerEvents.findIndex((e) => e.id === eventId)
-  const currentEvent = tickerEvents[currentIdx]
+  const paramsValid = daysBefore !== null && daysAfter !== null && estimationWindow !== null
+
+  // Сброс выбранного события при смене набора — на первое, если текущего больше нет
+  useEffect(() => {
+    if (precedentEvents.length === 0) {
+      setEventId('')
+    } else if (!precedentEvents.some((e) => e.eventId === eventId)) {
+      setEventId(precedentEvents[0].eventId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [precedentEvents])
+
+  const currentIdx = precedentEvents.findIndex((e) => e.eventId === eventId)
+  const currentEvent = precedentEvents[currentIdx]
 
   // Публикация активного события в группу (для подсветки на price chart)
   useEffect(() => {
@@ -131,12 +122,12 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     }
     if (daysBefore === null || daysAfter === null) return
     setActiveEventInStore(group, {
-      ticker: currentEvent.ticker,
-      eventDate: currentEvent.eventDate,
+      ticker,
+      eventDate: currentEvent.dateStart,
       daysBefore,
       daysAfter,
     })
-  }, [group, currentEvent, daysBefore, daysAfter, setActiveEventInStore])
+  }, [group, currentEvent, ticker, daysBefore, daysAfter, setActiveEventInStore])
 
   // При размонтировании / смене группы — очистить старую
   useEffect(() => {
@@ -147,38 +138,34 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     }
   }, [group, setActiveEventInStore])
 
-  // Подписка на «выбрать событие» из price chart (клик по маркеру)
+  // Подписка на «выбрать событие»: клик по маркеру price chart, а также двойной
+  // клик по строке таблицы Event Effect (Задача B). Тикер ведёт лидер, поэтому
+  // событие набора ищем по дате.
   // handleCalculateRef нужен, чтобы подписка не пере-создавалась на каждом изменении state
   const handleCalculateRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (group === 'none') return
     return groupEventBus.subscribe(group, 'selectEvent', (req) => {
-      // Если тикер другой — сначала переключаем тикер, затем событие
-      if (req.ticker !== ticker) {
-        setTicker(req.ticker)
-      }
-      const found = allEvents.find(
-        (e) => e.ticker === req.ticker && e.eventDate === req.eventDate,
-      )
+      const found = precedentEvents.find((e) => e.dateStart === req.eventDate)
       if (found) {
-        setEventId(found.id)
+        setEventId(found.eventId)
         // Авторасчёт на следующем тике, когда state применится
         setTimeout(() => handleCalculateRef.current(), 0)
       }
     })
-  }, [group, ticker, allEvents])
+  }, [group, precedentEvents])
 
   const stepEvent = (delta: number) => {
-    if (tickerEvents.length === 0) return
+    if (precedentEvents.length === 0) return
     if (daysBefore === null || daysAfter === null) return
-    const next = Math.max(0, Math.min(tickerEvents.length - 1, currentIdx + delta))
-    const ev = tickerEvents[next]
-    setEventId(ev.id)
+    const next = Math.max(0, Math.min(precedentEvents.length - 1, currentIdx + delta))
+    const ev = precedentEvents[next]
+    setEventId(ev.eventId)
     // Авто-зум на price chart этой группы
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
-        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
-        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
+        from: shiftDate(ev.dateStart, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.dateStart, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     // Авто-расчёт после применения нового eventId
@@ -193,13 +180,13 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   })
 
   const handleCalculate = async () => {
-    const ev = tickerEvents[currentIdx]
+    const ev = precedentEvents[currentIdx]
     if (!ev) return
     if (daysBefore === null || daysAfter === null || estimationWindow === null) return
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
-        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
-        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
+        from: shiftDate(ev.dateStart, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.dateStart, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     setLoading(true)
@@ -207,7 +194,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     try {
       const r = await runEventStudy({
         ticker,
-        eventDate: ev.eventDate,
+        eventDate: ev.dateStart,
         model,
         eventWindow: [-daysBefore, daysAfter],
         estimationWindow: estimationWindow,
@@ -223,6 +210,29 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     }
   }
 
+  // Группа обязательна, источник событий — набор прецедентов
+  if (group === 'none') {
+    return (
+      <div style={rootContainerStyle}>
+        <div style={placeholderStyle}>
+          Привяжите виджет к группе (выберите цвет рядом с заголовком),
+          <br />
+          затем выберите набор прецедентов.
+        </div>
+      </div>
+    )
+  }
+
+  if (precedentSet.length === 0) {
+    return (
+      <div style={rootContainerStyle}>
+        <div style={placeholderStyle}>
+          Выберите события в виджете «Поиск прецедентов» этой же группы.
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={rootContainerStyle}>
       <div style={sectionHeaderStyle}>CAR в окне события</div>
@@ -233,10 +243,10 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
             value={ticker}
             onChange={(e) => setTicker(e.target.value)}
             style={selectStyle}
-            disabled={isLockedToLeader || isBlockedNoLeader}
+            disabled={isLockedToLeader}
           >
-            {tickers.length === 0 && <option value="">—</option>}
-            {tickers.map((t) => (
+            {tickerOptions.length === 0 && <option value="">—</option>}
+            {tickerOptions.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -250,11 +260,12 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
             value={eventId}
             onChange={(e) => setEventId(e.target.value)}
             style={selectStyle}
-            disabled={tickerEvents.length === 0}
+            disabled={precedentEvents.length === 0}
           >
-            {tickerEvents.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.eventDate} — {e.dividend.toFixed(2)} ₽
+            {precedentEvents.length === 0 && <option value="">—</option>}
+            {precedentEvents.map((e) => (
+              <option key={e.eventId} value={e.eventId}>
+                {formatEventLabel(e)}
               </option>
             ))}
           </select>
@@ -262,7 +273,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
         <ShowEventsToggleButton
           show={showEvents}
-          disabled={isBlockedNoLeader || group === 'none'}
+          disabled={leaderTicker === null}
           group={group}
           onToggle={() => toggleShowEventsInStore(group)}
         />
@@ -315,7 +326,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         <button
           onClick={handleCalculate}
           style={calcButtonStyle}
-          disabled={!eventId || loading || isBlockedNoLeader || !paramsValid}
+          disabled={!eventId || loading || !paramsValid}
         >
           {loading ? 'Считаем…' : 'Рассчитать'}
         </button>
@@ -329,7 +340,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
         </button>
         <button
           onClick={() => stepEvent(1)}
-          disabled={currentIdx < 0 || currentIdx >= tickerEvents.length - 1}
+          disabled={currentIdx < 0 || currentIdx >= precedentEvents.length - 1}
           style={navButtonStyle}
           title="Следующее событие"
         >
@@ -339,13 +350,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
 
       {error && <div style={{ color: '#c62828', fontSize: 13 }}>{error}</div>}
 
-      {isBlockedNoLeader ? (
-        <div style={placeholderStyle}>
-          Выберите ведущий price chart в группе
-          <br />
-          (кнопка ⟳ на нужном графике)
-        </div>
-      ) : result && resultWindow ? (
+      {result && resultWindow ? (
         <>
           <div style={carChartContainerStyle}>
             <CarChart
@@ -599,4 +604,3 @@ const placeholderStyle: React.CSSProperties = {
   textAlign: 'center',
   padding: 16,
 }
-

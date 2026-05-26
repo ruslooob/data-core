@@ -5,10 +5,10 @@ import { Prec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import {
   PrecedentApiError,
-  getEventsInfo,
   searchPrecedents,
   searchPrecedentsFuzzy,
 } from '../api/client'
+import type { PrecedentEvent } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import {
   selectPrecedentSet,
@@ -23,20 +23,13 @@ type SearchMode = 'fuzzy' | 'pql'
 type ViewMode = 'found' | 'selected'
 type Status = 'idle' | 'loading' | 'success' | 'error'
 
-interface EventRow {
-  eventId: string
-  event: string
-  dateStart: string
-  tags: string[]
-}
-
 interface ErrorState {
   message: string
   line: number | null
   column: number | null
 }
 
-const DEFAULT_PQL = `SELECT id, event
+const DEFAULT_PQL = `SELECT id, event, date_start
 FROM events
 WHERE date_start > DATE '2020-01-01'
 ORDER BY date_start DESC
@@ -44,6 +37,7 @@ LIMIT 50`
 
 const ID_COLUMN_NAMES = new Set(['id', 'event_id'])
 const EVENT_COLUMN_NAME = 'event'
+const DATE_COLUMN_NAME = 'date_start'
 
 export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
   const [mode, setMode] = useState<SearchMode>('fuzzy')
@@ -54,15 +48,11 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<ErrorState | null>(null)
   const [truncated, setTruncated] = useState(false)
-  const [foundRows, setFoundRows] = useState<EventRow[]>([])
-
-  // Кэш всех событий, виденных в любом поиске за время жизни виджета —
-  // нужен для отображения данных в режиме «Выбранные» после смены режима/запроса.
-  const [eventCache, setEventCache] = useState<Map<string, EventRow>>(() => new Map())
+  const [foundRows, setFoundRows] = useState<PrecedentEvent[]>([])
 
   // Локальный набор для группы `none` — в groupStore группа `none` не пишется,
   // потому что несколько виджетов в `none` не должны делиться состоянием.
-  const [localSet, setLocalSet] = useState<string[]>([])
+  const [localSet, setLocalSet] = useState<PrecedentEvent[]>([])
 
   const groupSet = useGroupStore(selectPrecedentSet(group))
   const togglePrecedentInSet = useGroupStore((s) => s.togglePrecedentInSet)
@@ -70,16 +60,23 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
   const removePrecedentsFromSet = useGroupStore((s) => s.removePrecedentsFromSet)
   const clearPrecedentSet = useGroupStore((s) => s.clearPrecedentSet)
 
-  const selectedIds = group === 'none' ? localSet : groupSet
-  const selectedCount = selectedIds.length
+  const selectedEvents = group === 'none' ? localSet : groupSet
+  const selectedCount = selectedEvents.length
+  // Множество id выбранных — для отметки чекбоксов в режиме «Найденные»
+  const selectedIds = useMemo(
+    () => new Set(selectedEvents.map((e) => e.eventId)),
+    [selectedEvents],
+  )
 
-  const toggleSelected = useCallback((eventId: string) => {
+  const toggleSelected = useCallback((event: PrecedentEvent) => {
     if (group === 'none') {
       setLocalSet((prev) =>
-        prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId],
+        prev.some((e) => e.eventId === event.eventId)
+          ? prev.filter((e) => e.eventId !== event.eventId)
+          : [...prev, event],
       )
     } else {
-      togglePrecedentInSet(group, eventId)
+      togglePrecedentInSet(group, event)
     }
   }, [group, togglePrecedentInSet])
 
@@ -88,16 +85,16 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     else clearPrecedentSet(group)
   }, [group, clearPrecedentSet])
 
-  const addManyToSelected = useCallback((eventIds: string[]) => {
-    if (eventIds.length === 0) return
+  const addManyToSelected = useCallback((events: PrecedentEvent[]) => {
+    if (events.length === 0) return
     if (group === 'none') {
       setLocalSet((prev) => {
-        const known = new Set(prev)
-        const added = eventIds.filter((id) => !known.has(id))
+        const known = new Set(prev.map((e) => e.eventId))
+        const added = events.filter((e) => !known.has(e.eventId))
         return added.length === 0 ? prev : [...prev, ...added]
       })
     } else {
-      addPrecedentsToSet(group, eventIds)
+      addPrecedentsToSet(group, events)
     }
   }, [group, addPrecedentsToSet])
 
@@ -106,7 +103,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     if (group === 'none') {
       setLocalSet((prev) => {
         const remove = new Set(eventIds)
-        return prev.filter((id) => !remove.has(id))
+        return prev.filter((e) => !remove.has(e.eventId))
       })
     } else {
       removePrecedentsFromSet(group, eventIds)
@@ -128,41 +125,14 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     setFoundRows([])
 
     try {
-      const hits = mode === 'fuzzy'
+      const result = mode === 'fuzzy'
         ? await runFuzzy(fuzzyQuery, ctrl.signal)
         : await runPql(pqlSource, ctrl.signal)
       if (ctrl.signal.aborted) return
 
-      // Дотянуть дату и теги одним батчем (events-info).
-      const eventIds = hits.hits.map((h) => h.eventId)
-      const infoResp = eventIds.length > 0
-        ? await getEventsInfo(eventIds)
-        : { rows: [] }
-      if (ctrl.signal.aborted) return
-
-      const infoMap = new Map<string, { dateStart: string; tags: string[] }>()
-      for (const r of infoResp.rows) infoMap.set(r.eventId, { dateStart: r.dateStart, tags: r.tags })
-
-      const rows: EventRow[] = hits.hits.map((h) => {
-        const info = infoMap.get(h.eventId)
-        return {
-          eventId: h.eventId,
-          event: h.event,
-          dateStart: info?.dateStart ?? '',
-          tags: info?.tags ?? [],
-        }
-      })
-
-      setFoundRows(rows)
-      setTruncated(hits.truncated)
+      setFoundRows(result.rows)
+      setTruncated(result.truncated)
       setStatus('success')
-
-      // обновить кэш
-      setEventCache((prev) => {
-        const next = new Map(prev)
-        for (const r of rows) next.set(r.eventId, r)
-        return next
-      })
     } catch (e) {
       if (ctrl.signal.aborted) return
       if (e instanceof PrecedentApiError) {
@@ -210,31 +180,21 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
 
   // ── Список к отображению ──
 
-  const displayedRows: EventRow[] = useMemo(() => {
-    if (viewMode === 'found') return foundRows
-    // selected: вытаскиваем из кэша; если события нет в кэше — показываем плейсхолдер.
-    return selectedIds.map((id) => eventCache.get(id) ?? {
-      eventId: id,
-      event: '(событие не загружено в этой сессии)',
-      dateStart: '',
-      tags: [],
-    })
-  }, [viewMode, foundRows, selectedIds, eventCache])
+  const displayedRows = viewMode === 'found' ? foundRows : selectedEvents
 
   // ── Bulk-выделение в режиме «Найденные» ──
 
   const foundIds = useMemo(() => foundRows.map((r) => r.eventId), [foundRows])
   const allFoundSelected = useMemo(() => {
     if (foundIds.length === 0) return false
-    const known = new Set(selectedIds)
-    return foundIds.every((id) => known.has(id))
+    return foundIds.every((id) => selectedIds.has(id))
   }, [foundIds, selectedIds])
 
   const toggleAllFound = useCallback(() => {
-    if (foundIds.length === 0) return
-    if (allFoundSelected) removeManyFromSelected(foundIds)
-    else addManyToSelected(foundIds)
-  }, [foundIds, allFoundSelected, addManyToSelected, removeManyFromSelected])
+    if (foundRows.length === 0) return
+    if (allFoundSelected) removeManyFromSelected(foundRows.map((r) => r.eventId))
+    else addManyToSelected(foundRows)
+  }, [foundRows, allFoundSelected, addManyToSelected, removeManyFromSelected])
 
   // ── Статус-строка ──
 
@@ -341,7 +301,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
                 {viewMode === 'found' && foundRows.length > 0 && (
                   <SelectAllCheckbox
                     checked={allFoundSelected}
-                    indeterminate={!allFoundSelected && foundIds.some((id) => selectedIds.includes(id))}
+                    indeterminate={!allFoundSelected && foundIds.some((id) => selectedIds.has(id))}
                     onChange={toggleAllFound}
                     title={allFoundSelected ? 'Снять выделение со всех найденных' : 'Выделить все найденные'}
                   />
@@ -349,13 +309,12 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
               </th>
               <th style={thDateStyle}>дата</th>
               <th style={thStyle}>event</th>
-              <th style={thStyle}>теги</th>
             </tr>
           </thead>
           <tbody>
             {displayedRows.length === 0 ? (
               <tr>
-                <td style={emptyCellStyle} colSpan={4}>
+                <td style={emptyCellStyle} colSpan={3}>
                   {viewMode === 'found'
                     ? (status === 'success' ? 'Ничего не найдено' : 'Введите запрос и нажмите «Выполнить»')
                     : 'Набор пуст. Поставьте галочки в режиме «Найденные».'}
@@ -363,19 +322,18 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
               </tr>
             ) : (
               displayedRows.map((row) => {
-                const checked = selectedIds.includes(row.eventId)
+                const checked = selectedIds.has(row.eventId)
                 return (
                   <tr key={row.eventId}>
                     <td style={tdCheckboxStyle}>
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleSelected(row.eventId)}
+                        onChange={() => toggleSelected(row)}
                       />
                     </td>
                     <td style={tdDateStyle}>{row.dateStart}</td>
                     <td style={tdEventStyle}>{row.event}</td>
-                    <td style={tdTagsStyle}>{row.tags.join(', ')}</td>
                   </tr>
                 )
               })
@@ -424,35 +382,45 @@ class ContractError extends Error {
 async function runFuzzy(
   query: string,
   signal: AbortSignal,
-): Promise<{ hits: { eventId: string; event: string }[]; truncated: boolean }> {
+): Promise<{ rows: PrecedentEvent[]; truncated: boolean }> {
   const r = await searchPrecedentsFuzzy(query, signal)
-  return { hits: r.hits, truncated: r.truncated }
+  const rows = r.hits.map((h) => ({
+    eventId: h.eventId,
+    event: h.event,
+    dateStart: h.dateStart,
+  }))
+  return { rows, truncated: r.truncated }
 }
 
 async function runPql(
   source: string,
   signal: AbortSignal,
-): Promise<{ hits: { eventId: string; event: string }[]; truncated: boolean }> {
+): Promise<{ rows: PrecedentEvent[]; truncated: boolean }> {
   const r = await searchPrecedents({ source }, signal)
-  // Контракт виджета: ровно две колонки — (id|event_id) + event.
-  if (r.columns.length !== 2) {
+  // Контракт виджета: ровно три колонки — (id|event_id), event, date_start.
+  if (r.columns.length !== 3) {
     throw new ContractError(
-      `Ожидалось ровно две колонки (id|event_id и event), получено ${r.columns.length}: ` +
+      `Ожидалось ровно три колонки (id|event_id, event, date_start), получено ${r.columns.length}: ` +
       r.columns.map((c) => c.name).join(', '),
     )
   }
-  const [first, second] = r.columns
-  if (!ID_COLUMN_NAMES.has(first.name) || second.name !== EVENT_COLUMN_NAME) {
+  const [first, second, third] = r.columns
+  if (
+    !ID_COLUMN_NAMES.has(first.name) ||
+    second.name !== EVENT_COLUMN_NAME ||
+    third.name !== DATE_COLUMN_NAME
+  ) {
     throw new ContractError(
-      `Имена колонок должны быть «id» или «event_id» и «event». Получено: ` +
-      `«${first.name}», «${second.name}».`,
+      `Имена колонок должны быть «id»/«event_id», «event», «date_start». Получено: ` +
+      `«${first.name}», «${second.name}», «${third.name}».`,
     )
   }
-  const hits = r.rows.map((row) => ({
+  const rows = r.rows.map((row) => ({
     eventId: String(row[0]),
     event: row[1] == null ? '' : String(row[1]),
+    dateStart: row[2] == null ? '' : String(row[2]),
   }))
-  return { hits, truncated: r.stats.truncated }
+  return { rows, truncated: r.stats.truncated }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -636,13 +604,6 @@ const tdDateStyle: React.CSSProperties = {
 const tdEventStyle: React.CSSProperties = {
   padding: '4px 10px',
   borderBottom: '1px solid #f0f0f0',
-}
-
-const tdTagsStyle: React.CSSProperties = {
-  padding: '4px 10px',
-  borderBottom: '1px solid #f0f0f0',
-  color: '#666',
-  whiteSpace: 'nowrap',
 }
 
 const emptyCellStyle: React.CSSProperties = {

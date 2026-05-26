@@ -112,15 +112,17 @@ const HEATMAP_PADDING_X = 124  // margin.l + margin.r + борды
 const HEATMAP_PADDING_Y = 40   // margin.t + margin.b + борды
 
 export function EventEffectAnalysisWidget({ group }: EventEffectAnalysisWidgetProps) {
-  const eventIds = useGroupStore(selectPrecedentSet(group))
+  const precedentSet = useGroupStore(selectPrecedentSet(group))
   const leaderTicker = useGroupStore(selectLeaderTicker(group))
+  // Бэку нужны только id; набор хранит полные строки события
+  const eventIds = useMemo(() => precedentSet.map((e) => e.eventId), [precedentSet])
 
   // ── Заглушки до того, как можно считать ──
 
   if (group === 'none') {
     return <PlaceholderMessage text="Привяжите виджет к группе (выберите цвет рядом с заголовком), затем выберите ведущий график и набор прецедентов." />
   }
-  if (eventIds.length === 0) {
+  if (precedentSet.length === 0) {
     return <PlaceholderMessage text="Выберите события в виджете «Поиск прецедентов» этой же группы." />
   }
   if (leaderTicker == null) {

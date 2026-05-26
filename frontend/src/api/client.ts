@@ -14,7 +14,6 @@ import type {
   EventEffectIndividualResponse,
   EventEffectSensitivityRequest,
   EventEffectSensitivityResponse,
-  EventsInfoResponse,
   EventStudyRequest,
   EventStudyResult,
   PrecedentFuzzySearchResponse,
@@ -178,14 +177,6 @@ export function searchPrecedentsFuzzy(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
     signal,
-  })
-}
-
-export function getEventsInfo(eventIds: string[]): Promise<EventsInfoResponse> {
-  return fetchJson<EventsInfoResponse>('/api/precedents/events-info', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ eventIds }),
   })
 }
 

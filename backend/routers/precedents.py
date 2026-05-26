@@ -8,9 +8,6 @@ from fastapi import APIRouter, HTTPException
 
 from routers._common import get_pg, pg_type_name, to_json_safe
 from schemas.precedents import (
-    EventInfoRow,
-    EventsInfoRequest,
-    EventsInfoResponse,
     PrecedentColumn,
     PrecedentFuzzyHit,
     PrecedentFuzzySearchRequest,
@@ -116,7 +113,7 @@ def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzyS
     pattern = f"%{query}%"
     con = get_pg()
     rows = con.execute(
-        "SELECT id, event FROM events WHERE event ILIKE %s ORDER BY date_start DESC LIMIT %s",
+        "SELECT id, event, date_start FROM events WHERE event ILIKE %s ORDER BY date_start DESC LIMIT %s",
         [pattern, PRECEDENT_MAX_ROWS + 1],
     ).fetchall()
 
@@ -124,41 +121,12 @@ def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzyS
     if truncated:
         rows = rows[:PRECEDENT_MAX_ROWS]
 
-    hits = [PrecedentFuzzyHit(event_id=r[0], event=r[1] or '') for r in rows]
+    hits = [
+        PrecedentFuzzyHit(
+            event_id=r[0],
+            event=r[1] or '',
+            date_start=r[2].isoformat() if r[2] is not None else '',
+        )
+        for r in rows
+    ]
     return PrecedentFuzzySearchResponse(hits=hits, truncated=truncated)
-
-
-@router.post("/api/precedents/events-info", response_model_by_alias=True)
-def events_info(req: EventsInfoRequest) -> EventsInfoResponse:
-    """Возвращает дату события и его теги по списку event_id.
-
-    Используется виджетом «Поиск прецедентов»: PQL и fuzzy выдают только
-    id+event, остальной контекст (дата, теги) дотягивается одним батчем.
-    """
-    if not req.event_ids:
-        return EventsInfoResponse(rows=[])
-
-    con = get_pg()
-    rows = con.execute(
-        """
-        SELECT e.id, e.date_start, COALESCE(ARRAY_AGG(et.tag_code ORDER BY et.tag_code)
-                                            FILTER (WHERE et.tag_code IS NOT NULL),
-                                            '{}')
-        FROM events e
-        LEFT JOIN event_tags et ON et.event_id = e.id
-        WHERE e.id = ANY(%s)
-        GROUP BY e.id, e.date_start
-        """,
-        [req.event_ids],
-    ).fetchall()
-
-    return EventsInfoResponse(
-        rows=[
-            EventInfoRow(
-                event_id=r[0],
-                date_start=r[1].isoformat() if r[1] is not None else '',
-                tags=list(r[2] or []),
-            )
-            for r in rows
-        ],
-    )

@@ -41,22 +41,9 @@ class PrecedentFuzzySearchRequest(CamelModel):
 class PrecedentFuzzyHit(CamelModel):
     event_id: str
     event: str
+    date_start: str
 
 
 class PrecedentFuzzySearchResponse(CamelModel):
     hits: list[PrecedentFuzzyHit]
     truncated: bool
-
-
-class EventsInfoRequest(CamelModel):
-    event_ids: list[str]
-
-
-class EventInfoRow(CamelModel):
-    event_id: str
-    date_start: str
-    tags: list[str]
-
-
-class EventsInfoResponse(CamelModel):
-    rows: list[EventInfoRow]

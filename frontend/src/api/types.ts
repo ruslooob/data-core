@@ -69,6 +69,7 @@ export interface PrecedentQuerySaveRequest {
 export interface PrecedentFuzzyHit {
   eventId: string
   event: string
+  dateStart: string
 }
 
 export interface PrecedentFuzzySearchResponse {
@@ -76,14 +77,10 @@ export interface PrecedentFuzzySearchResponse {
   truncated: boolean
 }
 
-export interface EventInfoRow {
+export interface PrecedentEvent {
   eventId: string
+  event: string
   dateStart: string
-  tags: string[]
-}
-
-export interface EventsInfoResponse {
-  rows: EventInfoRow[]
 }
 
 // ── Event Effect Analysis ───────────────────────────────────────────────────
