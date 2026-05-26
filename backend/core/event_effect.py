@@ -37,9 +37,15 @@ class IndividualCar:
     event_id: str
     date: str  # ISO YYYY-MM-DD
     car: float
+    # Абсолютный (ненаправленный) baseline — для режима |CAR|.
     rank: float        # percentile rank |CAR| в распределении |псевдо-CAR| события (0..1)
     is_anomaly: bool   # rank > _ANOMALY_RANK_THRESHOLD
-    noise_band: float  # личный 95-перцентиль |псевдо-CAR| (|CAR| > noise_band → аномалия)
+    baseline_band: float  # личный 95-перцентиль |псевдо-CAR| (|CAR| > baseline_band → аномалия)
+    # Знаковый (направленный) baseline — для режима CAR.
+    signed_rank: float        # доля знаковых псевдо-CAR < CAR (>0.95 вверх, <0.05 вниз)
+    is_anomaly_signed: bool   # signed_rank вне [0.05, 0.95]
+    baseline_up: float           # 95-перцентиль знакового распределения псевдо-CAR
+    baseline_down: float         # 5-перцентиль знакового распределения псевдо-CAR
 
 
 @dataclass
@@ -127,6 +133,19 @@ def _percentile_rank(observed: float, distribution: list[float]) -> float:
         return 0.0
     abs_obs = abs(observed)
     n_below = sum(1 for v in distribution if abs(v) < abs_obs)
+    return n_below / len(distribution)
+
+
+def _signed_rank(observed: float, distribution: list[float]) -> float:
+    """Где observed (со знаком) лежит в знаковом распределении distribution (доля 0..1).
+
+    > 0.95 — наблюдение аномально высоко (вверх), < 0.05 — аномально низко (вниз).
+    Самосогласовано с baseline_up/baseline_down: observed > percentile(dist, 95)
+    ⟺ signed_rank > 0.95, observed < percentile(dist, 5) ⟺ signed_rank < 0.05.
+    """
+    if not distribution:
+        return 0.0
+    n_below = sum(1 for v in distribution if v < observed)
     return n_below / len(distribution)
 
 
@@ -229,11 +248,22 @@ def calculate_individual(
             continue
 
         pseudo = _pseudo_cars(result.estimation_residuals, window_len)
+        hi = _ANOMALY_RANK_THRESHOLD * 100        # 95-й перцентиль
+        lo = (1 - _ANOMALY_RANK_THRESHOLD) * 100  # 5-й перцентиль
+
         rank = _percentile_rank(result.car, pseudo)
         is_anomaly = rank > _ANOMALY_RANK_THRESHOLD
-        noise_band = (
-            float(np.percentile(np.abs(pseudo), 95)) if pseudo else 0.0
+        signed_rank = _signed_rank(result.car, pseudo)
+        is_anomaly_signed = bool(pseudo) and (
+            signed_rank > _ANOMALY_RANK_THRESHOLD
+            or signed_rank < 1 - _ANOMALY_RANK_THRESHOLD
         )
+        if pseudo:
+            baseline_band = float(np.percentile(np.abs(pseudo), hi))
+            baseline_up = float(np.percentile(pseudo, hi))
+            baseline_down = float(np.percentile(pseudo, lo))
+        else:
+            baseline_band = baseline_up = baseline_down = 0.0
 
         individual_cars.append(IndividualCar(
             event_id=eid,
@@ -241,7 +271,11 @@ def calculate_individual(
             car=result.car,
             rank=rank,
             is_anomaly=is_anomaly,
-            noise_band=noise_band,
+            baseline_band=baseline_band,
+            signed_rank=signed_rank,
+            is_anomaly_signed=is_anomaly_signed,
+            baseline_up=baseline_up,
+            baseline_down=baseline_down,
         ))
 
     forecast = _forecast([ic.car for ic in individual_cars], central_statistic)

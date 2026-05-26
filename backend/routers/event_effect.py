@@ -40,7 +40,9 @@ def post_individual(req: EventEffectIndividualRequest) -> EventEffectIndividualR
         individual_cars=[
             IndividualCarRow(
                 event_id=ic.event_id, date=ic.date, car=ic.car,
-                rank=ic.rank, is_anomaly=ic.is_anomaly, noise_band=ic.noise_band,
+                rank=ic.rank, is_anomaly=ic.is_anomaly, baseline_band=ic.baseline_band,
+                signed_rank=ic.signed_rank, is_anomaly_signed=ic.is_anomaly_signed,
+                baseline_up=ic.baseline_up, baseline_down=ic.baseline_down,
             )
             for ic in result.individual_cars
         ],

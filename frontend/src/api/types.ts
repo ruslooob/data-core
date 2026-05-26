@@ -109,7 +109,11 @@ export interface IndividualCarRow {
   car: number
   rank: number
   isAnomaly: boolean
-  noiseBand: number
+  baselineBand: number
+  signedRank: number
+  isAnomalySigned: boolean
+  baselineUp: number
+  baselineDown: number
 }
 
 export interface ExcludedEventRow {

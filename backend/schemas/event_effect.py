@@ -23,7 +23,11 @@ class IndividualCarRow(CamelModel):
     car: float
     rank: float
     is_anomaly: bool
-    noise_band: float
+    baseline_band: float
+    signed_rank: float
+    is_anomaly_signed: bool
+    baseline_up: float
+    baseline_down: float
 
 
 class ExcludedEventRow(CamelModel):

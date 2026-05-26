@@ -337,10 +337,15 @@ function ExplorerTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds
 
 // ── Таблица индивидуальных CAR ──
 
-type SortKey = 'date' | 'car' | 'noise' | 'rank'
+type SortKey = 'date' | 'car' | 'baseline' | 'rank'
 type SortDir = 'asc' | 'desc'
 
-const ANOMALY_TOOLTIP = 'Аномалия — расхождение слишком большое относительно обычного шума акции'
+const ANOMALY_TOOLTIP = 'Аномалия — CAR выходит за норму обычного движения акции'
+
+/** Доходность в проценты с явным знаком: 0.04 → "+4.0%", -0.10 → "-10.0%". */
+function formatSignedPct(v: number): string {
+  return `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`
+}
 
 function CarTable({
   rows,
@@ -361,13 +366,13 @@ function CarTable({
     copy.sort((a, b) => {
       const va =
         sortKey === 'date' ? a.date
-        : sortKey === 'noise' ? a.noiseBand
-        : sortKey === 'rank' ? a.rank
+        : sortKey === 'baseline' ? a.baselineBand
+        : sortKey === 'rank' ? (valueMode === 'abs' ? a.rank : a.signedRank)
         : valueMode === 'abs' ? Math.abs(a.car) : a.car
       const vb =
         sortKey === 'date' ? b.date
-        : sortKey === 'noise' ? b.noiseBand
-        : sortKey === 'rank' ? b.rank
+        : sortKey === 'baseline' ? b.baselineBand
+        : sortKey === 'rank' ? (valueMode === 'abs' ? b.rank : b.signedRank)
         : valueMode === 'abs' ? Math.abs(b.car) : b.car
       const cmp = va < vb ? -1 : va > vb ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
@@ -394,7 +399,7 @@ function CarTable({
               <th style={thClickableStyle} onClick={() => toggleSort('car')}>
                 {valueMode === 'abs' ? '|CAR|' : 'CAR'} {indicator('car')}
               </th>
-              <th style={thClickableStyle} onClick={() => toggleSort('noise')}>шум {indicator('noise')}</th>
+              <th style={thClickableStyle} onClick={() => toggleSort('baseline')}>норма {indicator('baseline')}</th>
               <th style={thClickableStyle} onClick={() => toggleSort('rank')}>rank {indicator('rank')}</th>
             </tr>
           </thead>
@@ -403,6 +408,10 @@ function CarTable({
               <tr><td style={emptyCellStyle} colSpan={5}>Нет валидных событий</td></tr>
             ) : sorted.map((r) => {
               const displayed = valueMode === 'abs' ? Math.abs(r.car) : r.car
+              // Аномалия и rank — по активной метрике: |CAR| на абсолютном baseline,
+              // CAR на знаковом (направленном).
+              const anomaly = valueMode === 'abs' ? r.isAnomaly : r.isAnomalySigned
+              const activeRank = valueMode === 'abs' ? r.rank : r.signedRank
               const rowBg = r.eventId === hoveredEventId ? '#f0f6ff' : undefined
               return (
                 <tr
@@ -412,15 +421,19 @@ function CarTable({
                   style={rowBg ? { background: rowBg } : undefined}
                 >
                   <td style={tdAnomalyStyle}>
-                    {r.isAnomaly && <span title={ANOMALY_TOOLTIP} style={anomalyIconStyle}>⚠</span>}
+                    {anomaly && <span title={ANOMALY_TOOLTIP} style={anomalyIconStyle}>⚠</span>}
                   </td>
                   <td style={tdStyle}>{r.date}</td>
                   <td style={{ ...tdStyle, color: displayed >= 0 ? '#1a7f37' : '#a01919' }}>
                     {(displayed * 100).toFixed(2)}%
                   </td>
-                  <td style={tdStyle}>±{(r.noiseBand * 100).toFixed(1)}%</td>
-                  <td style={{ ...tdStyle, color: r.isAnomaly ? '#d97706' : '#444', fontWeight: r.isAnomaly ? 600 : 400 }}>
-                    {r.rank.toFixed(2)}
+                  <td style={tdStyle}>
+                    {valueMode === 'abs'
+                      ? `±${(r.baselineBand * 100).toFixed(1)}%`
+                      : `${formatSignedPct(r.baselineDown)} / ${formatSignedPct(r.baselineUp)}`}
+                  </td>
+                  <td style={{ ...tdStyle, color: anomaly ? '#d97706' : '#444', fontWeight: anomaly ? 600 : 400 }}>
+                    {activeRank.toFixed(2)}
                   </td>
                 </tr>
               )
@@ -557,7 +570,9 @@ function CarScatter({
     type: 'scatter',
     mode: 'markers',
     marker: {
-      color: rows.map((r) => (r.isAnomaly ? '#d97706' : '#2962FF')),
+      color: rows.map((r) =>
+        (valueMode === 'abs' ? r.isAnomaly : r.isAnomalySigned) ? '#d97706' : '#2962FF',
+      ),
       size: sizes,
       line: { color: lineColors, width: lineWidths },
     },
