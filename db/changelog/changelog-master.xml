@@ -24,5 +24,6 @@
     <include file="changes/009-merge-report-consolidated-into-ifrs.xml" relativeToChangelogFile="true"/>
     <include file="changes/010-drop-material-event-tag.xml" relativeToChangelogFile="true"/>
     <include file="changes/011-add-spo-tag.xml" relativeToChangelogFile="true"/>
+    <include file="changes/012-rename-saved-queries-add-kind.xml" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

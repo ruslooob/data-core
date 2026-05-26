@@ -1,6 +1,6 @@
 """Тесты HTTP-эндпоинтов для сохранения и чтения прецедентных запросов.
 
-После миграции на Postgres `precedent_queries` живёт в той же БД, что
+После миграции на Postgres `saved_queries` живёт в той же БД, что
 и продакшен. Системные ★-рецепты засеваются Liquibase-миграцией, и в
 выдаче `/api/precedents/queries` они присутствуют — тесты их фильтруют.
 Перед каждым тестом удаляются накопленные пользовательские записи
@@ -17,11 +17,11 @@ from main import app
 
 @pytest.fixture(autouse=True)
 def cleanup_user_queries():
-    """Удаляет пользовательские precedent_queries (без ★-префикса) до и
+    """Удаляет пользовательские saved_queries (без ★-префикса) до и
     после теста, чтобы между прогонами не оставался мусор."""
     def _purge():
         with get_pool().connection() as con:
-            con.execute("DELETE FROM precedent_queries WHERE name NOT LIKE '★%%'")
+            con.execute("DELETE FROM saved_queries WHERE name NOT LIKE '★%%'")
     _purge()
     yield
     _purge()
@@ -104,14 +104,42 @@ def test_list_sorted_newest_first(client):
 
 
 def test_saved_query_visible_via_pql(client):
-    """Сохранённый запрос виден через POST /api/precedents/search в таблице precedent_queries."""
+    """Сохранённый запрос виден через POST /api/precedents/search в таблице saved_queries."""
     client.post('/api/precedents/queries', json={
         'name': 'PQL visible test',
         'source': 'SELECT 42',
     })
     r = client.post('/api/precedents/search', json={
-        'source': "SELECT name FROM precedent_queries WHERE name = 'PQL visible test'",
+        'source': "SELECT name FROM saved_queries WHERE name = 'PQL visible test'",
     })
     assert r.status_code == 200
     rows = r.json()['rows']
     assert rows == [['PQL visible test']]
+
+
+def test_save_with_kind_and_filter(client):
+    """kind сохраняется и фильтрует список: FUZZY и PQL не смешиваются."""
+    client.post('/api/precedents/queries', json={
+        'name': 'fuzzy one', 'source': 'газпром', 'kind': 'FUZZY',
+    })
+    client.post('/api/precedents/queries', json={
+        'name': 'pql one', 'source': 'SELECT 1', 'kind': 'PQL',
+    })
+
+    fuzzy = _user_items(client.get('/api/precedents/queries?kind=FUZZY').json())
+    assert [q['name'] for q in fuzzy] == ['fuzzy one']
+    assert fuzzy[0]['kind'] == 'FUZZY'
+
+    pql = _user_items(client.get('/api/precedents/queries?kind=PQL').json())
+    assert [q['name'] for q in pql] == ['pql one']
+
+    both = {q['name'] for q in _user_items(client.get('/api/precedents/queries').json())}
+    assert both == {'fuzzy one', 'pql one'}
+
+
+def test_save_defaults_kind_pql(client):
+    """Без явного kind сохранение трактуется как PQL (обратная совместимость)."""
+    saved = client.post('/api/precedents/queries', json={
+        'name': 'no kind', 'source': 'SELECT 1',
+    }).json()
+    assert saved['kind'] == 'PQL'

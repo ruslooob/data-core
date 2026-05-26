@@ -5,14 +5,14 @@ import { Prec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import {
   PrecedentApiError,
-  listPrecedentQueries,
-  savePrecedentQuery,
+  listSavedQueries,
+  saveSavedQuery,
   searchPrecedents,
 } from '../api/client'
 import type {
-  PrecedentQueryRecord,
   PrecedentSearchResult,
   PrecedentValue,
+  SavedQuery,
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { SearchablePicker } from './SearchablePicker'
@@ -40,7 +40,7 @@ export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
   const [status, setStatus] = useState<Status>('idle')
   const [result, setResult] = useState<PrecedentSearchResult | null>(null)
   const [error, setError] = useState<ErrorState | null>(null)
-  const [savedQueries, setSavedQueries] = useState<PrecedentQueryRecord[]>([])
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
   const [savePromptOpen, setSavePromptOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -106,7 +106,7 @@ export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
 
   const refreshSavedQueries = useCallback(async () => {
     try {
-      const list = await listPrecedentQueries()
+      const list = await listSavedQueries('PQL')
       setSavedQueries(list)
     } catch {
       // молча — кнопки просто покажут пустой список
@@ -115,7 +115,7 @@ export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
 
   useEffect(() => { void refreshSavedQueries() }, [refreshSavedQueries])
 
-  const onPickSavedQuery = (q: PrecedentQueryRecord) => {
+  const onPickSavedQuery = (q: SavedQuery) => {
     setSource(q.source)
   }
 
@@ -144,7 +144,7 @@ export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
       return
     }
     try {
-      const saved = await savePrecedentQuery({ name, source })
+      const saved = await saveSavedQuery({ name, source, kind: 'PQL' })
       setSavedQueries((prev) => [saved, ...prev])
       setSavePromptOpen(false)
     } catch (e) {
@@ -209,7 +209,7 @@ export function PqlEditorWidget(_props: PqlEditorWidgetProps) {
           )}
         </div>
 
-        <SearchablePicker<PrecedentQueryRecord>
+        <SearchablePicker<SavedQuery>
           items={savedQueries}
           getKey={(q) => q.id}
           getName={(q) => q.name}

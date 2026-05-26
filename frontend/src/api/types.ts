@@ -54,16 +54,20 @@ export interface PrecedentApiErrorDetail {
   column: number | null
 }
 
-export interface PrecedentQueryRecord {
+export type SavedQueryKind = 'FUZZY' | 'PQL'
+
+export interface SavedQuery {
   id: string
   name: string
   source: string
+  kind: SavedQueryKind
   createdAt: string
 }
 
-export interface PrecedentQuerySaveRequest {
+export interface SavedQuerySaveRequest {
   name: string
   source: string
+  kind: SavedQueryKind
 }
 
 export interface PrecedentFuzzyHit {

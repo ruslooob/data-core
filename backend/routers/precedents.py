@@ -12,11 +12,11 @@ from schemas.precedents import (
     PrecedentFuzzyHit,
     PrecedentFuzzySearchRequest,
     PrecedentFuzzySearchResponse,
-    PrecedentQueryRecord,
-    PrecedentQuerySaveRequest,
     PrecedentSearchRequest,
     PrecedentSearchResponse,
     PrecedentSearchStats,
+    SavedQuery,
+    SavedQuerySaveRequest,
 )
 
 router = APIRouter()
@@ -56,22 +56,29 @@ def search_precedents(req: PrecedentSearchRequest) -> PrecedentSearchResponse:
 
 
 @router.get("/api/precedents/queries", response_model_by_alias=True)
-def list_precedent_queries() -> list[PrecedentQueryRecord]:
-    """Список сохранённых прецедентных запросов, отсортированный по дате создания (новые первыми)."""
+def list_saved_queries(kind: str | None = None) -> list[SavedQuery]:
+    """Сохранённые запросы поиска, новые первыми. `kind` фильтрует по виду (FUZZY/PQL)."""
     con = get_pg()
-    rows = con.execute("""
-        SELECT id, name, source, created_at FROM precedent_queries
-        ORDER BY created_at DESC
-    """).fetchall()
+    if kind is not None:
+        rows = con.execute(
+            "SELECT id, name, source, kind, created_at FROM saved_queries"
+            " WHERE kind = %s ORDER BY created_at DESC",
+            [kind],
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT id, name, source, kind, created_at FROM saved_queries"
+            " ORDER BY created_at DESC"
+        ).fetchall()
     return [
-        PrecedentQueryRecord(id=r[0], name=r[1], source=r[2], created_at=r[3])
+        SavedQuery(id=r[0], name=r[1], source=r[2], kind=r[3], created_at=r[4])
         for r in rows
     ]
 
 
 @router.post("/api/precedents/queries", response_model_by_alias=True, status_code=201)
-def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord:
-    """Сохраняет прецедентный запрос. Имя должно быть уникальным."""
+def save_saved_query(req: SavedQuerySaveRequest) -> SavedQuery:
+    """Сохраняет запрос поиска (FUZZY или PQL). Имя должно быть уникальным."""
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Имя не может быть пустым")
@@ -83,7 +90,7 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
 
     con = get_pg()
     existing = con.execute(
-        "SELECT 1 FROM precedent_queries WHERE name = %s LIMIT 1",
+        "SELECT 1 FROM saved_queries WHERE name = %s LIMIT 1",
         [name],
     ).fetchone()
     if existing is not None:
@@ -92,11 +99,11 @@ def save_precedent_query(req: PrecedentQuerySaveRequest) -> PrecedentQueryRecord
     new_id = str(_uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
     con.execute(
-        "INSERT INTO precedent_queries VALUES (%s, %s, %s, %s)",
-        [new_id, name, source, created_at],
+        "INSERT INTO saved_queries (id, name, source, created_at, kind) VALUES (%s, %s, %s, %s, %s)",
+        [new_id, name, source, created_at, req.kind],
     )
 
-    return PrecedentQueryRecord(id=new_id, name=name, source=source, created_at=created_at)
+    return SavedQuery(id=new_id, name=name, source=source, kind=req.kind, created_at=created_at)
 
 
 @router.post("/api/precedents/search/fuzzy", response_model_by_alias=True)

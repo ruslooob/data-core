@@ -1,5 +1,9 @@
 """DTO для PQL-эндпоинтов: поиск прецедентов и сохранённые запросы."""
+from typing import Literal
+
 from schemas._common import CamelModel
+
+SavedQueryKind = Literal['FUZZY', 'PQL']
 
 
 class PrecedentSearchRequest(CamelModel):
@@ -22,16 +26,18 @@ class PrecedentSearchResponse(CamelModel):
     stats: PrecedentSearchStats
 
 
-class PrecedentQueryRecord(CamelModel):
+class SavedQuery(CamelModel):
     id: str
     name: str
     source: str
+    kind: SavedQueryKind
     created_at: str
 
 
-class PrecedentQuerySaveRequest(CamelModel):
+class SavedQuerySaveRequest(CamelModel):
     name: str
     source: str
+    kind: SavedQueryKind = 'PQL'
 
 
 class PrecedentFuzzySearchRequest(CamelModel):

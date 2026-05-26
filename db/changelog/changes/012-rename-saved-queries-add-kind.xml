@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        Сохранённые запросы поиска прецедентов обобщаются: раньше хранили только
+        PQL, теперь ещё и fuzzy. Таблица precedent_queries переименована в
+        saved_queries, добавлена колонка-дискриминатор kind (FUZZY / PQL).
+        Существующие строки — это сохранённые PQL-запросы, поэтому default 'PQL'
+        проставляет им корректный вид без потери данных.
+    -->
+
+    <changeSet id="012-rename-saved-queries-add-kind" author="ruslan">
+        <renameTable oldTableName="precedent_queries" newTableName="saved_queries"/>
+        <addColumn tableName="saved_queries">
+            <column name="kind" type="VARCHAR" defaultValue="PQL">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+
+        <rollback>
+            <dropColumn tableName="saved_queries" columnName="kind"/>
+            <renameTable oldTableName="saved_queries" newTableName="precedent_queries"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

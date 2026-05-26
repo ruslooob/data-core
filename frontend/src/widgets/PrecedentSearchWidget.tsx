@@ -5,15 +5,18 @@ import { Prec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import {
   PrecedentApiError,
+  listSavedQueries,
+  saveSavedQuery,
   searchPrecedents,
   searchPrecedentsFuzzy,
 } from '../api/client'
-import type { PrecedentEvent } from '../api/types'
+import type { PrecedentEvent, SavedQuery, SavedQueryKind } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import {
   selectPrecedentSet,
   useGroupStore,
 } from './groupStore'
+import { SearchablePicker } from './SearchablePicker'
 
 interface PrecedentSearchWidgetProps {
   group: WidgetGroup
@@ -53,6 +56,16 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
   // Локальный набор для группы `none` — в groupStore группа `none` не пишется,
   // потому что несколько виджетов в `none` не должны делиться состоянием.
   const [localSet, setLocalSet] = useState<PrecedentEvent[]>([])
+
+  // Сохранённые запросы текущего режима (FUZZY или PQL)
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
+  const [savePromptOpen, setSavePromptOpen] = useState(false)
+  const [saveName, setSaveName] = useState('')
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savePromptRef = useRef<HTMLDivElement>(null)
+
+  const savedKind: SavedQueryKind = mode === 'fuzzy' ? 'FUZZY' : 'PQL'
+  const currentQueryText = mode === 'fuzzy' ? fuzzyQuery : pqlSource
 
   const groupSet = useGroupStore(selectPrecedentSet(group))
   const togglePrecedentInSet = useGroupStore((s) => s.togglePrecedentInSet)
@@ -162,6 +175,56 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     else setPqlSource(DEFAULT_PQL)
   }
 
+  // ── Сохранённые запросы (своя подборка на каждый режим) ──
+
+  const refreshSavedQueries = useCallback(async () => {
+    try {
+      setSavedQueries(await listSavedQueries(savedKind))
+    } catch {
+      // молча — список просто будет пустым
+    }
+  }, [savedKind])
+
+  useEffect(() => { void refreshSavedQueries() }, [refreshSavedQueries])
+
+  const onPickSavedQuery = (q: SavedQuery) => {
+    if (mode === 'fuzzy') setFuzzyQuery(q.source)
+    else setPqlSource(q.source)
+  }
+
+  const openSavePrompt = () => {
+    setSaveName('')
+    setSaveError(null)
+    setSavePromptOpen(true)
+  }
+
+  const submitSave = async () => {
+    const name = saveName.trim()
+    if (!name) {
+      setSaveError('Введите имя')
+      return
+    }
+    try {
+      const saved = await saveSavedQuery({ name, source: currentQueryText, kind: savedKind })
+      setSavedQueries((prev) => [saved, ...prev])
+      setSavePromptOpen(false)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Click-outside для save-промпта
+  useEffect(() => {
+    if (!savePromptOpen) return
+    const handler = (e: MouseEvent) => {
+      if (savePromptRef.current && !savePromptRef.current.contains(e.target as Node)) {
+        setSavePromptOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [savePromptOpen])
+
   // CodeMirror extensions для PQL: Ctrl+Enter — выполнить.
   const pqlExtensions = useMemo(
     () => [
@@ -256,6 +319,44 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
         >
           {status === 'loading' ? 'Выполнение…' : 'Выполнить'}
         </button>
+
+        <div ref={savePromptRef} style={iconButtonContainerStyle}>
+          <button
+            style={iconButtonStyle}
+            title="Сохранить запрос"
+            onClick={openSavePrompt}
+            aria-label="Сохранить запрос"
+          >
+            <FloppyIcon />
+          </button>
+          {savePromptOpen && (
+            <div style={savePromptStyle}>
+              <input
+                type="text"
+                placeholder="Имя запроса"
+                value={saveName}
+                onChange={(e) => { setSaveName(e.target.value); setSaveError(null) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitSave()
+                  if (e.key === 'Escape') setSavePromptOpen(false)
+                }}
+                autoFocus
+                style={savePromptInputStyle}
+              />
+              <button style={savePromptButtonStyle} onClick={() => void submitSave()}>Сохранить</button>
+              {saveError && <div style={savePromptErrorStyle}>{saveError}</div>}
+            </div>
+          )}
+        </div>
+
+        <SearchablePicker<SavedQuery>
+          items={savedQueries}
+          getKey={(q) => q.id}
+          getName={(q) => q.name}
+          onPick={onPickSavedQuery}
+          title="Загрузить сохранённый запрос"
+          emptyText="Пока нет сохранённых запросов"
+        />
       </div>
 
       {/* Переключатель Найденные | Выбранные + Очистить набор */}
@@ -372,6 +473,16 @@ function SelectAllCheckbox({ checked, indeterminate, onChange, title }: SelectAl
   )
 }
 
+function FloppyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  )
+}
+
 class ContractError extends Error {
   constructor(message: string) {
     super(message)
@@ -485,6 +596,63 @@ const runButtonStyle: React.CSSProperties = {
   borderRadius: 4,
   cursor: 'pointer',
   height: 32,
+}
+
+const iconButtonContainerStyle: React.CSSProperties = {
+  position: 'relative',
+}
+
+const iconButtonStyle: React.CSSProperties = {
+  width: 32,
+  height: 32,
+  padding: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'transparent',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  color: '#555',
+  cursor: 'pointer',
+}
+
+const savePromptStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: 0,
+  background: '#fff',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+  padding: 8,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  minWidth: 220,
+  zIndex: 100,
+}
+
+const savePromptInputStyle: React.CSSProperties = {
+  fontSize: 13,
+  padding: '6px 8px',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  outline: 'none',
+}
+
+const savePromptButtonStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  fontSize: 13,
+  background: '#2962FF',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 4,
+  cursor: 'pointer',
+}
+
+const savePromptErrorStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#a01919',
 }
 
 const viewSwitcherStyle: React.CSSProperties = {

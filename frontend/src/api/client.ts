@@ -17,8 +17,9 @@ import type {
   EventStudyRequest,
   EventStudyResult,
   PrecedentFuzzySearchResponse,
-  PrecedentQueryRecord,
-  PrecedentQuerySaveRequest,
+  SavedQuery,
+  SavedQuerySaveRequest,
+  SavedQueryKind,
   PrecedentSearchRequest,
   PrecedentSearchResult,
   Research,
@@ -180,14 +181,15 @@ export function searchPrecedentsFuzzy(
   })
 }
 
-export function listPrecedentQueries(): Promise<PrecedentQueryRecord[]> {
-  return fetchJson<PrecedentQueryRecord[]>('/api/precedents/queries')
+export function listSavedQueries(kind?: SavedQueryKind): Promise<SavedQuery[]> {
+  const query = kind ? `?kind=${kind}` : ''
+  return fetchJson<SavedQuery[]>(`/api/precedents/queries${query}`)
 }
 
-export function savePrecedentQuery(
-  request: PrecedentQuerySaveRequest,
-): Promise<PrecedentQueryRecord> {
-  return fetchJson<PrecedentQueryRecord>('/api/precedents/queries', {
+export function saveSavedQuery(
+  request: SavedQuerySaveRequest,
+): Promise<SavedQuery> {
+  return fetchJson<SavedQuery>('/api/precedents/queries', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
