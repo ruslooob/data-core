@@ -377,11 +377,22 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
               </div>
             )}
           </div>
+          <div style={diagnosticsStripStyle}>
+            <span style={metricStyle}>
+              <span style={metricLabelStyle}>R²</span>
+              <span style={metricValueStyle}>{result.rSquared.toFixed(2)}</span>
+            </span>
+            <span style={metricStyle}>
+              <span style={metricLabelStyle}>σ_ε</span>
+              <span style={metricValueStyle}>{(result.estimationStd * 100).toFixed(2)}%</span>
+            </span>
+          </div>
           <div style={factVsForecastContainerStyle}>
             <FactVsForecastChart
               dates={result.estimationDates}
               actual={result.estimationActual}
               predicted={result.estimationPredicted}
+              residualSigmas={result.estimationResidualSigmas}
               highlightThreshold={highlightThreshold}
             />
           </div>
@@ -549,6 +560,33 @@ const outliersHintStyle: React.CSSProperties = {
   color: '#e65100',
   flex: 1,
   minWidth: 220,
+}
+
+const diagnosticsStripStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 24,
+  alignItems: 'baseline',
+  padding: '4px 0',
+  borderTop: '1px solid #e0e0e0',
+  flexShrink: 0,
+}
+
+const metricStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  gap: 6,
+  alignItems: 'baseline',
+}
+
+const metricLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#888',
+}
+
+const metricValueStyle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 600,
+  color: '#333',
+  fontVariantNumeric: 'tabular-nums',
 }
 
 const placeholderStyle: React.CSSProperties = {

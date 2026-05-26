@@ -49,6 +49,10 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         estimation_actual=result.estimation_actual,
         estimation_predicted=result.estimation_predicted,
         outliers_removed=result.outliers_removed,
+        r_squared=result.r_squared,
+        estimation_residual_sigmas=result.residual_sigmas,
+        car_cumulative=result.car_cumulative,
+        ci_band=result.ci_band,
     )
 
 

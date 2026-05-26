@@ -40,6 +40,11 @@ class EventStudyResult:
     estimation_actual: list[float] = field(default_factory=list)
     estimation_predicted: list[float] = field(default_factory=list)
     outliers_removed: int = 0  # сколько выбросов убрано из оценочного окна
+    r_squared: float = 0.0     # доля дисперсии акции, объяснённая моделью на оценочном окне
+    residual_sigmas: list[float] = field(default_factory=list)
+    # ↑ σ-расстояние каждого остатка оценочного окна (eₜ / σ_ε); для подсветки выбросов на фронте
+    car_cumulative: list[float] = field(default_factory=list)  # накопленный CAR по дням окна события
+    ci_band: list[float] = field(default_factory=list)         # полоса ±2σ_ε√k по дням окна события
 
 
 @dataclass
@@ -228,6 +233,24 @@ class EventStudy:
         ar = (stock_ev.values - expected_ev.values).tolist()
         car = float(np.sum(ar))
 
+        # R²: доля дисперсии акции, объяснённая моделью. Общая формула
+        # 1 − SS_res/SS_tot валидна для всех моделей: для модели на среднем
+        # прогноз — константа, SS_res = SS_tot → R² = 0.
+        actual_est = stock_est.values
+        ss_res = float(np.sum(residuals_est ** 2))
+        ss_tot = float(np.sum((actual_est - actual_est.mean()) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+        # σ-расстояние каждого остатка — для подсветки выбросов фильтром на фронте
+        if estimation_std > 0:
+            residual_sigmas = (residuals_est / estimation_std).tolist()
+        else:
+            residual_sigmas = [0.0] * len(residuals_est)
+
+        # Накопленный CAR и доверительная полоса ±2σ_ε√k по дням окна события
+        car_cumulative = np.cumsum(ar).tolist()
+        ci_band = [2.0 * estimation_std * np.sqrt(k + 1) for k in range(len(ar))]
+
         return EventStudyResult(
             event_date=event_date,
             ar=ar,
@@ -236,9 +259,13 @@ class EventStudy:
             estimation_std=estimation_std,
             estimation_residuals=residuals_est.tolist(),
             estimation_dates=[d.strftime('%Y-%m-%d') for d in common_est],
-            estimation_actual=stock_est.values.tolist(),
+            estimation_actual=actual_est.tolist(),
             estimation_predicted=expected_est.values.tolist(),
             outliers_removed=outliers_removed,
+            r_squared=r_squared,
+            residual_sigmas=residual_sigmas,
+            car_cumulative=car_cumulative,
+            ci_band=ci_band,
         )
 
     def analyze_aggregate(

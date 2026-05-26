@@ -320,6 +320,10 @@ export interface EventStudyResult {
   estimationDates: string[]
   estimationActual: number[]
   estimationPredicted: number[]
+  rSquared: number
+  estimationResidualSigmas: number[]
+  carCumulative: number[]
+  ciBand: number[]
 }
 
 // ── Агрегированный event study ──────────────────────────────────────────────

@@ -179,13 +179,10 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
     const n = ar.length
     if (n === 0) return
 
-    // CAR[i] = sum(ar[0..i]), значения в процентах для удобства восприятия
-    const carValues: number[] = []
-    let acc = 0
-    for (let i = 0; i < n; i++) {
-      acc += ar[i]
-      carValues.push(acc * 100)
-    }
+    // Накопленный CAR и доверительная полоса приходят с бэка готовыми;
+    // здесь только перевод долей в проценты для оси Y.
+    const carCumulative = result.carCumulative
+    const ciBand = result.ciBand
 
     // Ось t: -daysBefore..+daysAfter, длина n. Если n != daysBefore+daysAfter+1
     // (например, выходные/праздники в окне), всё равно центрируем по 0.
@@ -195,16 +192,13 @@ export function CarChart({ result, daysBefore, daysAfter, group }: CarChartProps
     nRef.current = n
     eventDateRef.current = result.eventDate
 
-    // CI: ±2 * std * sqrt(k), в процентах
-    const std = result.estimationStd * 100
     const carData = []
     const upperData = []
     const lowerData = []
     for (let i = 0; i < n; i++) {
       const time = indexToTime(tStart + i)
-      const k = i + 1
-      const band = 2 * std * Math.sqrt(k)
-      carData.push({ time, value: carValues[i] })
+      const band = ciBand[i] * 100
+      carData.push({ time, value: carCumulative[i] * 100 })
       upperData.push({ time, value: band })
       lowerData.push({ time, value: -band })
     }

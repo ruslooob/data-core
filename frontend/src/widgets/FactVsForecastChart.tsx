@@ -15,6 +15,8 @@ interface FactVsForecastChartProps {
   dates: string[]
   actual: number[]
   predicted: number[]
+  /** σ-расстояние каждого остатка (eₜ / σ_ε), считается на бэке. */
+  residualSigmas: number[]
   /** Порог подсветки выбросов в σ остатков. 0 = выкл. */
   highlightThreshold: number
 }
@@ -42,6 +44,7 @@ export function FactVsForecastChart({
   dates,
   actual,
   predicted,
+  residualSigmas,
   highlightThreshold,
 }: FactVsForecastChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -56,24 +59,17 @@ export function FactVsForecastChart({
   })
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
 
+  // Подсветка — чистый фильтр по σ-расстояниям остатков (считаются на бэке):
+  // помечаем дни, чей остаток выходит за порог в k·σ_ε. Никаких вычислений.
   const outlierDates = useMemo(() => {
     if (highlightThreshold <= 0) return new Set<string>()
-    const n = Math.min(dates.length, actual.length, predicted.length)
-    if (n < 2) return new Set<string>()
-    const residuals: number[] = []
-    for (let i = 0; i < n; i++) residuals.push(actual[i] - predicted[i])
-    const mean = residuals.reduce((s, r) => s + r, 0) / n
-    let sumSq = 0
-    for (const r of residuals) sumSq += (r - mean) * (r - mean)
-    const sigma = Math.sqrt(sumSq / (n - 1))
-    if (sigma === 0) return new Set<string>()
-    const limit = highlightThreshold * sigma
+    const n = Math.min(dates.length, residualSigmas.length)
     const out = new Set<string>()
     for (let i = 0; i < n; i++) {
-      if (Math.abs(residuals[i]) > limit) out.add(dates[i])
+      if (Math.abs(residualSigmas[i]) > highlightThreshold) out.add(dates[i])
     }
     return out
-  }, [dates, actual, predicted, highlightThreshold])
+  }, [dates, residualSigmas, highlightThreshold])
 
   // Init chart once
   useEffect(() => {

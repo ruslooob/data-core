@@ -21,6 +21,10 @@ class EventStudyResponse(CamelModel):
     estimation_actual: list[float]
     estimation_predicted: list[float]
     outliers_removed: int
+    r_squared: float
+    estimation_residual_sigmas: list[float]
+    car_cumulative: list[float]
+    ci_band: list[float]
 
 
 class AggregateStudyRequest(CamelModel):
