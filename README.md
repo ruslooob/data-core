@@ -122,8 +122,6 @@ cd backend
 pytest tests/ -v
 ```
 
-План покрытия — [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
-
 ---
 
 ## Документация
@@ -147,4 +145,3 @@ pytest tests/ -v
 - [BACKTEST_STRATEGIES.md](docs/BACKTEST_STRATEGIES.md) — каталог реализованных стратегий и их результатов
 - [BACKTEST_ANOMALIES.md](docs/BACKTEST_ANOMALIES.md) — стратегии на аномалиях
 - [BACKTEST_RUNNER_AGENT.md](docs/BACKTEST_RUNNER_AGENT.md) — инструкции для агента для прогона стратегий
-- [TEST_PLAN.md](docs/TEST_PLAN.md) — план тестов

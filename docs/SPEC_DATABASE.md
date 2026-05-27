@@ -4,7 +4,7 @@ Postgres-схема и PL/Python-функции управляются Liquibase
 
 ## Запуск миграций
 
-Liquibase живёт как отдельный сервис в `docker-compose.yml` под профилем `migrate`. Команды:
+Liquibase вынесен в отдельный сервис в `docker-compose.yml` под профилем `migrate`. Команды:
 
 ```bash
 # Применить все pending changesets

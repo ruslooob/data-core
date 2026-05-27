@@ -247,7 +247,7 @@ Equity фиксируется: на close(:tick)
 - **`:tick`** — именованный параметр, `=` `run_context.current_tick`. Текущая дата.
 - **`run_context`** — Содержит дополнительные поля: `index`, `date_start`, `date_end`, `starting_capital`.
 
-Все «глобальные» поля прогона живут в одной таблице с одной строкой `run_context`:
+Все «глобальные» поля прогона хранятся в одной таблице с одной строкой `run_context`:
 
 | Колонка | Что |
 |---|---|
@@ -349,7 +349,7 @@ SELECT * FROM tagged_events WHERE date_start <= :tick - 1
 
 ## Часть 6 — Реализация в Postgres
 
-Всё — через стандартный psycopg API поверх той же Postgres-БД, в которой живут PQL-сущности.
+Всё — через стандартный psycopg API поверх той же Postgres-БД, в которой хранятся PQL-сущности.
 
 | Что | Как |
 |---|---|
@@ -373,7 +373,7 @@ SELECT * FROM tagged_events WHERE date_start <= :tick - 1
 
 ### 6.2. Persistent-хранилище
 
-Persistent-таблицы бэктеста живут в общей Postgres-БД проекта вместе с persistent-таблицами PQL (`events`, `tagged_events`, ...). Стандартный реляционный подход: FK работают «из коробки», транзакции, миграции через Liquibase (см. [`SPEC_DATABASE.md`](SPEC_DATABASE.md)). Просматривать содержимое — через `psql`, DBeaver или вкладку Database в PyCharm.
+Persistent-таблицы бэктеста находятся в общей Postgres-БД проекта вместе с persistent-таблицами PQL (`events`, `tagged_events`, ...). Стандартный реляционный подход: FK работают «из коробки», транзакции, миграции через Liquibase (см. [`SPEC_DATABASE.md`](SPEC_DATABASE.md)). Просматривать содержимое — через `psql`, DBeaver или вкладку Database в PyCharm.
 
 **Список таблиц.**
 
