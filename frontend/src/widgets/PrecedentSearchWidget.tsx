@@ -123,6 +123,29 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
     }
   }, [group, removePrecedentsFromSet])
 
+  // Перенос выбора при смене группы: набор не сбрасывается, а переезжает в новую
+  // группу (none → цвет, цвет → none, цвет → цвет). Слияние по eventId — ничего
+  // не теряется, даже если в целевой группе уже что-то выбрано.
+  const prevGroupRef = useRef(group)
+  useEffect(() => {
+    const prev = prevGroupRef.current
+    if (prev === group) return
+    prevGroupRef.current = group
+    const prevSelection = prev === 'none'
+      ? localSet
+      : useGroupStore.getState().precedentEvents[prev]
+    if (prevSelection.length === 0) return
+    if (group === 'none') {
+      setLocalSet((cur) => {
+        const known = new Set(cur.map((e) => e.eventId))
+        const added = prevSelection.filter((e) => !known.has(e.eventId))
+        return added.length === 0 ? cur : [...cur, ...added]
+      })
+    } else {
+      addPrecedentsToSet(group, prevSelection)
+    }
+  }, [group, localSet, addPrecedentsToSet])
+
   const abortRef = useRef<AbortController | null>(null)
 
   // ── Поиск ──
