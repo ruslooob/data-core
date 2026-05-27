@@ -3,6 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException
 
+from core.event_effect import calculate_individual_sensitivity
 from core.event_study import EventStudy
 from routers._common import dividends, market, stocks
 from schemas.event_study import (
@@ -10,6 +11,9 @@ from schemas.event_study import (
     AggregateStudyResponse,
     EventStudyRequest,
     EventStudyResponse,
+    EventStudySensitivityRequest,
+    EventStudySensitivityResponse,
+    SensitivityCell,
 )
 
 router = APIRouter()
@@ -53,6 +57,36 @@ def run_event_study(req: EventStudyRequest) -> EventStudyResponse:
         estimation_residual_sigmas=result.residual_sigmas,
         car_cumulative=result.car_cumulative,
         ci_band=result.ci_band,
+    )
+
+
+@router.post("/api/event-study/sensitivity", response_model_by_alias=True)
+def run_event_study_sensitivity(req: EventStudySensitivityRequest) -> EventStudySensitivityResponse:
+    """Индивидуальный Sensitivity: CAR против нормы по сетке параметров для одного события."""
+    grid = req.grid
+    if not grid.windows or not grid.models or not grid.estimation_windows:
+        raise HTTPException(status_code=400, detail="Сетка должна содержать хотя бы одно значение по каждой оси")
+
+    cells = calculate_individual_sensitivity(
+        ticker=req.ticker,
+        event_date=date.fromisoformat(req.event_date),
+        windows=grid.windows,
+        models=grid.models,
+        estimation_windows=grid.estimation_windows,
+        stocks=stocks,
+        market=market,
+    )
+
+    return EventStudySensitivityResponse(
+        cells=[
+            SensitivityCell(
+                window=c.window, model=c.model, estimation=c.estimation,
+                available=c.available, car=c.car,
+                baseline_down=c.baseline_down, baseline_up=c.baseline_up,
+                signed_rank=c.signed_rank, is_anomaly_signed=c.is_anomaly_signed,
+            )
+            for c in cells
+        ],
     )
 
 

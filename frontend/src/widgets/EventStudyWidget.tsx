@@ -7,6 +7,7 @@ import type {
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { CarChart } from './CarChart'
+import { EventStudySensitivitySection } from './EventStudySensitivitySection'
 import { FactVsForecastChart } from './FactVsForecastChart'
 import { NumberField } from './NumberField'
 import {
@@ -61,6 +62,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   const [highlightThreshold, setHighlightThreshold] = useState(0) // 0 = выкл, 2-5 = σ — только подсветка маркерами
   const [result, setResult] = useState<EventStudyResult | null>(null)
   const [resultWindow, setResultWindow] = useState<{ before: number; after: number } | null>(null)
+  // Растёт при каждом расчёте (кнопка/стрелки) — триггерит пересчёт sensitivity-секции
+  const [sensitivityRunSignal, setSensitivityRunSignal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -187,6 +190,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     const ev = precedentEvents[currentIdx]
     if (!ev) return
     if (daysBefore === null || daysAfter === null || estimationWindow === null) return
+    // Тем же действием пересчитываем sensitivity-секцию (по её собственной сетке)
+    setSensitivityRunSignal((n) => n + 1)
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
         from: shiftDate(ev.dateStart, -daysBefore * ZOOM_CONTEXT_FACTOR),
@@ -405,6 +410,13 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
               highlightThreshold={highlightThreshold}
             />
           </div>
+          {currentEvent && (
+            <EventStudySensitivitySection
+              ticker={ticker}
+              eventDate={currentEvent.dateStart}
+              runSignal={sensitivityRunSignal}
+            />
+          )}
         </>
       ) : (
         <div style={placeholderStyle}>Нажми «Рассчитать»</div>

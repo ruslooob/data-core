@@ -43,3 +43,33 @@ class AggregateStudyResponse(CamelModel):
     p_value: float
     individual_cars: list[float]
     event_dates: list[str]
+
+
+# ── /api/event-study/sensitivity (индивидуальный перебор параметров) ─────────
+
+class SensitivityGrid(CamelModel):
+    windows: list[int]
+    models: list[str]
+    estimation_windows: list[int]
+
+
+class EventStudySensitivityRequest(CamelModel):
+    ticker: str
+    event_date: str  # ISO: YYYY-MM-DD
+    grid: SensitivityGrid
+
+
+class SensitivityCell(CamelModel):
+    window: int
+    model: str
+    estimation: int
+    available: bool          # False — у события не хватает истории под это оценочное окно
+    car: float
+    baseline_down: float     # нижняя граница нормы (5-й перцентиль псевдо-CAR)
+    baseline_up: float       # верхняя граница нормы (95-й перцентиль)
+    signed_rank: float       # где CAR в знаковом распределении нормы (0..1)
+    is_anomaly_signed: bool  # CAR вне нормы (signed_rank вне [0.05, 0.95])
+
+
+class EventStudySensitivityResponse(CamelModel):
+    cells: list[SensitivityCell]

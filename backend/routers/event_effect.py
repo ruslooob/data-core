@@ -1,17 +1,17 @@
 """Эндпоинты Event Effect Analysis: индивидуальные CAR + sensitivity."""
 from fastapi import APIRouter, HTTPException
 
-from core.event_effect import calculate_individual, calculate_sensitivity
+from core.event_effect import calculate_aggregate_sensitivity, calculate_individual
 from routers._common import get_pg, market, stocks
 from schemas.event_effect import (
+    AggregateSensitivityCell,
+    EventEffectAggregateSensitivityRequest,
+    EventEffectAggregateSensitivityResponse,
     EventEffectIndividualRequest,
     EventEffectIndividualResponse,
-    EventEffectSensitivityRequest,
-    EventEffectSensitivityResponse,
     ExcludedEventRow,
     IndividualCarRow,
     IndividualForecast,
-    SensitivityCell,
 )
 
 router = APIRouter()
@@ -60,15 +60,15 @@ def post_individual(req: EventEffectIndividualRequest) -> EventEffectIndividualR
     )
 
 
-@router.post("/api/event-effect/sensitivity", response_model_by_alias=True)
-def post_sensitivity(req: EventEffectSensitivityRequest) -> EventEffectSensitivityResponse:
-    """Heatmap CAR/p-value по сетке параметров для вкладки CAR Sensitivity Analysis."""
+@router.post("/api/event-effect/aggregate-sensitivity", response_model_by_alias=True)
+def post_aggregate_sensitivity(req: EventEffectAggregateSensitivityRequest) -> EventEffectAggregateSensitivityResponse:
+    """Heatmap усреднённого по выборке CAR/p-value по сетке параметров (вкладка AggregateSensitivity)."""
     grid = req.grid
     if not grid.windows or not grid.models or not grid.estimation_windows:
         raise HTTPException(status_code=400, detail="Сетка должна содержать хотя бы одно значение по каждой оси")
 
     con = get_pg()
-    result = calculate_sensitivity(
+    result = calculate_aggregate_sensitivity(
         ticker=req.ticker,
         event_ids=req.event_ids,
         windows=grid.windows,
@@ -79,9 +79,9 @@ def post_sensitivity(req: EventEffectSensitivityRequest) -> EventEffectSensitivi
         market=market,
     )
 
-    return EventEffectSensitivityResponse(
+    return EventEffectAggregateSensitivityResponse(
         cells=[
-            SensitivityCell(
+            AggregateSensitivityCell(
                 window=c.window, model=c.model, estimation=c.estimation,
                 car=c.car, p_value=c.p_value, n=c.n,
                 mean_rank=c.mean_rank, rank_p_value=c.rank_p_value,

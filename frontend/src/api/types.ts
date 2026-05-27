@@ -136,19 +136,19 @@ export interface EventEffectIndividualResponse {
   forecast: IndividualForecast | null
 }
 
-export interface SensitivityGrid {
+export interface AggregateSensitivityGrid {
   windows: number[]
   models: ExpectedReturnModel[]
   estimationWindows: number[]
 }
 
-export interface EventEffectSensitivityRequest {
+export interface EventEffectAggregateSensitivityRequest {
   ticker: string
   eventIds: string[]
-  grid: SensitivityGrid
+  grid: AggregateSensitivityGrid
 }
 
-export interface SensitivityCell {
+export interface AggregateSensitivityCell {
   window: number
   model: ExpectedReturnModel
   estimation: number
@@ -159,9 +159,39 @@ export interface SensitivityCell {
   rankPValue: number
 }
 
-export interface EventEffectSensitivityResponse {
-  cells: SensitivityCell[]
+export interface EventEffectAggregateSensitivityResponse {
+  cells: AggregateSensitivityCell[]
   excludedEventsByEstimation: Record<string, string[]>
+}
+
+// ── Event Study: индивидуальный Sensitivity (перебор параметров одного события) ──
+
+export interface SensitivityGrid {
+  windows: number[]
+  models: ExpectedReturnModel[]
+  estimationWindows: number[]
+}
+
+export interface EventStudySensitivityRequest {
+  ticker: string
+  eventDate: string
+  grid: SensitivityGrid
+}
+
+export interface SensitivityCell {
+  window: number
+  model: ExpectedReturnModel
+  estimation: number
+  available: boolean
+  car: number
+  baselineDown: number
+  baselineUp: number
+  signedRank: number
+  isAnomalySigned: boolean
+}
+
+export interface EventStudySensitivityResponse {
+  cells: SensitivityCell[]
 }
 
 // ── Исследование (Research) ─────────────────────────────────────────────────

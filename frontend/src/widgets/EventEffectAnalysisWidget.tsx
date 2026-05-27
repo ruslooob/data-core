@@ -1,19 +1,31 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Plotly from 'plotly.js-dist-min'
-import createPlotlyComponent from 'react-plotly.js/factory'
-import { runEventEffectIndividual, runEventEffectSensitivity } from '../api/client'
+import { runEventEffectIndividual, runEventEffectAggregateSensitivity } from '../api/client'
 import type {
   CentralStatistic,
   EventEffectIndividualResponse,
-  EventEffectSensitivityResponse,
+  EventEffectAggregateSensitivityResponse,
   ExpectedReturnModel,
   IndividualCarRow,
-  SensitivityCell,
+  AggregateSensitivityCell,
 } from '../api/types'
 import type { WidgetGroup } from './chartSync'
 import { selectLeaderTicker, selectPrecedentSet, useGroupStore } from './groupStore'
-
-const Plot = createPlotlyComponent(Plotly)
+import {
+  DEFAULT_GRID_ESTIMATIONS,
+  DEFAULT_GRID_MODELS,
+  DEFAULT_GRID_WINDOWS,
+  GridConfigForm,
+  HEATMAP_CELL_HEIGHT,
+  HEATMAP_CELL_WIDTH,
+  HEATMAP_PADDING_X,
+  HEATMAP_PADDING_Y,
+  MODELS,
+  MODEL_LABELS,
+  Plot,
+  plotStyle,
+  Section,
+} from './sensitivityGrid'
 
 /**
  * Resizable-обёртка для Plotly-графиков.
@@ -73,7 +85,7 @@ interface EventEffectAnalysisWidgetProps {
   onOpenEventStudy?: (group: WidgetGroup) => void
 }
 
-type Tab = 'explorer' | 'sensitivity'
+type Tab = 'explorer' | 'aggregateSensitivity'
 type FetchStatus = 'idle' | 'loading' | 'success' | 'error'
 type ValueMode = 'signed' | 'abs'
 
@@ -83,35 +95,9 @@ const DEFAULT_ESTIMATION = 200
 const DEFAULT_CENTRAL: CentralStatistic = 'median'
 
 const DEBOUNCE_MS = 350
-const MODELS: ExpectedReturnModel[] = ['mean_adjusted', 'market_model', 'capm']
-const MODEL_LABELS: Record<ExpectedReturnModel, string> = {
-  mean_adjusted: 'Mean Adjusted',
-  market_model: 'Market Model',
-  capm: 'CAPM',
-}
-
-const WINDOW_PRESET = [3, 5, 10, 20]
-const ESTIMATION_PRESET = [100, 150, 200, 250]
-const DEFAULT_GRID_WINDOWS = [3, 5, 10]
-const DEFAULT_GRID_MODELS: ExpectedReturnModel[] = ['market_model', 'capm']
-const DEFAULT_GRID_ESTIMATIONS = [150, 200]
 
 const SMALL_SAMPLE_THRESHOLD = 5
 const SHAPIRO_ALPHA = 0.05
-
-// Размеры heatmap зависят от размера сетки: ширина = ячейки × число окон,
-// высота = ячейки × число моделей. Это избавляет от пустого серого поля при
-// маленькой сетке и масштабирует контейнер под большую сетку.
-//
-// HEATMAP_CELL_TEXT_WIDTH — оценка ширины текста внутри ячейки (самая длинная
-// строка типа "p=0.438" в шрифте 13pt). HEATMAP_CELL_PADDING_X — желаемый
-// горизонтальный воздух с каждой стороны текста до границ ячейки.
-const HEATMAP_CELL_TEXT_WIDTH = 90
-const HEATMAP_CELL_PADDING_X = 30
-const HEATMAP_CELL_WIDTH = HEATMAP_CELL_TEXT_WIDTH + HEATMAP_CELL_PADDING_X * 2
-const HEATMAP_CELL_HEIGHT = 70
-const HEATMAP_PADDING_X = 124  // margin.l + margin.r + борды
-const HEATMAP_PADDING_Y = 40   // margin.t + margin.b + борды
 
 export function EventEffectAnalysisWidget({ group, onOpenEventStudy }: EventEffectAnalysisWidgetProps) {
   const precedentSet = useGroupStore(selectPrecedentSet(group))
@@ -185,8 +171,8 @@ function Body({
           Events CAR Explorer
         </button>
         <button
-          style={tab === 'sensitivity' ? tabActiveStyle : tabStyle}
-          onClick={() => setTab('sensitivity')}
+          style={tab === 'aggregateSensitivity' ? tabActiveStyle : tabStyle}
+          onClick={() => setTab('aggregateSensitivity')}
         >
           CAR Sensitivity Analysis
         </button>
@@ -197,8 +183,8 @@ function Body({
       <div style={tab === 'explorer' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
         <ExplorerTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} onInspectEvent={onInspectEvent} />
       </div>
-      <div style={tab === 'sensitivity' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
-        <SensitivityTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
+      <div style={tab === 'aggregateSensitivity' ? tabPaneVisibleStyle : tabPaneHiddenStyle}>
+        <AggregateSensitivityTab ticker={ticker} eventIds={eventIds} valueMode={valueMode} />
       </div>
     </div>
   )
@@ -622,10 +608,10 @@ function CarScatter({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Вкладка 2: CAR Sensitivity Analysis
+// Вкладка 2: AggregateSensitivity (CAR Sensitivity Analysis)
 // ────────────────────────────────────────────────────────────────────────────
 
-function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds: string[]; valueMode: ValueMode }) {
+function AggregateSensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; eventIds: string[]; valueMode: ValueMode }) {
   const [gridWindows, setGridWindows] = useState<number[]>(DEFAULT_GRID_WINDOWS)
   const [gridModels, setGridModels] = useState<ExpectedReturnModel[]>(DEFAULT_GRID_MODELS)
   const [gridEstimations, setGridEstimations] = useState<number[]>(DEFAULT_GRID_ESTIMATIONS)
@@ -633,7 +619,7 @@ function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; event
 
   const [status, setStatus] = useState<FetchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [resp, setResp] = useState<EventEffectSensitivityResponse | null>(null)
+  const [resp, setResp] = useState<EventEffectAggregateSensitivityResponse | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -644,7 +630,7 @@ function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; event
     setStatus('loading')
     setError(null)
     try {
-      const r = await runEventEffectSensitivity({
+      const r = await runEventEffectAggregateSensitivity({
         ticker,
         eventIds,
         grid: { windows: gridWindows, models: gridModels, estimationWindows: gridEstimations },
@@ -699,7 +685,7 @@ function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; event
       {error && <Warning text={error} severity="error" />}
 
       {resp != null && (
-        <SensitivityHeatmap
+        <AggregateSensitivityHeatmap
           cells={sliceCells}
           windows={gridWindows}
           models={gridModels}
@@ -710,88 +696,22 @@ function SensitivityTab({ ticker, eventIds, valueMode }: { ticker: string; event
   )
 }
 
-// ── Section: сворачиваемая секция (стиль из BacktestEditor) ─────────────
-
-function Section({ title, initiallyOpen, children }: { title: string; initiallyOpen?: boolean; children: React.ReactNode }) {
-  const [open, setOpen] = useState(initiallyOpen ?? true)
-  return (
-    <div style={sectionWrapStyle}>
-      <div style={sectionHeaderStyle} onClick={() => setOpen(!open)}>
-        <span>{open ? '▾' : '▸'} {title}</span>
-      </div>
-      {open && <div style={sectionBodyStyle}>{children}</div>}
-    </div>
-  )
-}
-
-// ── Форма настройки сетки (встраивается в гармошку) ──
-
-function GridConfigForm({
-  windows, setWindows,
-  models, setModels,
-  estimations, setEstimations,
-}: {
-  windows: number[]
-  setWindows: (v: number[]) => void
-  models: ExpectedReturnModel[]
-  setModels: (v: ExpectedReturnModel[]) => void
-  estimations: number[]
-  setEstimations: (v: number[]) => void
-}) {
-  const toggleNum = (arr: number[], setArr: (v: number[]) => void, x: number) =>
-    setArr(arr.includes(x) ? arr.filter((v) => v !== x) : [...arr, x].sort((a, b) => a - b))
-  const toggleModel = (m: ExpectedReturnModel) =>
-    setModels(models.includes(m) ? models.filter((v) => v !== m) : [...models, m])
-
-  return (
-    <>
-      <div style={configRowStyle}>
-        <span style={configLabelStyle}>Окна</span>
-        {WINDOW_PRESET.map((w) => (
-          <label key={w} style={configChipStyle}>
-            <input type="checkbox" checked={windows.includes(w)} onChange={() => toggleNum(windows, setWindows, w)} />
-            {w}
-          </label>
-        ))}
-      </div>
-      <div style={configRowStyle}>
-        <span style={configLabelStyle}>Модели</span>
-        {MODELS.map((m) => (
-          <label key={m} style={configChipStyle}>
-            <input type="checkbox" checked={models.includes(m)} onChange={() => toggleModel(m)} />
-            {MODEL_LABELS[m]}
-          </label>
-        ))}
-      </div>
-      <div style={configRowStyle}>
-        <span style={configLabelStyle}>Оценочные окна</span>
-        {ESTIMATION_PRESET.map((e) => (
-          <label key={e} style={configChipStyle}>
-            <input type="checkbox" checked={estimations.includes(e)} onChange={() => toggleNum(estimations, setEstimations, e)} />
-            {e}
-          </label>
-        ))}
-      </div>
-    </>
-  )
-}
-
 // ── Heatmap ──
 
-function SensitivityHeatmap({
+function AggregateSensitivityHeatmap({
   cells,
   windows,
   models,
   valueMode,
 }: {
-  cells: SensitivityCell[]
+  cells: AggregateSensitivityCell[]
   windows: number[]
   models: ExpectedReturnModel[]
   valueMode: ValueMode
 }) {
   // Карта (model, window) → cell
   const cellMap = useMemo(() => {
-    const m = new Map<string, SensitivityCell>()
+    const m = new Map<string, AggregateSensitivityCell>()
     for (const c of cells) m.set(`${c.model}|${c.window}`, c)
     return m
   }, [cells])
@@ -1263,11 +1183,6 @@ const emptyCellStyle: React.CSSProperties = {
   textAlign: 'center',
 }
 
-const plotStyle: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-}
-
 const placeholderStyle: React.CSSProperties = {
   flex: 1,
   display: 'flex',
@@ -1279,51 +1194,4 @@ const placeholderStyle: React.CSSProperties = {
   fontSize: 13,
 }
 
-const sectionWrapStyle: React.CSSProperties = {
-  border: '1px solid #e0e0e0',
-  borderRadius: 6,
-  background: '#fafafa',
-  flexShrink: 0,
-}
-
-const sectionHeaderStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  fontSize: 13,
-  fontWeight: 600,
-  color: '#333',
-  cursor: 'pointer',
-  userSelect: 'none',
-}
-
-const sectionBodyStyle: React.CSSProperties = {
-  padding: 12,
-  background: '#fff',
-  borderTop: '1px solid #eee',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 10,
-}
-
-const configRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 12,
-  flexWrap: 'wrap',
-}
-
-const configLabelStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#555',
-  fontWeight: 600,
-  minWidth: 130,
-}
-
-const configChipStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 4,
-  fontSize: 12,
-  color: '#444',
-  cursor: 'pointer',
-}
 

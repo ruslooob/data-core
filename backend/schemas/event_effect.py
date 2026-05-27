@@ -49,21 +49,21 @@ class EventEffectIndividualResponse(CamelModel):
     forecast: IndividualForecast | None
 
 
-# ── /api/event-effect/sensitivity ───────────────────────────────────────────
+# ── /api/event-effect/aggregate-sensitivity ─────────────────────────────────
 
-class SensitivityGrid(CamelModel):
+class AggregateSensitivityGrid(CamelModel):
     windows: list[int]
     models: list[str]
     estimation_windows: list[int]
 
 
-class EventEffectSensitivityRequest(CamelModel):
+class EventEffectAggregateSensitivityRequest(CamelModel):
     ticker: str
     event_ids: list[str]
-    grid: SensitivityGrid
+    grid: AggregateSensitivityGrid
 
 
-class SensitivityCell(CamelModel):
+class AggregateSensitivityCell(CamelModel):
     window: int
     model: str
     estimation: int
@@ -74,6 +74,6 @@ class SensitivityCell(CamelModel):
     rank_p_value: float
 
 
-class EventEffectSensitivityResponse(CamelModel):
-    cells: list[SensitivityCell]
+class EventEffectAggregateSensitivityResponse(CamelModel):
+    cells: list[AggregateSensitivityCell]
     excluded_events_by_estimation: dict[str, list[str]]

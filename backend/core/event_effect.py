@@ -3,10 +3,10 @@
 Обёртка над EventStudy для расчёта эффекта набора прецедентов на тикер.
 
 Две основные функции:
-    calculate_individual  — индивидуальные CAR + предсказательный интервал
-                            (вкладка Events CAR Explorer).
-    calculate_sensitivity — heatmap CAR/p-value по сетке параметров
-                            (вкладка CAR Sensitivity Analysis).
+    calculate_individual           — индивидуальные CAR + предсказательный интервал
+                                     (вкладка Events CAR Explorer).
+    calculate_aggregate_sensitivity — heatmap усреднённого по выборке CAR/p-value
+                                     по сетке параметров (вкладка AggregateSensitivity).
 
 Реализация спецификации в docs/drafts/SPEC_EVENT_EFFECT_ANALYSIS_DRAFT.md.
 """
@@ -71,7 +71,7 @@ class IndividualResult:
 
 
 @dataclass
-class SensitivityCell:
+class AggregateSensitivityCell:
     window: int
     model: str
     estimation: int
@@ -86,8 +86,8 @@ class SensitivityCell:
 
 
 @dataclass
-class SensitivityResult:
-    cells: list[SensitivityCell]
+class AggregateSensitivityResult:
+    cells: list[AggregateSensitivityCell]
     excluded_events_by_estimation: dict[str, list[str]]
 
 
@@ -288,10 +288,10 @@ def calculate_individual(
 
 
 # ---------------------------------------------------------------------------
-# calculate_sensitivity
+# calculate_aggregate_sensitivity
 # ---------------------------------------------------------------------------
 
-def calculate_sensitivity(
+def calculate_aggregate_sensitivity(
     *,
     ticker: str,
     event_ids: list[str],
@@ -301,7 +301,7 @@ def calculate_sensitivity(
     con,
     stocks: StockDataProvider,
     market: MarketDataProvider,
-) -> SensitivityResult:
+) -> AggregateSensitivityResult:
     """Heatmap CAR/p-value по сетке (window × model × estimation_window).
 
     Для каждой комбинации параметров проходим все события через
@@ -322,7 +322,7 @@ def calculate_sensitivity(
 
     valid_event_dates: list[date] = [date_by_id[eid] for eid in event_ids if eid in date_by_id]
 
-    cells: list[SensitivityCell] = []
+    cells: list[AggregateSensitivityCell] = []
     for est in estimation_windows:
         for mdl in models:
             for w in windows:
@@ -347,7 +347,7 @@ def calculate_sensitivity(
 
                 n = len(cars_list)
                 if n == 0:
-                    cells.append(SensitivityCell(
+                    cells.append(AggregateSensitivityCell(
                         window=w, model=mdl, estimation=est,
                         car=0.0, p_value=1.0, n=0,
                         mean_rank=0.5, rank_p_value=1.0,
@@ -372,7 +372,7 @@ def calculate_sensitivity(
                 else:
                     rank_p_value = 1.0
 
-                cells.append(SensitivityCell(
+                cells.append(AggregateSensitivityCell(
                     window=w, model=mdl, estimation=est,
                     car=mean_car, p_value=p_value, n=n,
                     mean_rank=mean_rank, rank_p_value=rank_p_value,
@@ -405,7 +405,90 @@ def calculate_sensitivity(
                 excluded_ids.append(eid)
         excluded_by_est[str(est)] = excluded_ids
 
-    return SensitivityResult(
+    return AggregateSensitivityResult(
         cells=cells,
         excluded_events_by_estimation=excluded_by_est,
     )
+
+
+# ---------------------------------------------------------------------------
+# calculate_individual_sensitivity (один прецедент × сетка параметров)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class IndividualSensitivityCell:
+    window: int
+    model: str
+    estimation: int
+    available: bool       # False — у события не хватает истории под это оценочное окно
+    car: float
+    baseline_down: float  # 5-перцентиль знакового распределения нормы
+    baseline_up: float    # 95-перцентиль
+    signed_rank: float
+    is_anomaly_signed: bool
+
+
+def calculate_individual_sensitivity(
+    *,
+    ticker: str,
+    event_date: date,
+    windows: list[int],
+    models: list[str],
+    estimation_windows: list[int],
+    stocks: StockDataProvider,
+    market: MarketDataProvider,
+) -> list[IndividualSensitivityCell]:
+    """Heatmap CAR против нормы по сетке (window × model × estimation) для ОДНОГО события.
+
+    Для каждой комбинации: CAR события и его личная норма (5/95 перцентили
+    знакового распределения псевдо-CAR оценочного окна). Аномалия — CAR вне
+    нормы (signed_rank вне [0.05, 0.95]). t-тест неприменим (n=1): устойчивость
+    читается глазами по тому, держится ли знак/величина и выход за норму по сетке.
+    """
+    stock_log_returns = stocks.get_log_returns(ticker)
+    market_log_returns = market.load_market_index_log_returns()
+    rf = market.load_daily_risk_free_rate()
+    study = EventStudy(stock_log_returns=stock_log_returns)
+
+    hi = _ANOMALY_RANK_THRESHOLD * 100         # 95
+    lo = (1 - _ANOMALY_RANK_THRESHOLD) * 100   # 5
+
+    cells: list[IndividualSensitivityCell] = []
+    for est in estimation_windows:
+        for mdl in models:
+            for w in windows:
+                r = study.analyze(
+                    event_date=event_date,
+                    model=mdl,
+                    event_window=(-w, w),
+                    estimation_window=est,
+                    market=market_log_returns,
+                    rf=rf,
+                )
+                if r is None:
+                    cells.append(IndividualSensitivityCell(
+                        window=w, model=mdl, estimation=est, available=False,
+                        car=0.0, baseline_down=0.0, baseline_up=0.0,
+                        signed_rank=0.0, is_anomaly_signed=False,
+                    ))
+                    continue
+
+                pseudo = _pseudo_cars(r.estimation_residuals, 2 * w + 1)
+                signed_rank = _signed_rank(r.car, pseudo)
+                is_anomaly_signed = bool(pseudo) and (
+                    signed_rank > _ANOMALY_RANK_THRESHOLD
+                    or signed_rank < 1 - _ANOMALY_RANK_THRESHOLD
+                )
+                if pseudo:
+                    baseline_up = float(np.percentile(pseudo, hi))
+                    baseline_down = float(np.percentile(pseudo, lo))
+                else:
+                    baseline_up = baseline_down = 0.0
+
+                cells.append(IndividualSensitivityCell(
+                    window=w, model=mdl, estimation=est, available=True,
+                    car=r.car, baseline_down=baseline_down, baseline_up=baseline_up,
+                    signed_rank=signed_rank, is_anomaly_signed=is_anomaly_signed,
+                ))
+
+    return cells

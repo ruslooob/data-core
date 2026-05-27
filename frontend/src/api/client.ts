@@ -12,8 +12,10 @@ import type {
   EnvironmentCreate,
   EventEffectIndividualRequest,
   EventEffectIndividualResponse,
-  EventEffectSensitivityRequest,
-  EventEffectSensitivityResponse,
+  EventEffectAggregateSensitivityRequest,
+  EventEffectAggregateSensitivityResponse,
+  EventStudySensitivityRequest,
+  EventStudySensitivityResponse,
   EventStudyRequest,
   EventStudyResult,
   PrecedentFuzzySearchResponse,
@@ -157,11 +159,23 @@ export function runEventEffectIndividual(
   })
 }
 
-export function runEventEffectSensitivity(
-  request: EventEffectSensitivityRequest,
+export function runEventStudySensitivity(
+  request: EventStudySensitivityRequest,
   signal?: AbortSignal,
-): Promise<EventEffectSensitivityResponse> {
-  return fetchJson<EventEffectSensitivityResponse>('/api/event-effect/sensitivity', {
+): Promise<EventStudySensitivityResponse> {
+  return fetchJson<EventStudySensitivityResponse>('/api/event-study/sensitivity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
+}
+
+export function runEventEffectAggregateSensitivity(
+  request: EventEffectAggregateSensitivityRequest,
+  signal?: AbortSignal,
+): Promise<EventEffectAggregateSensitivityResponse> {
+  return fetchJson<EventEffectAggregateSensitivityResponse>('/api/event-effect/aggregate-sensitivity', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
