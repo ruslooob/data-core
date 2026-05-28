@@ -21,10 +21,10 @@ interface PqlEditorWidgetProps {
   group: WidgetGroup
 }
 
-const DEFAULT_QUERY = `SELECT date_start, event
+const DEFAULT_QUERY = `SELECT event_date, event
 FROM tagged_events
 WHERE tag = 'SANCTIONS'
-ORDER BY date_start DESC
+ORDER BY event_date DESC
 LIMIT 20`
 
 type Status = 'idle' | 'loading' | 'success' | 'error'

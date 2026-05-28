@@ -8,8 +8,8 @@
   Перед записью сравнивает старое и новое по количеству выплат на
   тикер.
 - `load(pg)` — читает CSV, создаёт два события в `events` на каждую
-  строку: «Объявление дивидендов» (date_start = announcement_date) и
-  «Выплата дивидендов» (date_start = payment_date). announce_date в
+  строку: «Объявление дивидендов» (event_date = announcement_date) и
+  «Выплата дивидендов» (event_date = payment_date). announce_date в
   обоих случаях — announcement_date. id события — детерминированный
   UUID5, ON CONFLICT DO NOTHING гарантирует идемпотентность.
 """
@@ -205,7 +205,7 @@ def load(pg) -> None:
         announce_iso = announce.isoformat()
         rows.append((
             _make_event_id('DIVIDEND_ANNOUNCEMENT', ticker, announce_iso),
-            announce, announce, None,
+            announce, announce,
             f'Объявление дивидендов {ticker}: {div:.2f} ₽ за {year} год',
             payload,
         ))
@@ -213,7 +213,7 @@ def load(pg) -> None:
             payment_iso = payment.isoformat()
             rows.append((
                 _make_event_id('DIVIDEND_PAYMENT', ticker, payment_iso),
-                payment, announce, None,
+                payment, announce,
                 f'Выплата дивидендов {ticker}: {div:.2f} ₽ за {year} год',
                 payload,
             ))
@@ -221,8 +221,8 @@ def load(pg) -> None:
     with pg.cursor() as cur:
         cur.executemany(
             'INSERT INTO events '
-            '(id, date_start, announce_date, date_end, event, payload) '
-            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            '(id, event_date, announce_date, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s::jsonb) '
             'ON CONFLICT (id) DO NOTHING',
             rows,
         )

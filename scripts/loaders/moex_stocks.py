@@ -517,12 +517,12 @@ def _fetch_splits_from_events(pg, ticker: str) -> list[dict]:
     """Сплиты тикера из таблицы `events` — нужны для нормализации цен."""
     with pg.cursor() as cur:
         cur.execute(
-            "SELECT e.date_start, (e.payload->>'ratio')::float "
+            "SELECT e.event_date, (e.payload->>'ratio')::float "
             "FROM events e "
             "JOIN event_tags et ON et.event_id = e.id "
             "WHERE et.tag_code = 'STOCK_SPLIT' "
             "  AND e.payload->>'ticker' = %s "
-            "ORDER BY e.date_start",
+            "ORDER BY e.event_date",
             [ticker.upper()],
         )
         rows = cur.fetchall()

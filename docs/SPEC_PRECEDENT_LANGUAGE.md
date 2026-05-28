@@ -35,9 +35,8 @@ SQL-подобный язык для поиска интересных собы�
 | Колонка | Тип | Назначение |
 |---|---|---|
 | `id` | TEXT | первичный ключ |
-| `date_start` | DATE | дата начала события (она же — `t=0` для событийного анализа) |
-| `date_end` | DATE \| NULL | дата окончания события (для длящихся; обычно совпадает с `date_start`) |
-| `announce_date` | DATE | дата, когда о событии стало известно. Для большинства событий совпадает с `date_start`; для выплат дивидендов — дата объявления выплаты (раньше даты выплаты). Используется бэктестом для no-lookahead: событие видно с `announce_date`, а не с `date_start`. |
+| `event_date` | DATE | дата события (момент = `t=0` для событийного анализа) |
+| `announce_date` | DATE | дата, с которой о событии известно рынку (граница no-lookahead); по умолчанию совпадает с `event_date`. Для выплат дивидендов — дата объявления (раньше даты выплаты), что и позволяет бэктесту видеть будущую выплату как заранее известную. |
 | `event` | TEXT | описание события |
 | `payload` | JSONB \| NULL | дополнительная структурированная информация, специфичная для типа события (например, для дивидендов — `ticker`, `dividend_per_share`, `year`). Доступно через JSON-операторы Postgres (`payload->>'ticker'`). |
 
@@ -79,8 +78,7 @@ SQL-подобный язык для поиска интересных собы�
 | Колонка | Тип | Источник |
 |---|---|---|
 | `event_id` | TEXT | `events.id` |
-| `date_start` | DATE | `events.date_start` |
-| `date_end` | DATE \| NULL | `events.date_end` |
+| `event_date` | DATE | `events.event_date` |
 | `announce_date` | DATE | `events.announce_date` |
 | `event` | TEXT | `events.event` |
 | `payload` | JSONB \| NULL | `events.payload` |
@@ -137,22 +135,22 @@ SQL-подобный язык для поиска интересных собы�
 ### 5.1. Все события с тегом LKOH
 
 ```sql
-SELECT e.date_start, e.event
+SELECT e.event_date, e.event
 FROM events e
 JOIN event_tags et ON et.event_id = e.id
 JOIN tags t        ON t.code      = et.tag_code
 WHERE t.code = 'LKOH'
-ORDER BY e.date_start DESC
+ORDER BY e.event_date DESC
 LIMIT 50;
 ```
 
 То же через `tagged_events`:
 
 ```sql
-SELECT date_start, event
+SELECT event_date, event
 FROM tagged_events
 WHERE tag = 'LKOH'
-ORDER BY date_start DESC
+ORDER BY event_date DESC
 LIMIT 50;
 ```
 
@@ -161,13 +159,13 @@ LIMIT 50;
 Здесь нужны **два** условия по тегам — стандартный SQL делает это через self-join:
 
 ```sql
-SELECT te1.date_start,
-       car('LKOH', te1.date_start) AS car
+SELECT te1.event_date,
+       car('LKOH', te1.event_date) AS car
 FROM tagged_events te1
 JOIN tagged_events te2 ON te2.event_id = te1.event_id
 WHERE te1.tag = 'LKOH'
   AND te2.tag = 'DIVIDEND_ANNOUNCEMENT'
-  AND car('LKOH', te1.date_start) > 0.03
+  AND car('LKOH', te1.event_date) > 0.03
 ORDER BY car DESC
 LIMIT 20;
 ```
@@ -175,13 +173,13 @@ LIMIT 20;
 ### 5.3. Все санкции по России
 
 ```sql
-SELECT DISTINCT date_start, event
+SELECT DISTINCT event_date, event
 FROM tagged_events
 WHERE tag = 'SANCTIONS'
   AND event_id IN (
     SELECT event_id FROM tagged_events WHERE tag = 'RUS'
   )
-ORDER BY date_start DESC;
+ORDER BY event_date DESC;
 ```
 
 ### 5.4. Сравнение CAR трёх моделей для одного события
@@ -195,12 +193,12 @@ SELECT car('LKOH', DATE '2022-12-16', model => 'mean_adjusted') AS car_mean,
 ### 5.5. Топ-10 крупнейших падений GAZP с расширенным окном
 
 ```sql
-SELECT te.date_start,
+SELECT te.event_date,
        te.event,
-       car(te.tag, te.date_start, window_before => 5, window_after => 30) AS car
+       car(te.tag, te.event_date, window_before => 5, window_after => 30) AS car
 FROM tagged_events te
 WHERE te.tag = 'GAZP'
-  AND car(te.tag, te.date_start, window_before => 5, window_after => 30) < -0.05
+  AND car(te.tag, te.event_date, window_before => 5, window_after => 30) < -0.05
 ORDER BY car ASC
 LIMIT 10;
 ```

@@ -42,12 +42,12 @@ class StockDataProvider:
         """
         with get_pool().connection() as con:
             rows = con.execute(
-                "SELECT e.date_start, (e.payload->>'ratio')::float "
+                "SELECT e.event_date, (e.payload->>'ratio')::float "
                 "FROM events e "
                 "JOIN event_tags et ON et.event_id = e.id "
                 "WHERE et.tag_code = 'STOCK_SPLIT' "
                 "  AND e.payload->>'ticker' = %s "
-                "ORDER BY e.date_start",
+                "ORDER BY e.event_date",
                 [ticker.upper()],
             ).fetchall()
         return [{'split_date': d.isoformat(), 'ratio': float(r)} for d, r in rows]

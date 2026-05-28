@@ -326,16 +326,21 @@ def load(pg) -> None:
                 continue
             pseudo_guid = raw['pseudoGUID']
             event_id = f'edisc:{pseudo_guid}'
-            event_date = raw['eventDate'][:10]
             pub_date = raw['pubDate'][:10]
+            nominal_date = raw['eventDate'][:10]
             payload = json.dumps({
                 'pseudoGUID': pseudo_guid,
                 'inn': inn,
                 'emitter_id': emitter_id,
                 'company_id_edisclosure': raw.get('companyID'),
                 'agency': raw.get('agency'),
+                'nominal_date': nominal_date,
             })
-            event_rows.append((event_id, event_date, pub_date, None, event_name, payload))
+            # event_date = announce_date = pub_date: раскрытие влияет на рынок
+            # в момент публикации, а не на номинальную дату корпоративного
+            # действия (заседание/отчётный период) — та уходит в payload как
+            # справочная.
+            event_rows.append((event_id, pub_date, pub_date, event_name, payload))
             tag_rows.append((event_id, tag))
             for ticker in tickers:
                 tag_rows.append((event_id, ticker))
@@ -346,8 +351,8 @@ def load(pg) -> None:
 
     with pg.cursor() as cur:
         cur.executemany(
-            'INSERT INTO events (id, date_start, announce_date, date_end, event, payload) '
-            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            'INSERT INTO events (id, event_date, announce_date, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s::jsonb) '
             'ON CONFLICT (id) DO NOTHING',
             event_rows,
         )

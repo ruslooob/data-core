@@ -71,7 +71,7 @@ def load(pg) -> None:
             f'Сплит акций {ticker} {ratio:g}:1' if ratio >= 1
             else f'Обратный сплит акций {ticker} 1:{1/ratio:g}'
         )
-        event_rows.append((event_id, d, d, None, event_text, payload))
+        event_rows.append((event_id, d, d, event_text, payload))
         tag_rows.append((event_id, 'STOCK_SPLIT'))
         tag_rows.append((event_id, ticker))
 
@@ -82,8 +82,8 @@ def load(pg) -> None:
     with pg.cursor() as cur:
         cur.executemany(
             'INSERT INTO events '
-            '(id, date_start, announce_date, date_end, event, payload) '
-            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            '(id, event_date, announce_date, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s::jsonb) '
             'ON CONFLICT (id) DO NOTHING',
             event_rows,
         )

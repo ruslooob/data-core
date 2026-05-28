@@ -96,11 +96,11 @@ class AggregateSensitivityResult:
 # ---------------------------------------------------------------------------
 
 def _load_event_dates(con, event_ids: list[str]) -> dict[str, date]:
-    """Возвращает event_id → date_start. Отсутствующие в БД пропускаются."""
+    """Возвращает event_id → event_date. Отсутствующие в БД пропускаются."""
     if not event_ids:
         return {}
     rows = con.execute(
-        "SELECT id, date_start FROM events WHERE id = ANY(%s)",
+        "SELECT id, event_date FROM events WHERE id = ANY(%s)",
         [event_ids],
     ).fetchall()
     return {r[0]: r[1] for r in rows}
@@ -215,7 +215,7 @@ def calculate_individual(
         model: 'mean_adjusted' | 'market_model' | 'capm'.
         estimation_window: длина оценочного окна в торговых днях.
         central_statistic: 'median' | 'mean' для M в PI.
-        con: psycopg-коннект (для чтения date_start из events).
+        con: psycopg-коннект (для чтения event_date из events).
         stocks/market: data providers.
     """
     date_by_id = _load_event_dates(con, event_ids)

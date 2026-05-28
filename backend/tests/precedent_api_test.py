@@ -11,7 +11,7 @@ client = TestClient(app)
 
 def test_happy_path_simple_select():
     r = client.post("/api/precedents/search", json={
-        "source": "SELECT id, date_start, event FROM events LIMIT 3",
+        "source": "SELECT id, event_date, event FROM events LIMIT 3",
     })
     assert r.status_code == 200
     body = r.json()
@@ -19,7 +19,7 @@ def test_happy_path_simple_select():
     assert "rows" in body
     assert "stats" in body
     assert len(body["columns"]) == 3
-    assert {c["name"] for c in body["columns"]} == {"id", "date_start", "event"}
+    assert {c["name"] for c in body["columns"]} == {"id", "event_date", "event"}
     assert len(body["rows"]) == 3
 
 
@@ -93,7 +93,7 @@ def test_within_limit_not_truncated():
 
 def test_tagged_events_view_accessible():
     r = client.post("/api/precedents/search", json={
-        "source": "SELECT date_start, tag FROM tagged_events WHERE tag = 'SANCTIONS' LIMIT 3",
+        "source": "SELECT event_date, tag FROM tagged_events WHERE tag = 'SANCTIONS' LIMIT 3",
     })
     assert r.status_code == 200
     body = r.json()

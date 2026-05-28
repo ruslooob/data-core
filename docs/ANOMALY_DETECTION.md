@@ -21,11 +21,11 @@
 В PQL есть TA-функции для расчёта реакции цены и объёма — на их основе и пишутся запросы поиска. Простейшая форма — события тикера, у которых аномальная доходность вышла за порог:
 
 ```sql
-SELECT date_start, event,
-       car(tag, date_start) AS car
+SELECT event_date, event,
+       car(tag, event_date) AS car
 FROM tagged_events
 WHERE tag = 'LKOH'
-  AND ABS(car(tag, date_start)) > 0.03
+  AND ABS(car(tag, event_date)) > 0.03
 ORDER BY ABS(car) DESC;
 ```
 

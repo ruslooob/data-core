@@ -47,7 +47,7 @@ class PrecedentFuzzySearchRequest(CamelModel):
 class PrecedentFuzzyHit(CamelModel):
     event_id: str
     event: str
-    date_start: str
+    event_date: str
 
 
 class PrecedentFuzzySearchResponse(CamelModel):

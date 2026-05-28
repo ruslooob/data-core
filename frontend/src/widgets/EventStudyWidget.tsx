@@ -27,7 +27,7 @@ function shiftDate(iso: string, deltaDays: number): string {
 
 /** Подпись события в дропдауне: дата и описание. */
 function formatEventLabel(e: PrecedentEvent): string {
-  return e.event ? `${e.dateStart} · ${e.event}` : e.dateStart
+  return e.event ? `${e.eventDate} · ${e.event}` : e.eventDate
 }
 
 const MODELS: { value: ExpectedReturnModel; label: string }[] = [
@@ -84,7 +84,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   // фильтруем: тикер — subject анализа, набор общий для группы (как в Event
   // Effect Analysis).
   const precedentEvents = useMemo(
-    () => [...precedentSet].sort((a, b) => a.dateStart.localeCompare(b.dateStart)),
+    () => [...precedentSet].sort((a, b) => a.eventDate.localeCompare(b.eventDate)),
     [precedentSet],
   )
 
@@ -128,7 +128,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     if (daysBefore === null || daysAfter === null) return
     setActiveEventInStore(group, {
       ticker,
-      eventDate: currentEvent.dateStart,
+      eventDate: currentEvent.eventDate,
       daysBefore,
       daysAfter,
     })
@@ -154,7 +154,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
   useEffect(() => {
     if (!eventStudyRequest) return
     if (eventStudyRequest.nonce === handledRequestNonceRef.current) return
-    const found = precedentEvents.find((e) => e.dateStart === eventStudyRequest.eventDate)
+    const found = precedentEvents.find((e) => e.eventDate === eventStudyRequest.eventDate)
     if (!found) return
     handledRequestNonceRef.current = eventStudyRequest.nonce
     setEventId(found.eventId)
@@ -171,8 +171,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     // Авто-зум на price chart этой группы
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
-        from: shiftDate(ev.dateStart, -daysBefore * ZOOM_CONTEXT_FACTOR),
-        to: shiftDate(ev.dateStart, daysAfter * ZOOM_CONTEXT_FACTOR),
+        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     // Авто-расчёт после применения нового eventId
@@ -194,8 +194,8 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     setSensitivityRunSignal((n) => n + 1)
     if (group !== 'none') {
       groupEventBus.emit(group, 'zoom', {
-        from: shiftDate(ev.dateStart, -daysBefore * ZOOM_CONTEXT_FACTOR),
-        to: shiftDate(ev.dateStart, daysAfter * ZOOM_CONTEXT_FACTOR),
+        from: shiftDate(ev.eventDate, -daysBefore * ZOOM_CONTEXT_FACTOR),
+        to: shiftDate(ev.eventDate, daysAfter * ZOOM_CONTEXT_FACTOR),
       })
     }
     setLoading(true)
@@ -203,7 +203,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
     try {
       const r = await runEventStudy({
         ticker,
-        eventDate: ev.dateStart,
+        eventDate: ev.eventDate,
         model,
         eventWindow: [-daysBefore, daysAfter],
         estimationWindow: estimationWindow,
@@ -413,7 +413,7 @@ export function EventStudyWidget({ group }: EventStudyWidgetProps) {
           {currentEvent && (
             <EventStudySensitivitySection
               ticker={ticker}
-              eventDate={currentEvent.dateStart}
+              eventDate={currentEvent.eventDate}
               runSignal={sensitivityRunSignal}
             />
           )}

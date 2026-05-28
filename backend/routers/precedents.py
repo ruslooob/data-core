@@ -120,7 +120,7 @@ def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzyS
     pattern = f"%{query}%"
     con = get_pg()
     rows = con.execute(
-        "SELECT id, event, date_start FROM events WHERE event ILIKE %s ORDER BY date_start DESC LIMIT %s",
+        "SELECT id, event, event_date FROM events WHERE event ILIKE %s ORDER BY event_date DESC LIMIT %s",
         [pattern, PRECEDENT_MAX_ROWS + 1],
     ).fetchall()
 
@@ -132,7 +132,7 @@ def search_precedents_fuzzy(req: PrecedentFuzzySearchRequest) -> PrecedentFuzzyS
         PrecedentFuzzyHit(
             event_id=r[0],
             event=r[1] or '',
-            date_start=r[2].isoformat() if r[2] is not None else '',
+            event_date=r[2].isoformat() if r[2] is not None else '',
         )
         for r in rows
     ]

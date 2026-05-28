@@ -19,15 +19,22 @@
             <column name="type" type="VARCHAR"/>
         </createTable>
 
+        <!-- event_date — дата наступления (t=0); announce_date — дата, с
+             которой событие известно рынку (граница no-lookahead), по
+             умолчанию равна event_date. payload — специфика типа события
+             (для дивидендов: ticker, dividend_per_share, year). -->
         <createTable tableName="events">
             <column name="id" type="VARCHAR">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="date_start" type="DATE">
+            <column name="event_date" type="DATE">
                 <constraints nullable="false"/>
             </column>
-            <column name="date_end" type="DATE"/>
+            <column name="announce_date" type="DATE">
+                <constraints nullable="false"/>
+            </column>
             <column name="event" type="VARCHAR"/>
+            <column name="payload" type="JSONB"/>
         </createTable>
 
         <createTable tableName="event_tags">
@@ -46,9 +53,10 @@
             CREATE OR REPLACE VIEW tagged_events AS
             SELECT
                 e.id         AS event_id,
-                e.date_start,
-                e.date_end,
+                e.event_date,
+                e.announce_date,
                 e.event,
+                e.payload,
                 t.code       AS tag,
                 t.name       AS tag_name,
                 t.type       AS tag_type
@@ -109,23 +117,6 @@
                 <constraints nullable="false"/>
             </column>
         </createTable>
-
-        <createTable tableName="dividends">
-            <column name="ticker" type="VARCHAR">
-                <constraints nullable="false"/>
-            </column>
-            <column name="announcement_date" type="DATE">
-                <constraints nullable="false"/>
-            </column>
-            <column name="payment_date" type="DATE"/>
-            <column name="dividend_per_share" type="DOUBLE PRECISION">
-                <constraints nullable="false"/>
-            </column>
-            <column name="year" type="INTEGER">
-                <constraints nullable="false"/>
-            </column>
-        </createTable>
-        <addPrimaryKey tableName="dividends" columnNames="ticker, announcement_date, year"/>
 
         <!-- =====================================================
              3. Исследования (Research)

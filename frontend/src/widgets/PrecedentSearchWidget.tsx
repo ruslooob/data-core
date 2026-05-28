@@ -32,15 +32,15 @@ interface ErrorState {
   column: number | null
 }
 
-const DEFAULT_PQL = `SELECT id, event, date_start
+const DEFAULT_PQL = `SELECT id, event, event_date
 FROM events
-WHERE date_start > DATE '2020-01-01'
-ORDER BY date_start DESC
+WHERE event_date > DATE '2020-01-01'
+ORDER BY event_date DESC
 LIMIT 50`
 
 const ID_COLUMN_NAMES = new Set(['id', 'event_id'])
 const EVENT_COLUMN_NAME = 'event'
-const DATE_COLUMN_NAME = 'date_start'
+const DATE_COLUMN_NAME = 'event_date'
 
 export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
   const [mode, setMode] = useState<SearchMode>('fuzzy')
@@ -456,7 +456,7 @@ export function PrecedentSearchWidget({ group }: PrecedentSearchWidgetProps) {
                         onChange={() => toggleSelected(row)}
                       />
                     </td>
-                    <td style={tdDateStyle}>{row.dateStart}</td>
+                    <td style={tdDateStyle}>{row.eventDate}</td>
                     <td style={tdEventStyle}>{row.event}</td>
                   </tr>
                 )
@@ -521,7 +521,7 @@ async function runFuzzy(
   const rows = r.hits.map((h) => ({
     eventId: h.eventId,
     event: h.event,
-    dateStart: h.dateStart,
+    eventDate: h.eventDate,
   }))
   return { rows, truncated: r.truncated }
 }
@@ -531,10 +531,10 @@ async function runPql(
   signal: AbortSignal,
 ): Promise<{ rows: PrecedentEvent[]; truncated: boolean }> {
   const r = await searchPrecedents({ source }, signal)
-  // Контракт виджета: ровно три колонки — (id|event_id), event, date_start.
+  // Контракт виджета: ровно три колонки — (id|event_id), event, event_date.
   if (r.columns.length !== 3) {
     throw new ContractError(
-      `Ожидалось ровно три колонки (id|event_id, event, date_start), получено ${r.columns.length}: ` +
+      `Ожидалось ровно три колонки (id|event_id, event, event_date), получено ${r.columns.length}: ` +
       r.columns.map((c) => c.name).join(', '),
     )
   }
@@ -545,14 +545,14 @@ async function runPql(
     third.name !== DATE_COLUMN_NAME
   ) {
     throw new ContractError(
-      `Имена колонок должны быть «id»/«event_id», «event», «date_start». Получено: ` +
+      `Имена колонок должны быть «id»/«event_id», «event», «event_date». Получено: ` +
       `«${first.name}», «${second.name}», «${third.name}».`,
     )
   }
   const rows = r.rows.map((row) => ({
     eventId: String(row[0]),
     event: row[1] == null ? '' : String(row[1]),
-    dateStart: row[2] == null ? '' : String(row[2]),
+    eventDate: row[2] == null ? '' : String(row[2]),
   }))
   return { rows, truncated: r.stats.truncated }
 }

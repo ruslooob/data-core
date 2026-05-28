@@ -22,7 +22,7 @@
 Подробности — [SPEC_PRECEDENT_LANGUAGE.md](SPEC_PRECEDENT_LANGUAGE.md), модели CAR — [EXPECTED_RETURN_MODELS.md](EXPECTED_RETURN_MODELS.md).
 
 **Persistent-таблицы:**
-- `tagged_events(event_id, date_start, date_end, event, tag, tag_name, tag_type)` — события с тегами.
+- `tagged_events(event_id, event_date, announce_date, event, payload, tag, tag_name, tag_type)` — события с тегами.
 - `tags(code, name, type)` — справочник тегов (`type`: `company`, `topic`, `sector`).
 - `events(...)`, `event_tags(...)` — нормализованная схема под VIEW `tagged_events`.
 - `stocks`, `stock_candles`, `risk_free_rate`, `dividends` — рыночные данные (для UDF, обычно не дёргаем напрямую).
@@ -39,16 +39,16 @@ DuckDB допускал `WHERE ABS(my_alias) > 0.05`, в Postgres это **си�
 
 ```sql
 -- ✗ НЕ работает в Postgres
-SELECT car('LKOH', date_start) AS car_pre
+SELECT car('LKOH', event_date) AS car_pre
 FROM tagged_events
 WHERE ABS(car_pre) > 0.05
 ORDER BY ABS(car_pre) DESC
 
 -- ✓ Работает
-SELECT car('LKOH', date_start) AS car_pre
+SELECT car('LKOH', event_date) AS car_pre
 FROM tagged_events
-WHERE ABS(car('LKOH', date_start)) > 0.05
-ORDER BY ABS(car('LKOH', date_start)) DESC
+WHERE ABS(car('LKOH', event_date)) > 0.05
+ORDER BY ABS(car('LKOH', event_date)) DESC
 ```
 
 UDF кэшируется в SD per-сессии, повтор вызова дёшев.
@@ -65,43 +65,43 @@ UDF кэшируется в SD per-сессии, повтор вызова дё�
 
 ```sql
 WITH scored AS (
-  SELECT te.date_start, te.event, te.tag AS ticker,
-         CASE WHEN ABS(car(te.tag, te.date_start)) > 0.05 THEN 1 ELSE 0 END
-       + CASE WHEN volume_ratio(te.tag, te.date_start) > 2.0 THEN 1 ELSE 0 END
-       + CASE WHEN vol_ratio(te.tag, te.date_start) > 2.0    THEN 1 ELSE 0 END
+  SELECT te.event_date, te.event, te.tag AS ticker,
+         CASE WHEN ABS(car(te.tag, te.event_date)) > 0.05 THEN 1 ELSE 0 END
+       + CASE WHEN volume_ratio(te.tag, te.event_date) > 2.0 THEN 1 ELSE 0 END
+       + CASE WHEN vol_ratio(te.tag, te.event_date) > 2.0    THEN 1 ELSE 0 END
          AS score
   FROM tagged_events te
   JOIN tags t ON t.code = te.tag AND t.type = 'company'
 )
-SELECT date_start, event, ticker, score
+SELECT event_date, event, ticker, score
 FROM scored
 WHERE score >= 2
-ORDER BY score DESC, date_start DESC
+ORDER BY score DESC, event_date DESC
 LIMIT 20;
 ```
 
 ### CAR на event-study со ссылкой на topic-тег
 
 ```sql
-SELECT te.date_start, te.event,
-       car(te.tag, te.date_start) AS car
+SELECT te.event_date, te.event,
+       car(te.tag, te.event_date) AS car
 FROM tagged_events te
 JOIN tagged_events te2 ON te2.event_id = te.event_id
 JOIN tags t ON t.code = te.tag AND t.type = 'company'
 WHERE te2.tag = 'DIVIDEND_ANNOUNCEMENT'
-ORDER BY ABS(car(te.tag, te.date_start)) DESC
+ORDER BY ABS(car(te.tag, te.event_date)) DESC
 LIMIT 20;
 ```
 
 ### Pre-event utечка (CAR до t=0)
 
 ```sql
-SELECT te.date_start, te.event, te.tag AS ticker,
-       car(te.tag, te.date_start, window_after => -1) AS car_pre
+SELECT te.event_date, te.event, te.tag AS ticker,
+       car(te.tag, te.event_date, window_after => -1) AS car_pre
 FROM tagged_events te
 JOIN tags t ON t.code = te.tag AND t.type = 'company'
-WHERE ABS(car(te.tag, te.date_start, window_after => -1)) > 0.03
-ORDER BY ABS(car(te.tag, te.date_start, window_after => -1)) DESC
+WHERE ABS(car(te.tag, te.event_date, window_after => -1)) > 0.03
+ORDER BY ABS(car(te.tag, te.event_date, window_after => -1)) DESC
 LIMIT 30;
 ```
 
@@ -118,7 +118,7 @@ LIMIT 30;
 **PQL-запрос (агрегаты):**
 ```sql
 WITH cars AS (
-  SELECT car('LKOH', te.date_start) AS car
+  SELECT car('LKOH', te.event_date) AS car
   FROM tagged_events te
   JOIN tagged_events te2 ON te2.event_id = te.event_id
   WHERE te.tag = 'LKOH' AND te2.tag = 'DIVIDEND_ANNOUNCEMENT'
@@ -153,10 +153,10 @@ Top-5 положительных:
 **PQL-запрос (агрегаты):**
 ```sql
 WITH spikes AS (
-  SELECT car(te.tag, te.date_start, window_before => -1, window_after => 5) AS car_post
+  SELECT car(te.tag, te.event_date, window_before => -1, window_after => 5) AS car_post
   FROM tagged_events te
   JOIN tags t ON t.code = te.tag AND t.type = 'company'
-  WHERE volume_ratio(te.tag, te.date_start) > 2.0
+  WHERE volume_ratio(te.tag, te.event_date) > 2.0
 )
 SELECT COUNT(*) FILTER (WHERE car_post IS NOT NULL) AS n,
        AVG(car_post), STDDEV(car_post), ...
@@ -256,7 +256,7 @@ Top-5 — компании 2-эшелона (NKNCP, TRMK, RASP) с экстре�
 
 Найденная аномалия становится trigger-правилом стратегии так:
 1. PQL-запрос аномалии возвращает множество `(ticker, event_date)`.
-2. В trigger-rule стратегии повторяем то же условие, но как **фильтр на текущем тике** — `WHERE EXISTS (... AND te.date_start = :tick - N)`.
+2. В trigger-rule стратегии повторяем то же условие, но как **фильтр на текущем тике** — `WHERE EXISTS (... AND te.event_date = :tick - N)`.
 3. Action — buy/sell с заданным размером и priority.
 4. Прогоняем на всей истории, смотрим что доходность статегии лучше пассивного бенчмарка.
 

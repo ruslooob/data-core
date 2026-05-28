@@ -1,9 +1,9 @@
 """Поставщик дивидендных событий из таблицы `events`.
 
 Дивиденды живут в общей таблице `events` как два события на каждый
-платёж: «Объявление дивидендов TICK: X.XX ₽ за YYYY год» (date_start =
+платёж: «Объявление дивидендов TICK: X.XX ₽ за YYYY год» (event_date =
 announce_date = announcement_date) и «Выплата дивидендов TICK: ...»
-(date_start = payment_date, announce_date = announcement_date).
+(event_date = payment_date, announce_date = announcement_date).
 Специфика (ticker, dividend_per_share, year) лежит в `events.payload`.
 
 Контракт публичных методов сохранён по сравнению с CSV/dividends-версией.
@@ -35,7 +35,7 @@ class DividendDataProvider:
         dividend, year."""
         sql = (
             "SELECT payload->>'ticker' AS ticker, "
-            "date_start, "
+            "event_date, "
             "(payload->>'dividend_per_share')::float AS div, "
             "(payload->>'year')::int AS year "
             "FROM events "
@@ -45,7 +45,7 @@ class DividendDataProvider:
         if self._max_date is not None:
             sql += ' AND announce_date <= %s'
             params.append(self._max_date)
-        sql += ' ORDER BY date_start'
+        sql += ' ORDER BY event_date'
         with get_pool().connection() as con:
             rows = con.execute(sql, params).fetchall()
         return [
@@ -61,12 +61,12 @@ class DividendDataProvider:
     def load_payments_by_date(self) -> dict[tuple[date, str], float]:
         """Карта `(payment_date, ticker) → dividend_per_share`.
 
-        Использует payment_date (= date_start события «Выплата
+        Использует payment_date (= event_date события «Выплата
         дивидендов»), не announcement_date. При коллизии (две выплаты
         в один день для одного тикера) суммируются.
         """
         sql = (
-            "SELECT date_start AS payment_date, "
+            "SELECT event_date AS payment_date, "
             "payload->>'ticker' AS ticker, "
             "(payload->>'dividend_per_share')::float AS div "
             "FROM events "
@@ -74,7 +74,7 @@ class DividendDataProvider:
         )
         params: list = []
         if self._max_date is not None:
-            sql += ' AND date_start <= %s'
+            sql += ' AND event_date <= %s'
             params.append(self._max_date)
         with get_pool().connection() as con:
             rows = con.execute(sql, params).fetchall()

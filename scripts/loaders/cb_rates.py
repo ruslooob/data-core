@@ -208,15 +208,15 @@ def load(pg) -> None:
                 'effective_date': effective.isoformat(),
             })
             event_text = _format_event_text(rate_type, rate, prev_rate, direction)
-            event_rows.append((event_id, announce, announce, None, event_text, payload))
+            event_rows.append((event_id, announce, announce, event_text, payload))
             tag_rows.append((event_id, 'CB_RATE_DECISION'))
             prev_rate = rate
 
     with pg.cursor() as cur:
         cur.executemany(
             'INSERT INTO events '
-            '(id, date_start, announce_date, date_end, event, payload) '
-            'VALUES (%s, %s, %s, %s, %s, %s::jsonb) '
+            '(id, event_date, announce_date, event, payload) '
+            'VALUES (%s, %s, %s, %s, %s::jsonb) '
             'ON CONFLICT (id) DO NOTHING',
             event_rows,
         )

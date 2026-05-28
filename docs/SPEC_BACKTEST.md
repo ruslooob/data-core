@@ -66,7 +66,7 @@ SELECT 'LKOH' AS ticker
 WHERE EXISTS (
   SELECT 1 FROM tagged_events te
   WHERE te.tag = 'DIVIDEND_ANNOUNCEMENT'
-    AND te.date_start = :tick - 1
+    AND te.event_date = :tick - 1
     AND te.event_id IN (SELECT event_id FROM tagged_events WHERE tag = 'LKOH')
 )
 ```
@@ -344,7 +344,7 @@ pnl_realized = Σ по списываемым лотам: quantity_из_лота
 
 **События** — без новых функций, обычный SELECT по `tagged_events`:
 ```sql
-SELECT * FROM tagged_events WHERE date_start <= :tick - 1
+SELECT * FROM tagged_events WHERE event_date <= :tick - 1
 ```
 
 ## Часть 6 — Реализация в Postgres

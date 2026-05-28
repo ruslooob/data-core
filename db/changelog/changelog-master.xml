@@ -16,7 +16,6 @@
     <include file="changes/001-initial-schema.xml" relativeToChangelogFile="true"/>
     <include file="changes/002-udfs.xml" relativeToChangelogFile="true"/>
     <include file="changes/003-seed-default-research.xml" relativeToChangelogFile="true"/>
-    <include file="changes/004-events-announce-date-payload.xml" relativeToChangelogFile="true"/>
     <include file="changes/005-events-search-index.xml" relativeToChangelogFile="true"/>
     <include file="changes/006-corporate-and-macro-tags-and-drop-stocks-splits.xml" relativeToChangelogFile="true"/>
     <include file="changes/007-emitters-and-corp-disclosure.xml" relativeToChangelogFile="true"/>
