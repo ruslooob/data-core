@@ -120,7 +120,7 @@ def plot_price_real(
     Цена нормируется к normalize_date = 100.
     Если cpi_normalized=True — корректируется на инфляцию через real_ruble.
     Если передан events_df — показываются маркеры событий на цене:
-      при наведении отображается текст события и затемняется интервал date_start–date_end.
+      при наведении отображается текст и отмечается дата события.
 
     Параметры:
         candles:         DataFrame со свечами (колонки DATE и CLOSE)
@@ -128,7 +128,7 @@ def plot_price_real(
         cpi_normalized:  применять поправку на инфляцию
         cpi_base_date:   базовая дата для CPI (только при cpi_normalized=True)
         cpi_type:        тип ИПЦ (только при cpi_normalized=True)
-        events_df:       опционально — DataFrame с колонками id, date_start, date_end, event
+        events_df:       опционально — DataFrame с колонками id, event_date, event
         title:           заголовок графика
     """
     stock = candles.copy()
@@ -177,15 +177,13 @@ def plot_price_real(
     events = None
     if events_df is not None:
         events = events_df.copy()
-        events['date_start'] = pd.to_datetime(events['date_start'])
-        events['date_end'] = pd.to_datetime(events['date_end'])
+        events['event_date'] = pd.to_datetime(events['event_date'])
 
         if 'id' not in events.columns:
             raise ValueError("events_df must contain column 'id'")
 
         for _, row in events.iterrows():
-            start = row['date_start']
-            end = row['date_end']
+            start = row['event_date']
             label = row['event']
             event_id = row['id']
 
@@ -199,7 +197,7 @@ def plot_price_real(
                 marker=dict(size=9, color='crimson', line=dict(color='white', width=1)),
                 hovertemplate=(
                     f'<b>{label}</b><br>'
-                    f'{start.date()} – {end.date() if pd.notnull(end) else "..."}'
+                    f'{start.date()}'
                     '<extra></extra>'
                 ),
                 customdata=[event_id],
@@ -243,14 +241,13 @@ def plot_price_real(
             if cd is not None:
                 row = events.loc[events['id'] == cd].iloc[0]
                 patched['layout']['shapes'] = [{
-                    'type': 'rect',
-                    'x0': str(row['date_start']),
-                    'x1': str(row['date_end']),
+                    'type': 'line',
+                    'x0': str(row['event_date']),
+                    'x1': str(row['event_date']),
                     'y0': 0,
                     'y1': 1,
                     'yref': 'paper',
-                    'fillcolor': 'rgba(0,0,0,0.10)',
-                    'line': {'width': 0},
+                    'line': {'color': 'rgba(0,0,0,0.25)', 'width': 1, 'dash': 'dot'},
                     'layer': 'below',
                 }]
                 return patched
@@ -264,16 +261,15 @@ def plot_price_real(
 def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
     """
     Dash-приложение: график цены акции с маркерами событий.
-    При наведении на маркер показывает текст события и затемняет интервал date_start–date_end.
+    При наведении на маркер показывает текст и отмечает дату события.
 
-    events должен содержать колонки: id, date_start, date_end, event
+    events должен содержать колонки: id, event_date, event
     """
     x = pd.to_datetime(pd.Series(x))
     y = pd.Series(y)
 
     events = events.copy()
-    events["date_start"] = pd.to_datetime(events["date_start"])
-    events["date_end"] = pd.to_datetime(events["date_end"])
+    events["event_date"] = pd.to_datetime(events["event_date"])
 
     if "id" not in events.columns:
         raise ValueError("events must contain column 'id'")
@@ -291,8 +287,7 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
     ))
 
     for _, row in events.iterrows():
-        start = row["date_start"]
-        end = row["date_end"]
+        start = row["event_date"]
         label = row["event"]
         event_id = row["id"]
 
@@ -306,7 +301,7 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
             marker=dict(size=9, color="crimson", line=dict(color="white", width=1)),
             hovertemplate=(
                 f"<b>{label}</b><br>"
-                f"{start.date()} – {end.date() if pd.notnull(end) else '...'}"
+                f"{start.date()}"
                 "<extra></extra>"
             ),
             customdata=[event_id],
@@ -351,14 +346,13 @@ def plot_2d_events(x, y, events, xlabel=None, ylabel=None, title=None):
             if cd is not None:
                 row = events.loc[events["id"] == cd].iloc[0]
                 patched["layout"]["shapes"] = [{
-                    "type": "rect",
-                    "x0": str(row["date_start"]),
-                    "x1": str(row["date_end"]),
+                    "type": "line",
+                    "x0": str(row["event_date"]),
+                    "x1": str(row["event_date"]),
                     "y0": 0,
                     "y1": 1,
                     "yref": "paper",
-                    "fillcolor": "rgba(0,0,0,0.10)",
-                    "line": {"width": 0},
+                    "line": {"color": "rgba(0,0,0,0.25)", "width": 1, "dash": "dot"},
                     "layer": "below",
                 }]
                 return patched

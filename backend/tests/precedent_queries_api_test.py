@@ -17,14 +17,25 @@ from main import app
 
 @pytest.fixture(autouse=True)
 def cleanup_user_queries():
-    """Удаляет пользовательские saved_queries (без ★-префикса) до и
-    после теста, чтобы между прогонами не оставался мусор."""
-    def _purge():
-        with get_pool().connection() as con:
-            con.execute("DELETE FROM saved_queries WHERE name NOT LIKE '★%%'")
-    _purge()
+    """Изолирует тест от пользовательских saved_queries, не уничтожая их:
+    снимает снимок не-★ записей, очищает их на время теста и
+    восстанавливает после. Так прогон тестов против дев-БД не стирает
+    реальные сохранённые запросы пользователя."""
+    with get_pool().connection() as con:
+        snapshot = con.execute(
+            "SELECT id, name, source, created_at, kind "
+            "FROM saved_queries WHERE name NOT LIKE '★%%'"
+        ).fetchall()
+        con.execute("DELETE FROM saved_queries WHERE name NOT LIKE '★%%'")
     yield
-    _purge()
+    with get_pool().connection() as con:
+        con.execute("DELETE FROM saved_queries WHERE name NOT LIKE '★%%'")
+        for row in snapshot:
+            con.execute(
+                "INSERT INTO saved_queries (id, name, source, created_at, kind) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                row,
+            )
 
 
 @pytest.fixture
