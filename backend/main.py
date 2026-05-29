@@ -1,4 +1,4 @@
-"""FastAPI backend для data-core. Тонкий composer: только app + middleware + роутеры."""
+"""FastAPI backend для Kairos. Тонкий composer: только app + middleware + роутеры."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,7 +14,7 @@ from routers import (
     strategies as strategies_router,
 )
 
-app = FastAPI(title="data-core API", version="0.1.0")
+app = FastAPI(title="Kairos API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

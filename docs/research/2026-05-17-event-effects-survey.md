@@ -1,6 +1,6 @@
 # Серия event-study исследований (2026-05-17)
 
-Снимок дипломного инструмента data-core. Все 11 гипотез прогнаны через API `/api/event-effect/individual` и `/api/event-effect/sensitivity`.
+Снимок дипломного инструмента Kairos. Все 11 гипотез прогнаны через API `/api/event-effect/individual` и `/api/event-effect/sensitivity`.
 
 **Базовые параметры:** event_window = ±5 дней, estimation_window = 200, central_statistic = median. Sensitivity-сетка: windows = [5, 10, 20], models = [mean_adjusted, market_model, capm] (для IMOEX — только mean_adjusted), estimation_windows = [100, 150, 200].
 
