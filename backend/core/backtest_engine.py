@@ -18,9 +18,11 @@
 """
 from __future__ import annotations
 
+import bisect
 import math
 import re
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
@@ -33,6 +35,25 @@ from core.market_data_provider import MarketDataProvider
 from core.stock_data_provider import StockDataProvider
 
 DIVIDEND_RULE_NAME = '*dividend*'
+
+# Границы режимов расчётов MOEX. До 2013-09-02 — T+0 (расчёт день-в-день,
+# держатель на конец R сам в реестре). 2013-09-02..2024-04-30 — T+2
+# (купивший на R-2 успевает в реестр, на R-1 — уже нет). С 2024-05-01 — T+1
+# (R-1 в реестре, R — уже нет). Эмпирическая дата T+2→T+1 — 2024-05-01,
+# а не 2023-07-31 (официальный MOEX), потому что дивидендная reg-close
+# механика для LKOH перешла позже торгового расчёта; см. BACKTEST_ANOMALIES
+# (раздел про S_1).
+_T0_T2_TRANSITION = date(2013, 9, 2)
+_T2_T1_TRANSITION = date(2024, 5, 1)
+
+
+def _settlement_days_for(payment_date: date) -> int:
+    """Сколько торговых дней назад от R должна быть позиция, чтобы быть в реестре."""
+    if payment_date < _T0_T2_TRANSITION:
+        return 0  # T+0
+    if payment_date < _T2_T1_TRANSITION:
+        return 2  # T+2
+    return 1      # T+1
 
 # Регулярка для замены `:name` → `%(name)s` (psycopg named params).
 # Lookbehind на `:` исключает `::CAST` (его в Postgres всё равно нет, но на всякий).
@@ -215,6 +236,12 @@ class BacktestEngine:
         # дней IMOEX. Чтения котировок при бэктесте идут через UDF в Postgres.
         self._market = MarketDataProvider()
         self._dividend_payments = DividendDataProvider().load_payments_by_date()
+        # Индекс выплат по дате R: один лук-ап на тик вместо итерации по всему dict.
+        self._payments_by_date: dict[date, list[tuple[str, float]]] = defaultdict(list)
+        for (pd_date, tk), div in self._dividend_payments.items():
+            self._payments_by_date[pd_date].append((tk, float(div)))
+        # Заполняется в run() — нужен для расчёта eligibility_day в _apply_dividends.
+        self._trading_days: list[date] = []
 
         self._create_runtime_tables()
         self._init_portfolio()
@@ -304,6 +331,7 @@ class BacktestEngine:
             raise ValueError(
                 f'Нет торговых дней в периоде {self.environment.date_start}..{self.environment.date_end}',
             )
+        self._trading_days = trading_days
         total = len(trading_days)
 
         for index, tick in enumerate(trading_days):
@@ -555,14 +583,30 @@ class BacktestEngine:
     # ── Дивиденды ──────────────────────────────────────────────────────────
 
     def _apply_dividends(self, tick: date) -> None:
-        positions = self.con.execute(
-            'SELECT ticker, SUM(quantity) FROM portfolio_positions GROUP BY ticker',
-        ).fetchall()
-        for ticker, total_qty in positions:
-            div_per_share = self._dividend_payments.get((tick, ticker))
-            if div_per_share is None or total_qty is None or total_qty <= 0:
+        """Платит дивиденды, моделируя реестровую механику MOEX.
+
+        Дивиденд получают только те, кто держал бумагу на закрытии
+        `eligibility_day = R − settlement_days`, а не все, кто оказался
+        с позицией на момент `R`. Это устраняет «лишний» дивиденд для
+        покупок в день дивгепа (купивший на R под T+1 / на R-1 под T+2
+        settl’ится после реестра и в реальности дивиденд не получает).
+
+        Количество акций на eligibility-день считается по `trade_journal`
+        (а не по `portfolio_positions`), потому что в текущей позиции
+        уже учтены сегодняшние сделки — а для дивиденда важна именно
+        позиция на конец eligibility-дня.
+        """
+        payments = self._payments_by_date.get(tick, [])
+        if not payments:
+            return
+        eligibility = self._eligibility_day(tick)
+        if eligibility is None:
+            return
+        for ticker, div_per_share in payments:
+            qty = self._holdings_at(ticker, eligibility)
+            if qty <= 0:
                 continue
-            payout = float(div_per_share) * int(total_qty)
+            payout = div_per_share * qty
             self.con.execute(
                 'UPDATE portfolio_state SET cash = cash + %s, equity = equity + %s',
                 [payout, payout],
@@ -570,18 +614,46 @@ class BacktestEngine:
             self.con.execute(
                 'INSERT INTO trade_journal (trade_date, ticker, type, quantity, price, rule_name, pnl_realized) '
                 'VALUES (%s, %s, %s, %s, %s, %s, %s)',
-                [tick, ticker, 'dividend', int(total_qty), float(div_per_share),
+                [tick, ticker, 'dividend', qty, div_per_share,
                  DIVIDEND_RULE_NAME, payout],
             )
             self.logger.info(
                 'dividend payout',
-                ticker=ticker, qty=int(total_qty),
-                per_share=float(div_per_share), payout=round(payout, 2),
+                ticker=ticker, qty=qty,
+                per_share=div_per_share, payout=round(payout, 2),
+                eligibility=eligibility.isoformat(),
             )
             self.con.execute(
                 'UPDATE equity_curve SET equity = equity + %s WHERE tick_date = %s',
                 [payout, tick],
             )
+
+    def _eligibility_day(self, payment_date: date) -> date | None:
+        """Дата, на закрытие которой нужно было держать акцию, чтобы
+        получить дивиденд по выплате с R = `payment_date`.
+
+        Возвращает None, если эта дата раньше первого торгового дня
+        бэктеста — значит, мы в принципе не могли иметь позицию
+        вовремя.
+        """
+        n_back = _settlement_days_for(payment_date)
+        # Последний торговый день <= payment_date (на случай выходного R).
+        idx = bisect.bisect_right(self._trading_days, payment_date) - 1
+        if idx < 0 or idx < n_back:
+            return None
+        return self._trading_days[idx - n_back]
+
+    def _holdings_at(self, ticker: str, d: date) -> int:
+        """Чистая позиция по тикеру на конец дня `d` (buy − sell) по `trade_journal`."""
+        row = self.con.execute(
+            "SELECT COALESCE(SUM(CASE type "
+            "  WHEN 'buy' THEN quantity "
+            "  WHEN 'sell' THEN -quantity "
+            "  ELSE 0 END), 0) "
+            "FROM trade_journal WHERE ticker = %s AND trade_date <= %s",
+            [ticker, d],
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     # ── Переоценка equity и запись точки кривой ────────────────────────────
 
