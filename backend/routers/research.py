@@ -7,6 +7,7 @@ import uuid as _uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
+from core.research_report_pdf import render_research_report_pdf
 from routers._common import DEFAULT_RESEARCH_ID, fetch_research, get_pg, validate_name
 from schemas.research import ResearchCreate, ResearchOut, ResearchPatch
 
@@ -122,7 +123,11 @@ def export_research_report(research_id: str, format: str):
             headers={'Content-Disposition': f'attachment; filename="{slug}.csv"'},
         )
     if format == 'pdf':
-        raise HTTPException(status_code=501, detail='PDF-экспорт пока не реализован')
+        return Response(
+            content=render_research_report_pdf(con, rid),
+            media_type='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="{slug}.pdf"'},
+        )
     raise HTTPException(status_code=400, detail=f'Неизвестный формат: {format!r}')
 
 

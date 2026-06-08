@@ -3,7 +3,7 @@ import { useActiveResearch } from '../../contexts/ActiveResearch'
 
 /**
  * Виджет отчёта по активному исследованию.
- * Сейчас — только дропдаун экспорта (CSV работает, PDF — заглушка).
+ * Сейчас — только дропдаун экспорта (CSV и PDF).
  * Полноценный журнал исследования с заметками появится позже.
  */
 export function ResearchReportWidget() {
@@ -17,8 +17,9 @@ export function ResearchReportWidget() {
   }
 
   const onExportPdf = () => {
+    if (!activeResearchId) return
     setExportMenuOpen(false)
-    alert('PDF-экспорт пока не реализован')
+    window.location.href = `/api/research/${activeResearchId}/export?format=pdf`
   }
 
   return (

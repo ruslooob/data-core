@@ -5,6 +5,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "psycopg[binary,pool]",
+    "reportlab",
 ]
 
 [tool.setuptools.packages.find]
