@@ -41,9 +41,21 @@ export function AssistantWidget() {
   const [streaming, setStreaming] = useState(false)
   const [availableDocs, setAvailableDocs] = useState<string[]>([])
   const [mention, setMention] = useState<MentionState | null>(null)
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null)
+  const [, setTick] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Растущий счётчик «помощник думает Xс…» во время стрима.
+  // Перерисовка раз в секунду — достаточно для глаза, не грузит лишним.
+  useEffect(() => {
+    if (!streaming) return
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [streaming])
+
+  const secondsSinceLastEvent = lastEventAt ? Math.floor((Date.now() - lastEventAt) / 1000) : 0
 
   useEffect(() => {
     let abort = false
@@ -120,6 +132,7 @@ export function AssistantWidget() {
     const nextHistory = [...messages, userMsg]
     setMessages([...nextHistory, placeholder])
     setStreaming(true)
+    setLastEventAt(Date.now())
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -131,6 +144,7 @@ export function AssistantWidget() {
         attachedDocs,
         signal: controller.signal,
         onEvent: (evt) => {
+          setLastEventAt(Date.now())
           setMessages((prev) => applyEventToLast(prev, evt))
         },
       })
@@ -140,6 +154,7 @@ export function AssistantWidget() {
       }
     } finally {
       setStreaming(false)
+      setLastEventAt(null)
       abortRef.current = null
     }
   }
@@ -184,9 +199,17 @@ export function AssistantWidget() {
             Чтобы приложить документ — напишите `@` и выберите файл.
           </div>
         )}
-        {messages.map((m, i) => (
-          <MessageView key={i} message={m} />
-        ))}
+        {messages.map((m, i) => {
+          const isLast = i === messages.length - 1
+          return (
+            <MessageView
+              key={i}
+              message={m}
+              showThinking={isLast && streaming && m.role === 'assistant'}
+              thinkingSeconds={isLast && streaming ? secondsSinceLastEvent : 0}
+            />
+          )
+        })}
       </div>
       <div style={composerStyle}>
         <div style={composerInputWrapStyle}>
@@ -253,7 +276,7 @@ function extractAttachedDocs(text: string, available: string[]): string[] {
   return Array.from(found)
 }
 
-function MessageView({ message }: { message: Message }) {
+function MessageView({ message, showThinking = false, thinkingSeconds = 0 }: { message: Message; showThinking?: boolean; thinkingSeconds?: number }) {
   if (message.role === 'user') {
     const text = message.blocks.find((b): b is Extract<Block, { type: 'text' }> => b.type === 'text')?.text ?? ''
     return (
@@ -264,10 +287,11 @@ function MessageView({ message }: { message: Message }) {
   }
   return (
     <div style={assistantMessageStyle}>
-      {message.blocks.length === 0 ? (
-        <div style={typingDotsStyle}>помощник думает…</div>
-      ) : (
-        message.blocks.map((b, i) => <BlockView key={i} block={b} />)
+      {message.blocks.map((b, i) => <BlockView key={i} block={b} />)}
+      {showThinking && (
+        <div style={typingDotsStyle}>
+          помощник думает{thinkingSeconds > 0 ? ` ${thinkingSeconds}с` : ''}…
+        </div>
       )}
     </div>
   )

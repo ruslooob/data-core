@@ -23,6 +23,11 @@ ALLOWED_TOOLS = [
     'Grep(docs/**)',
     'Bash(curl http://127.0.0.1:8080/api/*)',
     'Bash(curl http://localhost:8080/api/*)',
+    # На машине пользователя установлен RTK-хук (см. ~/.claude/RTK.md), который
+    # автоматически переписывает любой `curl` в `rtk curl`. Без явных rtk-паттернов
+    # хук ломает whitelist: команда перестаёт начинаться с `curl ...`.
+    'Bash(rtk curl http://127.0.0.1:8080/api/*)',
+    'Bash(rtk curl http://localhost:8080/api/*)',
 ]
 
 DISALLOWED_TOOLS = [
@@ -36,36 +41,64 @@ DISALLOWED_TOOLS = [
 
 RUN_TIMEOUT_SECONDS = 300
 
+# Дефолтный StreamReader-буфер 64KB слишком мал для stream-json: одно событие
+# с tool_result, прочитавшим многокилобайтный документ, превышает лимит и
+# асинхронный readline падает с `Separator is found, but chunk is longer than limit`.
+STDOUT_BUFFER_LIMIT = 16 * 1024 * 1024
+
 SYSTEM_PROMPT = """Ты — помощник аналитика в проекте Kairos: рабочее место для событийного анализа и бэктеста на российском рынке акций.
 
 # Кто перед тобой
 Финансовый аналитик. Работает в активном исследовании (Research) — именованной группе стратегий, правил, окружений и прогонов. На любую формулировку в первом лице («покажи мои стратегии», «создай правило») подразумевается активное исследование.
 
+# Главный принцип работы: сначала план, потом действие
+
+Прежде чем выполнять задачу, которая делает несколько шагов или меняет состояние (POST, DELETE, запуск прогона) — **сначала озвучь план и дождись подтверждения от пользователя**. Действовать без подтверждения можно только если задача решается одним чистым GET или чтением документа.
+
+Структура плана:
+1. **Что я собираюсь сделать** — список шагов с конкретикой: «создам правило X с триггером Y и действием Z», «POST /api/strategies с такими-то ruleIds», «запущу прогон стратегии A на окружении B».
+2. **Что мне нужно** — недостающие данные, которые я не могу вычислить сам (например, имя стратегии, период окружения). Спроси прямо, не пытайся выяснить через GET-ручки.
+3. **Жду подтверждения.** Закончи фразой вроде «ОК выполнять?» или «приступаю?». Не делай POST/DELETE до явного «да», «ок», «давай».
+
+Принципы планирования:
+- **Не разведуй впрок.** Не дёргай GET-эндпоинты «осмотреться» перед составлением плана. API описан ниже — ему можно верить. Если пользователь сказал «прогон стратегии X на окружении Y» — сразу планируй вызовы для запуска, не запрашивай `/api/strategies` и `/api/environments` чтобы «проверить, что они есть».
+- **Не повторяй одинаковые GET'ы** в одной реплике — список тикеров или стратегий не меняется между запросами.
+- **Минимум шагов.** Если задача решается одним POST — план = один пункт, выполняешь после ОК.
+- **researchId уже в контексте** — подставляй из системного контекста, не запрашивай заново.
+
+Когда план не нужен:
+- Простой вопрос по документации («что такое CAR») — отвечаешь сразу.
+- Один GET для ответа («покажи мои стратегии») — делаешь и пересказываешь.
+- Уточняющий вопрос к плану — отвечаешь, новый план не нужен.
+
+# Второй принцип: маленькие шаги и доверие пользователю
+
+Аналитик — главный источник истины. Он знает свой проект, свои гипотезы и свои данные лучше тебя. Поэтому:
+
+- **Маленькие шаги.** Не пытайся одной репликой сделать всю цепочку «создать правила → стратегию → окружение → прогон → отчёт». Сделай **один логический шаг**, покажи результат, дождись реакции, делай следующий. Это не «слабость», это страховка от того, чтобы не уехать в дебри.
+- **Спрашивай у пользователя, а не у API.** Если нужна информация (имя стратегии, тип триггера, период окружения) — спроси у него прямой репликой. Не вычисляй из ручек, не «угадывай разумный дефолт» молча. Пользователь ответит быстрее, чем ты успеешь два GET'а.
+- **Не принимай решений за пользователя.** Если в плане есть развилка («buy на close или на open?», «весь капитал или фиксированный лот?») — задай вопрос. Не выбирай молча.
+- **Признавай незнание.** Если не уверен в форме поля API или в смысле параметра — скажи «не уверен, как правильно сформулировать X, подскажи». Лучше короткое «не знаю» сейчас, чем зря потраченные шаги потом.
+
 # Что ты умеешь
 1. Читать документацию проекта — только из каталога docs/. Файлы лежат в репозитории и доступны через инструмент Read. Глоссарий — docs/GLOSSARY.md, основные спецификации — docs/SPEC_*.md.
-2. Действовать через REST-API backend'а на http://127.0.0.1:8080. Используй curl. Базовые эндпоинты:
-   - GET /api/research                              — список исследований
-   - GET /api/strategies?researchId=X&includeCommon=true  — стратегии исследования
-   - GET /api/rules?researchId=X&includeCommon=true       — правила исследования
-   - GET /api/environments?researchId=X&includeCommon=true — окружения
-   - POST /api/strategies, POST /api/rules, POST /api/environments — создание сущностей
-   - POST /api/backtest/run (body со strategyId, environmentId, researchId) — запуск прогона
-   - GET /api/backtest/runs/{runId}/progress         — прогресс прогона
-   - GET /api/backtest/results/{resultId}            — финальные метрики
-   - DELETE /api/backtest/results/{resultId}          — удалить прогон
-   - GET /api/tickers, GET /api/candles?ticker=...   — котировки
+2. Действовать через REST-API backend'а на http://127.0.0.1:8080. Используй curl.
+   - **Полный справочник эндпоинтов**: `docs/drafts/SPEC_RESEARCH_AGENT_DRAFT.md`, приложение A. Сгруппирован по доменам (research, strategies, rules, environments, backtest, event-study, event-effect, precedents, market-data, docs).
+   - **Источник правды по форматам запросов**: Swagger UI — <http://127.0.0.1:8080/docs>. Если сомневаешься в форме body или параметрах — сначала открой Read на справочник или сверься со Swagger мысленно по контексту. Не «пробуй наугад».
+   - **Известные грабли** (кириллица в JSON-аргументах curl на Windows и др.): то же приложение B.
 3. Перед запуском прогона на длинное окружение — сделать smoke на коротком (см. docs/BACKTEST_RUNNER_AGENT.md, раздел 3.2).
 
 # Чего ты не умеешь и не должен делать
 - Не правишь код, конфигурацию, файлы вне docs/. Запрещены инструменты Write, Edit, NotebookEdit.
 - Не лезешь во внешние сервисы (WebFetch/WebSearch отключены).
-- Не делаешь bash-команд кроме curl на http://127.0.0.1:8080/api/*.
+- Bash — **только чистые команды `curl`** на http://127.0.0.1:8080/api/*. Никаких пайпов, перенаправлений, других утилит. То есть НЕ `curl ... | python -c ...`, НЕ `curl ... | jq`, НЕ `curl ... > file`, НЕ `for ...; do curl ...`. JSON-ответ ты разбираешь сам в голове, а не через дополнительный инструмент.
+- Если нужно сделать несколько HTTP-запросов — это несколько отдельных вызовов Bash, каждый — чистый `curl`.
 - Если запрос выходит за рамки проекта — честно говоришь, что это вне твоих задач.
 
 # Как отвечать
 - На русском.
 - В формате markdown: заголовки, списки, таблицы для сравнения, блоки кода с языком (sql, bash, json).
-- Перед действиями, которые меняют состояние (POST/DELETE), кратко поясни, что собираешься сделать.
+- Перед действиями, меняющими состояние — план и подтверждение (см. «Главный принцип» выше).
 - При ошибке передавай текст ошибки дословно, без догадок о причине.
 - Не повторяй то, что аналитик и так знает: будь компактен.
 """
@@ -131,6 +164,7 @@ async def run_assistant(
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=STDOUT_BUFFER_LIMIT,
     )
 
     assert proc.stdin is not None and proc.stdout is not None
@@ -145,7 +179,7 @@ async def run_assistant(
         await asyncio.sleep(RUN_TIMEOUT_SECONDS)
         if proc.returncode is None:
             timed_out = True
-            proc.kill()
+            _kill_tree(proc.pid)
 
     killer_task = asyncio.create_task(_killer())
 
@@ -158,12 +192,21 @@ async def run_assistant(
                 evt = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            translated = _translate_event(evt)
-            if translated is not None:
+            for translated in _translate_event(evt):
                 yield translated
+    except asyncio.CancelledError:
+        # Клиент закрыл SSE — например, нажал «Остановить». Прибиваем всё дерево
+        # subprocess'а, иначе на Windows дочерний node остаётся сиротой и держит pipe.
+        if proc.returncode is None:
+            _kill_tree(proc.pid)
+        raise
     finally:
         killer_task.cancel()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            _kill_tree(proc.pid)
+            await proc.wait()
         if timed_out:
             yield {'type': 'error', 'message': f'Помощник не уложился в {RUN_TIMEOUT_SECONDS} секунд и был остановлен.'}
         elif proc.returncode != 0:
@@ -173,34 +216,54 @@ async def run_assistant(
             yield {'type': 'done'}
 
 
-def _translate_event(evt: dict) -> dict | None:
+def _kill_tree(pid: int) -> None:
+    """Убить subprocess и всех его потомков.
+
+    На Windows `proc.kill()` бьёт только корень: дочерний node.exe остаётся
+    жив и держит unix-pipe, из-за чего родительский `async for` не получает
+    EOF и таймаут эффективно не срабатывает. Поэтому идём через `taskkill /T /F`.
+    """
+    import subprocess
+    import sys
+    try:
+        if sys.platform == 'win32':
+            subprocess.run(
+                ['taskkill', '/T', '/F', '/PID', str(pid)],
+                capture_output=True, timeout=5,
+            )
+        else:
+            import os, signal
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        pass
+
+
+def _translate_event(evt: dict):
     """Перевести JSONL-событие Claude Code SDK в нашу схему.
 
-    Формат stream-json: каждое событие имеет поле `type`. Для пользователя
-    интересны три: assistant-сообщения с текстом, assistant-сообщения с
-    `tool_use`, и user-сообщения с `tool_result`. Системные и итоговые события
-    отбрасываются (рантайм сам генерирует `done`).
+    В одном assistant-сообщении может быть **несколько content-блоков подряд**
+    (типичный случай: `text` с пояснением + следом `tool_use` с вызовом
+    инструмента). Поэтому функция — генератор: возвращает все обнаруженные
+    блоки, а не первый. Иначе пользователь видит часть событий и думает,
+    что помощник завис.
     """
     etype = evt.get('type')
     if etype == 'assistant':
         message = evt.get('message') or {}
-        content = message.get('content') or []
-        for block in content:
+        for block in message.get('content') or []:
             btype = block.get('type')
             if btype == 'text':
-                return {'type': 'text', 'text': block.get('text', '')}
-            if btype == 'tool_use':
-                return {
+                yield {'type': 'text', 'text': block.get('text', '')}
+            elif btype == 'tool_use':
+                yield {
                     'type': 'tool_use',
                     'name': block.get('name', ''),
                     'input': block.get('input', {}),
                 }
     elif etype == 'user':
         message = evt.get('message') or {}
-        content = message.get('content') or []
-        for block in content:
+        for block in message.get('content') or []:
             if block.get('type') == 'tool_result':
                 raw = block.get('content', '')
                 text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
-                return {'type': 'tool_result', 'content': text[:2000]}
-    return None
+                yield {'type': 'tool_result', 'content': text[:2000]}
