@@ -3,7 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import (
+    assistant as assistant_router,
     backtest as backtest_router,
+    docs as docs_router,
     environments as environments_router,
     event_effect as event_effect_router,
     event_study as event_study_router,
@@ -33,3 +35,5 @@ app.include_router(rules_router.router)
 app.include_router(strategies_router.router)
 app.include_router(environments_router.router)
 app.include_router(backtest_router.router)
+app.include_router(docs_router.router)
+app.include_router(assistant_router.router)

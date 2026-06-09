@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { WidgetGroup } from './chartSync'
+import { AssistantWidget } from './assistant/AssistantWidget'
+import { DocumentationWidget } from './documentation/DocumentationWidget'
 import { EventEffectAnalysisWidget } from './EventEffectAnalysisWidget'
 import { EventStudyWidget } from './EventStudyWidget'
 import { IndexChartWidget } from './IndexChartWidget'
@@ -13,7 +15,7 @@ import { ResearchSelector } from './research/ResearchSelector'
 import { WidgetGroupPicker } from './WidgetGroupPicker'
 import { WidgetWindow } from './WidgetWindow'
 
-type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-search' | 'event-effect-analysis' | 'pql-editor' | 'backtest-editor' | 'entity-editor' | 'research-report'
+type WidgetType = 'price-chart' | 'event-study' | 'index-chart' | 'precedent-search' | 'event-effect-analysis' | 'pql-editor' | 'backtest-editor' | 'entity-editor' | 'research-report' | 'documentation' | 'assistant'
 
 interface WidgetInstance {
   id: string
@@ -39,6 +41,8 @@ const WIDGET_TITLES: Record<WidgetType, string> = {
   'backtest-editor': 'BacktestEditor',
   'entity-editor': 'EntityEditor',
   'research-report': 'Research Journal',
+  'documentation': 'Документация',
+  'assistant': 'Помощник',
 }
 
 const DEFAULT_WIDTH = 640
@@ -52,6 +56,8 @@ const WIDGET_SIZES: Partial<Record<WidgetType, { width: number; height: number }
   'research-report': { width: 900, height: 700 },
   'event-effect-analysis': { width: 1100, height: 700 },
   'event-study': { width: 1280, height: 720 },
+  'documentation': { width: 1100, height: 800 },
+  'assistant': { width: 720, height: 700 },
 }
 
 export function WidgetCanvas() {
@@ -154,6 +160,12 @@ export function WidgetCanvas() {
             <button onClick={() => addWidget('research-report')} style={menuItemStyle}>
               Research Journal
             </button>
+            <button onClick={() => addWidget('documentation')} style={menuItemStyle}>
+              Документация
+            </button>
+            <button onClick={() => addWidget('assistant')} style={menuItemStyle}>
+              Помощник
+            </button>
             </div>
           )}
         </div>
@@ -194,6 +206,10 @@ export function WidgetCanvas() {
               <EntityEditorWidget />
             ) : w.type === 'research-report' ? (
               <ResearchReportWidget />
+            ) : w.type === 'documentation' ? (
+              <DocumentationWidget />
+            ) : w.type === 'assistant' ? (
+              <AssistantWidget />
             ) : (
               <EventStudyWidget group={w.group} />
             )}
