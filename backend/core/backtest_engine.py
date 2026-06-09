@@ -59,9 +59,16 @@ def _settlement_days_for(payment_date: date) -> int:
 # Lookbehind на `:` исключает `::CAST` (его в Postgres всё равно нет, но на всякий).
 _NAMED_PARAM_RE = re.compile(r'(?<!:):([A-Za-z_][A-Za-z0-9_]*)')
 
+# Регулярка для литеральных `%` в SQL (например, `WHERE pct > 50%` или `MOD` через `x % y`).
+# Negative-lookahead `(?!\(\w+\)s)` исключает placeholder'ы `%(name)s`, появившиеся после
+# замены `:name`. Без этой защиты psycopg падает с
+# `incomplete placeholder: '%'; if you want to use '%' as an operator you can double it up`.
+_LITERAL_PERCENT_RE = re.compile(r'%(?!\(\w+\)s)')
+
 
 def _normalize_named_params(sql: str) -> str:
-    return _NAMED_PARAM_RE.sub(r'%(\1)s', sql)
+    sql = _NAMED_PARAM_RE.sub(r'%(\1)s', sql)
+    return _LITERAL_PERCENT_RE.sub('%%', sql)
 
 
 _PARAM_USAGE_RE = re.compile(r'%\(([A-Za-z_][A-Za-z0-9_]*)\)s')
